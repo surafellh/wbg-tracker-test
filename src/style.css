@@ -148,28 +148,26 @@ tr.clickable{cursor:pointer}
 .btn.small{padding:4px 9px;font-size:12.5px}
 .toast{display:flex;gap:12px;align-items:center;max-width:min(560px,calc(100vw - 32px))}
 .toast-act{background:transparent;border:1px solid currentColor;color:inherit;border-radius:7px;padding:3px 10px;font-weight:700;cursor:pointer}
-.edit-table tr.task-a td{border-bottom:0;padding:10px 6px 2px;background:var(--surface)}
-.edit-table tr.task-b td{vertical-align:top;padding-top:4px}
-.edit-table tbody tr.task-a:hover td,.edit-table tbody tr.task-a:hover+tr.task-b td{background:var(--surface-2)}
-.task-line{position:sticky;left:6px;display:grid;grid-template-columns:minmax(0,1.3fr) minmax(220px,1fr) auto;gap:14px;align-items:start;width:min(1180px,calc(100vw - 72px))}
+/* plan editor: one row per task, fixed column widths, scrolls sideways */
+.edit-table{table-layout:fixed;width:1822px;min-width:1822px}
+.edit-table th{white-space:nowrap}
+.edit-table td{vertical-align:top;padding:8px 5px;border-bottom:1px solid var(--line)}
+.edit-table tbody tr.task-row:hover td{background:var(--surface-2)}
+col.k-task{width:300px}col.k-notes{width:250px}col.k-kind{width:96px}col.k-dept{width:130px}col.k-owner{width:130px}col.k-due{width:136px}col.k-pri{width:100px}col.k-prev{width:132px}col.k-status{width:130px}col.k-pct{width:72px}col.k-done{width:120px}col.k-dep{width:170px}col.k-act{width:56px}
+.edit-table td.c-task,.edit-table td.c-notes,.edit-table td.c-owner,.edit-table td.c-dept,.edit-table td.c-due,.edit-table td.c-pri,.edit-table td.c-status,.edit-table td.c-pct,.edit-table td.c-kind,.edit-table td.c-prev,.edit-table td.c-done,.edit-table td.c-dep,.edit-table td.c-ev{min-width:0}
+.edit-table td.c-act{text-align:center}
 .task-notes{display:grid;gap:4px}
 .task-notes textarea{width:100%}
 .ev-row{display:flex;flex-wrap:wrap;gap:4px 8px;align-items:center}
-@media (max-width:760px){.task-line{grid-template-columns:minmax(0,1fr) auto}.task-notes{grid-column:1 / -1;grid-row:2}}
 .task-main{flex:1;min-width:0;display:grid;gap:4px}
 .task-title{font-weight:600;font-size:14.5px;white-space:normal;overflow-wrap:anywhere;line-height:1.4}
 .task-out{font-size:12.5px;color:var(--muted);overflow-wrap:anywhere}
 .task-tags{display:flex;flex-wrap:wrap;gap:6px}
-.task-side{display:flex;gap:6px;align-items:center;flex-shrink:0}
+.task-side{display:flex;flex-direction:column;gap:6px;align-items:center}
 .tag.lock{background:var(--neutral-bg)}
-textarea.grow{min-height:34px;resize:none;overflow:hidden;line-height:1.35;padding:7px 9px}
+textarea.grow{min-height:62px;resize:none;overflow:hidden;line-height:1.35;padding:7px 9px}
 textarea.title-in{font-weight:600;width:100%}
-textarea.out-in{font-size:12.5px;width:100%}
-.edit-table td.c-notes textarea{min-width:200px}
-.edit-table td.c-prev{min-width:84px}
-.edit-table td.c-done{min-width:96px}
-.edit-table td.c-dep{min-width:150px}
-.edit-table td.c-ev{min-width:130px}
+textarea.out-in{font-size:12.5px;width:100%;min-height:50px}
 .edit-table select:disabled,.edit-table input:disabled,.edit-table textarea:disabled,.reports textarea:disabled{background:var(--surface-2);color:var(--muted);cursor:not-allowed}
 .ev{display:flex;align-items:center;gap:2px;margin-bottom:3px}
 .ev .lnk{font-family:var(--f-body);font-size:12px;text-align:left;padding:2px 4px}

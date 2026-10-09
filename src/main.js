@@ -604,16 +604,17 @@ applyPlugin(jsPDF); window.jspdf = { jsPDF }; window.XLSX = XLSX;
     const tags = [carriedN ? `<span class="tag" title="Brought forward from an earlier week">carried${carriedN > 1 ? ` ${carriedN} weeks` : ""}</span>` : "", pend ? '<span class="pill s-not">change waiting for approval</span>' : "", lk ? '<span class="tag lock" title="Saved task: the title, outcome, type, department, due date and priority are fixed. Use Request change to ask Group Strategy.">🔒 fixed</span>' : ""].join("");
     const main = lk || !ed
       ? `<div class="task-title" title="${esc(t.title)}">${t.priority === "High" ? '<span class="hi-dot" title="High priority"></span>' : ""}${esc(t.title) || '<span class="muted">(no title)</span>'}</div>${t.outcome ? `<div class="task-out"><b>Expected outcome:</b> ${esc(t.outcome)}</div>` : ""}`
-      : `<textarea class="grow title-in" rows="1" id="t-title-${t.id}" data-f="title" placeholder="Task or deliverable" aria-label="Task">${esc(t.title)}</textarea>
-         <textarea class="grow out-in" rows="1" id="t-outcome-${t.id}" data-f="outcome" placeholder="Expected outcome: what will exist or change when this is done" aria-label="Expected outcome">${esc(t.outcome || "")}</textarea>`;
+      : `<textarea class="grow title-in" rows="2" id="t-title-${t.id}" data-f="title" placeholder="Task or deliverable" aria-label="Task">${esc(t.title)}</textarea>
+         <textarea class="grow out-in" rows="2" id="t-outcome-${t.id}" data-f="outcome" placeholder="Expected outcome: what will exist or change when this is done" aria-label="Expected outcome">${esc(t.outcome || "")}</textarea>`;
     const side = !ed ? "" : `${lk ? `<button class="btn small" data-unlock="${esc(t.id)}" title="Edit the fixed fields. The change goes to Group Strategy for approval.">Request change</button>` : ""}
       ${state.confirmDelete === t.id ? `<span class="confirm">${savedTask(u, t) && !isAppr() && state.week <= thisMonday() ? "Ask to remove?" : "Remove?"} <button class="btn danger" data-del-yes="${esc(key)}">Yes</button><button class="btn" data-del-no>No</button></span>` : `<button class="icon-btn" data-del="${t.id}" aria-label="Remove task" title="Remove task">×</button>`}`;
     const others = sortedUnits().filter(x => x.id !== u);
     const ev = (t.ev || []).map((e, k) => `<div class="ev"><button class="lnk ev-open" type="button" data-ev="${esc(u)}|${i}|${k}" title="${esc(e.name)} · ${fmtSize(e.size || 0)}">📎 ${esc(e.name.length > 18 ? e.name.slice(0, 15) + "…" : e.name)}</button>${ed ? `<button class="icon-btn" type="button" data-ev-del="${esc(u)}|${i}|${k}" aria-label="Remove ${esc(e.name)}">×</button>` : ""}</div>`).join("");
-    const notesBox = `<div class="task-notes"><textarea class="grow" rows="1" id="t-notes-${t.id}" data-f="notes" placeholder="Notes / next step" aria-label="Notes / next step" ${dis}>${esc(t.notes)}</textarea>
+    const notesBox = `<div class="task-notes"><textarea class="grow" rows="3" id="t-notes-${t.id}" data-f="notes" placeholder="Notes / next step" aria-label="Notes / next step" ${dis}>${esc(t.notes)}</textarea>
       <div class="ev-row"><span class="small muted">Evidence</span>${ev || (ed ? "" : '<span class="muted small">none</span>')}${ed ? `<label class="btn small ev-add" title="Optional. Up to ${EVIDENCE.maxFiles} files at once, ${fmtSize(EVIDENCE.maxTotal)} in total">📎 Attach<input type="file" multiple accept="${EVIDENCE.accept}" data-ev-add="${esc(u)}|${i}" hidden></label>` : ""}</div></div>`;
-    return `<tr class="task-a" data-u="${esc(u)}" data-i="${i}"><td colspan="10"><div class="task-line"><div class="task-main">${main}${tags ? `<div class="task-tags">${tags}</div>` : ""}</div>${notesBox}<div class="task-side">${side}</div></div></td></tr>
-    <tr class="task-b" data-u="${esc(u)}" data-i="${i}">
+    return `<tr class="task-row" data-u="${esc(u)}" data-i="${i}">
+      <td class="c-task"><div class="task-main">${main}${tags ? `<div class="task-tags">${tags}</div>` : ""}</div></td>
+      <td class="c-notes">${notesBox}</td>
       <td class="c-kind"><select id="t-kind-${t.id}" data-f="kind" aria-label="Type" ${ldis}>${KINDS.map(k => `<option ${sel(k === (t.kind || "Task"))}>${k}</option>`).join("")}</select></td>
       <td class="c-dept"><select id="t-dept-${t.id}" data-f="dept" aria-label="Department" ${ldis}>${deptOptions(u, t)}</select></td>
       <td class="c-owner"><input type="text" list="dl-owners-${esc(u)}" id="t-owner-${t.id}" data-f="owner" value="${esc(t.owner)}" placeholder="Name" aria-label="Owner name" ${dis}></td>
@@ -625,9 +626,10 @@ applyPlugin(jsPDF); window.jspdf = { jsPDF }; window.XLSX = XLSX;
       <td class="c-done">${isAppr() ? `<input type="date" id="t-cd-${t.id}" data-f="completedAt" value="${esc(t.completedAt || "")}" aria-label="Actual completion date">` : `<span class="num small" id="t-cd-${t.id}">${t.completedAt ? esc(fmt(t.completedAt)) : '<span class="muted">–</span>'}</span>`}</td>
       <td class="c-dep"><select id="t-depu-${t.id}" data-f="depUnit" aria-label="Depends on unit" ${dis}><option value="">No dependency</option>${others.map(x => `<option value="${esc(x.id)}" ${sel(x.id === t.depUnit)}>${esc(x.name)}</option>`).join("")}</select>
         <input type="text" id="t-dep-${t.id}" data-f="dep" value="${esc(t.dep || "")}" placeholder="What is needed" aria-label="Dependency details" ${dis} style="margin-top:4px"></td>
+      <td class="c-act"><div class="task-side">${side}</div></td>
     </tr>`;
   }
-  const editHead = `<thead><tr><th>Type</th><th>Department</th><th>Owner (name)</th><th>Due</th><th>Priority</th><th>Previous status</th><th>Status update</th><th>%</th><th>Completed on</th><th>Depends on</th></tr></thead>`;
+  const editHead = `<colgroup><col class="k-task"><col class="k-notes"><col class="k-kind"><col class="k-dept"><col class="k-owner"><col class="k-due"><col class="k-pri"><col class="k-prev"><col class="k-status"><col class="k-pct"><col class="k-done"><col class="k-dep"><col class="k-act"></colgroup><thead><tr><th>Task / expected outcome</th><th>Notes / evidence</th><th>Type</th><th>Department</th><th>Owner (name)</th><th>Due</th><th>Priority</th><th>Previous status</th><th>Status update</th><th>%</th><th>Completed on</th><th>Depends on</th><th></th></tr></thead>`;
 
   // ---------- helpers for task kinds ----------
   const KINDS = ["Task","KPI / OKR"];
@@ -798,10 +800,10 @@ applyPlugin(jsPDF); window.jspdf = { jsPDF }; window.XLSX = XLSX;
         const d = state.allDrafts[u.id] || emptyPlan(u.id);
         const s = summarize(d);
         const rows = d.tasks.map((t,i) => taskRowHtml(u.id, t, i)).join("");
-        return `<tbody><tr class="group-row"><td colspan="10"><div class="toolbar" style="justify-content:space-between">
+        return `<tbody><tr class="group-row"><td colspan="13"><div class="toolbar" style="justify-content:space-between">
             <div><b>${esc(u.name)}</b> <span class="tag">${esc(u.type||"")}</span> <span class="small muted">${s.total} tasks · ${s.done} done${state.dirtyUnits.has(u.id) ? " · <b style='color:var(--accent)'>edited</b>" : ""}</span></div>
             ${canEdit(u.id) ? `<button class="btn" data-add-unit="${esc(u.id)}">+ Add task</button>` : ""}</div>${ownerDatalist(u.id)}</td></tr>
-          ${rows || `<tr><td colspan="12" class="small muted">No tasks entered yet.</td></tr>`}</tbody>`;
+          ${rows || `<tr><td colspan="13" class="small muted">No tasks entered yet.</td></tr>`}</tbody>`;
       }).join("");
       return `<div class="panel">${head}${warn}${can ? "" : `<div class="banner info" style="margin:12px 16px 0">All units is view-only, except your own unit's rows. Group Strategy approvers can edit every unit here.</div>`}
         <div class="scroll"><table class="edit-table">${editHead}${groups}</table></div>
@@ -958,7 +960,7 @@ applyPlugin(jsPDF); window.jspdf = { jsPDF }; window.XLSX = XLSX;
     if (state.tab === "dashboard") ensureDash();
   }
   function growAll(){ document.querySelectorAll("#main textarea.grow").forEach(grow); }
-  function grow(el){ el.style.height = "auto"; el.style.height = Math.max(34, el.scrollHeight + 2) + "px"; }
+  function grow(el){ el.style.height = "auto"; el.style.height = Math.max(el.classList.contains("out-in") ? 50 : 62, el.scrollHeight + 2) + "px"; }
   // Next week's plans, for the "next week's plan not entered" reminder
   function fetchNext(){
     if (!db || state.tab !== "update" || state.week !== thisMonday()) return;
@@ -1330,6 +1332,15 @@ applyPlugin(jsPDF); window.jspdf = { jsPDF }; window.XLSX = XLSX;
   const titleOut = t => (t.title || "") + (t.outcome ? `\nOutcome: ${t.outcome}` : "");
   const depText = t => [t.depUnit ? unitName(t.depUnit) : "", t.dep || ""].filter(Boolean).join(": ");
   const taskRow = (t,i) => [i+1, titleOut(t), t.dept||"", t.owner||"", fmt(t.due), t.priority||"", t.prevStatus||"", t.status||"No status", typeof t.pct==="number" ? t.pct+"%" : "", fmt(t.completedAt||""), [t.notes||"", depText(t) && "Depends on " + depText(t), (t.ev||[]).length ? `${t.ev.length} evidence file(s)` : ""].filter(Boolean).join("\n")];
+  // PDF: every field of a task, in its own labelled column (landscape A4)
+  const pdfHead = withUnit => [...(withUnit ? ["Unit"] : ["#"]), "Task / deliverable", "Expected outcome", "Department", "Owner (name)", "Due", "Priority", "Status (previous)", "%", "Completed", "Depends on", "Notes / next step · evidence"];
+  const pdfTask = (t, i, unitName_) => [unitName_ !== undefined ? unitName_ : i + 1,
+    (t.kind === "KPI / OKR" ? "[KPI / OKR] " : "") + (t.title || "") + (t.carried ? "\n(carried forward)" : ""),
+    t.outcome || "", t.dept || "", t.owner || "", fmt(t.due), t.priority || "",
+    (t.status || "No status") + (t.prevStatus ? `\n(was: ${t.prevStatus}${typeof t.prevPct === "number" ? " " + t.prevPct + "%" : ""})` : ""),
+    typeof t.pct === "number" ? t.pct + "%" : "", fmt(t.completedAt || ""), depText(t),
+    [t.notes || "", (t.ev || []).length ? "Evidence: " + t.ev.map(e => e.name).join(", ") : ""].filter(Boolean).join("\n")];
+  const pdfStyle = () => { const b = tableStyle(); b.styles = { ...b.styles, fontSize: 7.5, cellPadding: 3 }; b.headStyles = { ...b.headStyles, fontSize: 7.5 }; return b; };
   const safeName = s => s.replace(/[\\/:*?"<>|]/g,"").slice(0,60);
 
   function currentPlan(){ return state.draft || state.plans[state.editUnit] || emptyPlan(state.editUnit); }
@@ -1342,9 +1353,9 @@ applyPlugin(jsPDF); window.jspdf = { jsPDF }; window.XLSX = XLSX;
     const kpis = [[String(s.total),"tasks"],[String(s.done),"done"],[s.avg===null?"–":s.avg+"%","average complete"],[`${s.highDone} of ${s.high}`,"High priority done"],[String(s.blocked + s.overdue),"blocked or overdue"]];
     const kw = (W - 72 - 40)/5;
     kpis.forEach((k,i) => { const x = 36 + i*(kw+10); doc.setFillColor(...Y.soft); doc.roundedRect(x, 88, kw, 46, 5, 5, "F"); doc.setTextColor(...Y.ink); doc.setFont("helvetica","bold"); doc.setFontSize(15); doc.text(k[0], x+10, 109); doc.setFont("helvetica","normal"); doc.setFontSize(8.5); doc.text(k[1], x+10, 125); });
-    doc.autoTable({ startY: 148, margin: { left: 36, right: 36 }, head: [["#","Task / deliverable","Department","Owner (name)","Due","Priority","Previous","Status","%","Completed","Notes / next step"]],
-      body: (p.tasks||[]).length ? p.tasks.map(taskRow) : [["","No tasks entered","","","","","","","","",""]],
-      columnStyles: { 0: { cellWidth: 20 }, 1: { cellWidth: 180 }, 2: { cellWidth: 64 }, 3: { cellWidth: 70 }, 4: { cellWidth: 40 }, 5: { cellWidth: 42 }, 6: { cellWidth: 52 }, 7: { cellWidth: 52 }, 8: { cellWidth: 28 }, 9: { cellWidth: 44 } }, ...tableStyle() });
+    doc.autoTable({ startY: 148, margin: { left: 30, right: 30 }, head: [pdfHead(false)],
+      body: (p.tasks||[]).length ? p.tasks.map((t,i) => pdfTask(t,i)) : [["","No tasks entered","","","","","","","","","",""]],
+      columnStyles: { 0: { cellWidth: 18 }, 1: { cellWidth: 120, fontStyle: "bold" }, 2: { cellWidth: 94 }, 3: { cellWidth: 52 }, 4: { cellWidth: 54 }, 5: { cellWidth: 40 }, 6: { cellWidth: 36 }, 7: { cellWidth: 50 }, 8: { cellWidth: 26 }, 9: { cellWidth: 48 }, 10: { cellWidth: 62 } }, ...pdfStyle() });
     let y = doc.lastAutoTable.finalY + 24;
     y = sectionTitle(doc, "Key results, blockers and asks", y);
     doc.autoTable({ startY: y, margin: { left: 36, right: 36 }, head: [["Key results this week","Blockers and issues","Asks to top management or other units"]], body: [[p.wins||"–", p.blockers||"–", p.asks||"–"]], ...tableStyle() });
@@ -1376,9 +1387,9 @@ applyPlugin(jsPDF); window.jspdf = { jsPDF }; window.XLSX = XLSX;
     const list = filteredTasks(), f = state.filter;
     const filt = [f.unit && unitName(f.unit), f.status && (f.status==="none"?"No status":f.status), f.priority, f.q && `"${f.q}"`].filter(Boolean).join(", ");
     const doc = newPdf("Weekly Tasks", `Week of ${weekLabel(state.week)}  ·  ${list.length} tasks${filt ? "  ·  Filter: " + filt : ""}`);
-    doc.autoTable({ startY: 92, margin: { left: 36, right: 36 }, head: [["Unit","Task / deliverable","Department","Owner (name)","Due","Previous","Status","%","Completed","Notes"]],
-      body: list.length ? list.map(t => [t.unitName, titleOut(t), t.dept||"", t.owner||"", fmt(t.due), t.prevStatus||"", t.status||"No status", typeof t.pct==="number" ? t.pct+"%" : "", fmt(t.completedAt||""), [t.notes||"", depText(t) && "Depends on " + depText(t)].filter(Boolean).join("\n")]) : [["","No tasks match","","","","","","","",""]],
-      columnStyles: { 0: { cellWidth: 80, fontStyle: "bold" }, 1: { cellWidth: 176 }, 2: { cellWidth: 64 }, 3: { cellWidth: 70 }, 4: { cellWidth: 40 }, 5: { cellWidth: 52 }, 6: { cellWidth: 54 }, 7: { cellWidth: 28 }, 8: { cellWidth: 44 } }, ...tableStyle() });
+    doc.autoTable({ startY: 92, margin: { left: 30, right: 30 }, head: [pdfHead(true)],
+      body: list.length ? list.map((t,i) => pdfTask(t, i, t.unitName)) : [["","No tasks match","","","","","","","","","",""]],
+      columnStyles: { 0: { cellWidth: 62, fontStyle: "bold" }, 1: { cellWidth: 104, fontStyle: "bold" }, 2: { cellWidth: 90 }, 3: { cellWidth: 48 }, 4: { cellWidth: 50 }, 5: { cellWidth: 38 }, 6: { cellWidth: 34 }, 7: { cellWidth: 48 }, 8: { cellWidth: 24 }, 9: { cellWidth: 46 }, 10: { cellWidth: 56 } }, ...pdfStyle() });
     pdfFooter(doc, "Weekly tasks");
     await save(`Wagwago weekly tasks ${state.week}.pdf`, doc.output("arraybuffer"), "Task list saved. Open it to print.");
   }
