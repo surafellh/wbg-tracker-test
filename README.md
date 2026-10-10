@@ -1,4 +1,4 @@
-# WBG Weekly Activity Tracking (v2)
+# WBG Weekly Activity Tracking (v3, stage 1)
 
 Weekly plans, progress, Ethiopian-calendar monthly reports and an activity log for Wagwago Business Group's functions and business units.
 Vite + vanilla JS front end; data is stored in a free Supabase (Postgres) project.
@@ -36,6 +36,20 @@ Both hosts: connect the Git repository, then set the `VITE_` variables in the ho
 
 - **Vercel:** New Project > import the repo. Framework preset: Vite. Build command `npm run build`, output directory `dist`. Add the environment variables, then Deploy.
 - **Netlify:** Add new site > import the repo. Build command `npm run build`, publish directory `dist`. Add the environment variables under Site configuration, then Deploy.
+
+## What is new in version 3 (stage 1)
+- **This week's update** columns are now: Task, Type, Department, Due, Priority, Status update, %, Note, Evidence, Owner. Dependencies go in the Note.
+- **Average % complete counts every task.** Done = 100, otherwise the % entered; a task with no status or no % counts as 0. A progress bar for the whole week's plan sits at the top, and each unit has its own bar.
+- **Click a column title to sort** (Priority sorts High, Medium, Low; empty values go last). Click again for the reverse, a third time to clear.
+- **Weeks run Saturday to Friday** from Saturday 10 Oct 2026. Earlier weeks keep their Monday dates. `upgrade-4` moves any plan saved for "Monday 12 Oct" to the week of 10 Oct.
+- **Business support** tab: log and follow up requests made to a corporate function (starts with the HR support log). Active requests are shown by default, 15 at a time, with filters for status, function, requester, category, dates and search, and Excel / PDF downloads.
+- **Feedback** tab: feedback from the CEO, DCEO or Group Strategy per unit (a unit acknowledges it), and a **corrective action log** (Group Strategy or the unit logs an action; only Group Strategy closes it).
+- Stage 2 (not in this version): sign-in with company email, roles and row-level security. Unit PINs and the approver code still apply.
+
+## Upgrading to v3 stage 1 (test project first)
+1. **SQL Editor:** run `supabase/upgrade-4-v3-stage1.sql` (after `schema.sql` and `upgrade-1-safe.sql`). Safe to run again.
+2. Optional starting data: `supabase/seed.sql` (plans and activity, with the 12 Oct plans already moved to 10 Oct) and `supabase/seed-support.sql` (24 HR support requests).
+3. Deploy the new site files (on a branch first). The new tabs show empty lists until step 1 is done.
 
 ## Who can change what (v2)
 There is still no email sign-in. Instead:
@@ -121,5 +135,7 @@ supabase/seed.sql     starting data
 supabase/upgrade-1-safe.sql      v2 tables and functions (safe with the old site)
 supabase/upgrade-2-lockdown.sql  v2 lockdown (run after the new site is live)
 supabase/upgrade-3-reminders.sql optional Telegram reminders and weekly snapshot
+supabase/upgrade-4-v3-stage1.sql v3: Saturday weeks, Business support, Feedback, Corrective actions
+supabase/seed.sql, seed-support.sql starting data
 .env.example
 ```

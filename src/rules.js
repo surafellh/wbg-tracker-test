@@ -29,6 +29,25 @@ export function mondayOfIso(s) {
 }
 export const addisMonday = (now) => mondayOfIso(addisToday(now));
 
+// ---- Weeks -----------------------------------------------------------------------------------------------
+// Up to and including the week of Monday 5 Oct 2026 a week runs Monday to Friday (older plans keep their Monday key).
+// From Saturday 10 Oct 2026 a week runs Saturday to Friday and is keyed by its Saturday.
+export const WEEK_CUTOVER = "2026-10-10";
+export const shiftIso = (s, n) => {
+  const [y, m, d] = s.split("-").map(Number);
+  const x = new Date(Date.UTC(y, m - 1, d + n));
+  return isoOf(x.getUTCFullYear(), x.getUTCMonth() + 1, x.getUTCDate());
+};
+const dowIso = (s) => { const [y, m, d] = s.split("-").map(Number); return new Date(Date.UTC(y, m - 1, d)).getUTCDay(); }; // 0 = Sunday
+export function weekStartOf(s) {
+  if (s < WEEK_CUTOVER) return mondayOfIso(s);
+  return shiftIso(s, -((dowIso(s) + 1) % 7)); // days since Saturday
+}
+export const weekEndOf = (w) => (w >= WEEK_CUTOVER ? shiftIso(w, 6) : (shiftIso(w, 5) < WEEK_CUTOVER ? shiftIso(w, 5) : shiftIso(WEEK_CUTOVER, -1)));
+export const nextWeekOf = (w) => (w >= WEEK_CUTOVER ? shiftIso(w, 7) : (shiftIso(w, 7) >= WEEK_CUTOVER ? WEEK_CUTOVER : shiftIso(w, 7)));
+export const prevWeekOf = (w) => (w > WEEK_CUTOVER ? shiftIso(w, -7) : (w === WEEK_CUTOVER ? weekStartOf(shiftIso(WEEK_CUTOVER, -1)) : shiftIso(w, -7)));
+export const addisWeekStart = (now) => weekStartOf(addisToday(now));
+
 export function isApproverName(name, list = DEFAULT_APPROVERS) {
   const n = String(name || "").trim().toLowerCase();
   if (!n) return false;
