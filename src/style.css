@@ -149,11 +149,11 @@ tr.clickable{cursor:pointer}
 .toast{display:flex;gap:12px;align-items:center;max-width:min(560px,calc(100vw - 32px))}
 .toast-act{background:transparent;border:1px solid currentColor;color:inherit;border-radius:7px;padding:3px 10px;font-weight:700;cursor:pointer}
 /* plan editor: one row per task, fixed column widths, scrolls sideways */
-.edit-table{table-layout:fixed;width:1822px;min-width:1822px}
+.edit-table{table-layout:fixed;width:1604px;min-width:1604px}
 .edit-table th{white-space:nowrap}
 .edit-table td{vertical-align:top;padding:8px 5px;border-bottom:1px solid var(--line)}
 .edit-table tbody tr.task-row:hover td{background:var(--surface-2)}
-col.k-task{width:300px}col.k-notes{width:250px}col.k-kind{width:96px}col.k-dept{width:130px}col.k-owner{width:130px}col.k-due{width:136px}col.k-pri{width:100px}col.k-prev{width:132px}col.k-status{width:130px}col.k-pct{width:72px}col.k-done{width:120px}col.k-dep{width:170px}col.k-act{width:56px}
+col.k-task{width:300px}col.k-kind{width:96px}col.k-dept{width:130px}col.k-due{width:136px}col.k-pri{width:100px}col.k-status{width:140px}col.k-pct{width:72px}col.k-notes{width:230px}col.k-ev{width:160px}col.k-owner{width:140px}col.k-act{width:56px}
 .edit-table td.c-task,.edit-table td.c-notes,.edit-table td.c-owner,.edit-table td.c-dept,.edit-table td.c-due,.edit-table td.c-pri,.edit-table td.c-status,.edit-table td.c-pct,.edit-table td.c-kind,.edit-table td.c-prev,.edit-table td.c-done,.edit-table td.c-dep,.edit-table td.c-ev{min-width:0}
 .edit-table td.c-act{text-align:center}
 .task-notes{display:grid;gap:4px}
@@ -246,3 +246,38 @@ code{font-family:var(--f-mono);font-size:12px;background:var(--neutral-bg);paddi
 .viz-table{margin-top:8px}.viz-table summary{cursor:pointer}
 .viz-tip{position:fixed;z-index:60;pointer-events:none;background:var(--ink);color:var(--bg);padding:8px 10px;border-radius:8px;font-size:12px;line-height:1.45;max-width:280px;box-shadow:0 6px 20px rgba(0,0,0,.2)}
 @media (max-width:560px){.hbar-row{grid-template-columns:minmax(90px,120px) minmax(0,1fr) 70px}.hm-row{grid-template-columns:130px repeat(var(--cols),minmax(44px,1fr))}.hero-fig{font-size:48px}}
+
+th.sortable{cursor:pointer;user-select:none;white-space:nowrap}
+th.sortable:hover{color:var(--accent)}
+th .si{margin-left:4px;font-size:10px;opacity:.55}
+th[aria-sort=ascending] .si,th[aria-sort=descending] .si{opacity:1;color:var(--accent)}
+.ev-col{display:flex;flex-direction:column;gap:4px;align-items:flex-start}
+.dep-note{margin-top:4px;font-style:italic}
+.c-status label input{width:100%;margin-top:2px}
+
+/* progress bars */
+.pbar{display:grid;gap:4px}
+.pbar-top{display:flex;justify-content:space-between;align-items:baseline;gap:10px;font-size:13px}
+.pbar-track{height:12px;border-radius:999px;background:var(--track);overflow:hidden}
+.pbar-track i{display:block;height:100%;border-radius:999px;background:var(--bar);min-width:2px;transition:width .3s}
+.pbar-sub{color:var(--muted)}
+.hero-prog{margin:12px 0 4px;max-width:720px}
+.pbar.hero .pbar-track{background:var(--hero-edge);height:14px}
+.pbar.hero .pbar-track i{background:var(--hero-ink)}
+.pbar.hero .pbar-sub{color:inherit;opacity:.75}
+
+/* business support, feedback, corrective actions */
+.xmodal .xgrid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:2px 14px;padding:8px 16px}
+.xmodal .field{margin:8px 0}
+.xmodal .field.wide{grid-column:1 / -1}
+.xmodal textarea{min-height:64px}
+@media (max-width:640px){.xmodal .xgrid{grid-template-columns:minmax(0,1fr)}}
+.sup-table td{vertical-align:top}
+.sup-table td.sup-req{min-width:260px;max-width:420px;overflow-wrap:anywhere}
+.sup-table td.sup-act{min-width:200px;max-width:340px;overflow-wrap:anywhere}
+.late{color:var(--bad);font-weight:600}
+.fb-card{border:1px solid var(--line);border-radius:12px;padding:12px 14px;margin-bottom:10px;background:var(--surface)}
+.fb-card.new{border-left:4px solid var(--accent)}
+.fb-top{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:6px}
+.fb-body{white-space:pre-wrap;overflow-wrap:anywhere;line-height:1.5}
+.fb-foot{display:flex;gap:8px;align-items:center;margin-top:8px;flex-wrap:wrap}

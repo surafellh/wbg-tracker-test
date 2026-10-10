@@ -4,7 +4,8 @@
 // PIN-checked database functions from supabase/upgrade-1-safe.sql.
 import { createClient } from "@supabase/supabase-js";
 import { SEED_UNITS, SEED_PLANS, SEED_ACTIVITY } from "./seedData.js";
-import { addisMonday, addisToday, checkUnitSave, isApproverName, DEFAULT_APPROVERS } from "./rules.js";
+import { SEED_SUPPORT } from "./seedSupport.js";
+import { addisWeekStart, addisToday, checkUnitSave, isApproverName, DEFAULT_APPROVERS } from "./rules.js";
 
 const URL_ = import.meta.env.VITE_SUPABASE_URL;
 const KEY_ = import.meta.env.VITE_SUPABASE_ANON_KEY;
@@ -18,6 +19,9 @@ const COLLECTIONS = {
   plans: { table: "plans", map: { week: "week", unit: "unit_id", tasks: "tasks", wins: "wins", blockers: "blockers", asks: "asks", updatedAt: "updated_at", updatedBy: "updated_by", source: "source" }, ts: ["updatedAt"] },
   activity: { table: "activity", map: { ts: "ts", by: "by_name", unit: "unit_id", week: "week", action: "action", summary: "summary", details: "details" }, ts: ["ts"], nullText: ["week"] },
   requests: { table: "change_requests", map: { createdAt: "created_at", unit: "unit_id", week: "week", planId: "plan_id", by: "requested_by", status: "status", summary: "summary", details: "details", patch: "patch", decidedBy: "decided_by", decidedAt: "decided_at", note: "decision_note" }, ts: ["createdAt", "decidedAt"] },
+  support: { table: "support_requests", map: { ref: "ref", function: "function_id", requester: "requester", category: "category", description: "description", priority: "priority", requested: "date_requested", status: "status", responded: "response_date", action: "action_taken", respondedBy: "responded_by", evidence: "evidence_ref", followUp: "follow_up", remarks: "remarks", createdBy: "created_by", createdAt: "created_at", updatedBy: "updated_by", updatedAt: "updated_at" }, ts: ["createdAt", "updatedAt"], nullText: ["requested", "responded"] },
+  feedback: { table: "feedback", map: { unit: "unit_id", week: "week", from: "from_role", by: "by_name", body: "body", createdAt: "created_at", ackBy: "ack_by", ackAt: "ack_at" }, ts: ["createdAt", "ackAt"], nullText: ["week", "ackAt"] },
+  actions: { table: "corrective_actions", map: { unit: "unit_id", week: "week", source: "source", issue: "issue", action: "action", owner: "owner", due: "due", status: "status", taskTitle: "task_title", notes: "notes", createdBy: "created_by", createdAt: "created_at", updatedBy: "updated_by", updatedAt: "updated_at", closedAt: "closed_at" }, ts: ["createdAt", "updatedAt", "closedAt"], nullText: ["week", "due", "closedAt"] },
   history: { table: "row_history", map: { tbl: "tbl", rowId: "row_id", op: "op", old: "old_row", at: "changed_at", by: "changed_by" }, ts: ["at"] },
 };
 // A history row stores the database row; turn it back into a plan document.
@@ -55,7 +59,7 @@ function createSupabaseData() {
   const sb = createClient(URL_, KEY_, { auth: { persistSession: false }, realtime: { params: { eventsPerSecond: 5 } } });
   const live = new Map();
   const bump = (table) => (live.get(table) || new Set()).forEach((f) => f());
-  const bumpAll = () => ["plans", "units", "activity", "change_requests", "row_history"].forEach(bump);
+  const bumpAll = () => ["plans", "units", "activity", "change_requests", "row_history", "support_requests", "feedback", "corrective_actions"].forEach(bump);
 
   const fromRow = (cfg, row) => {
     const doc = {};
@@ -138,6 +142,13 @@ function createSupabaseData() {
     changeApproverCode: (auth, code) => rpc("wbg_change_approver_code", { p_auth: auth, p_new: code }),
     log: (auth, entry) => rpc("wbg_log", { p_auth: auth, p_entry: entry }),
     restoreBackup: (auth, backup) => rpc("wbg_restore_backup", { p_auth: auth, p_backup: backup }),
+    saveSupport: (auth, row) => rpc("wbg_save_support", { p_auth: auth, p_row: row }),
+    deleteSupport: (auth, id) => rpc("wbg_delete_support", { p_auth: auth, p_id: id }),
+    saveFeedback: (auth, row) => rpc("wbg_save_feedback", { p_auth: auth, p_row: row }),
+    deleteFeedback: (auth, id) => rpc("wbg_delete_feedback", { p_auth: auth, p_id: id }),
+    ackFeedback: (auth, id) => rpc("wbg_ack_feedback", { p_auth: auth, p_id: id }),
+    saveAction: (auth, row) => rpc("wbg_save_action", { p_auth: auth, p_row: row }),
+    deleteAction: (auth, id) => rpc("wbg_delete_action", { p_auth: auth, p_id: id }),
     async approverNames() {
       const { data } = await sb.from("app_config").select("value").eq("key", "approver_names").maybeSingle();
       return (data && Array.isArray(data.value)) ? data.value : DEFAULT_APPROVERS;
@@ -167,8 +178,8 @@ function createSupabaseData() {
 // Local mode: everything lives in this browser. Same rules as the database, for trying the app on localhost.
 // ---------------------------------------------------------------------------
 function createLocalData() {
-  const KEYS = { units: "wbg_local_units", plans: "wbg_local_plans", activity: "wbg_local_activity", requests: "wbg_local_requests", history: "wbg_local_history" };
-  const SEEDS = { units: SEED_UNITS, plans: SEED_PLANS, activity: SEED_ACTIVITY, requests: [], history: [] };
+  const KEYS = { units: "wbg_local_units", plans: "wbg_local_plans", activity: "wbg_local_activity", requests: "wbg_local_requests", history: "wbg_local_history", support: "wbg_local_support", feedback: "wbg_local_feedback", actions: "wbg_local_actions" };
+  const SEEDS = { units: SEED_UNITS, plans: SEED_PLANS, activity: SEED_ACTIVITY, requests: [], history: [], support: SEED_SUPPORT, feedback: [], actions: [] };
   const listeners = new Map();
   const getStore = (c) => {
     try {
@@ -252,7 +263,7 @@ function createLocalData() {
       if (!appr && !unitOk(auth, plan.unit)) return err("not_allowed");
       const old = getStore("plans").find((x) => x.id === planId(plan.week, plan.unit));
       if (old && base && !force && old.updatedAt !== base) return err("conflict", { updatedAt: old.updatedAt, updatedBy: old.updatedBy });
-      if (!appr) { const r = checkUnitSave(old, plan, addisMonday(), addisToday()); if (r) return err("needs_approval", { reason: r }); }
+      if (!appr) { const r = checkUnitSave(old, plan, addisWeekStart(), addisToday()); if (r) return err("needs_approval", { reason: r }); }
       const at = savePlanRaw(auth, plan);
       if (activity) addActivity(auth.name, plan.unit, plan.week, activity);
       return ok({ updatedAt: at });
@@ -325,6 +336,49 @@ function createLocalData() {
       addActivity(auth.name, "", "", { action: "restore", summary: `Restored from backup file: ${(b.units || []).length} units, ${(b.plans || []).length} plans` });
       return ok({ units: (b.units || []).length, plans: (b.plans || []).length });
     },
+    saveSupport(auth, row) {
+      const fn = row.function || ""; if (!fn) return err("bad_request");
+      if (!isAppr(auth) && !unitOk(auth, fn)) return err("not_allowed");
+      const items = getStore("support"), old = row.id ? items.find((x) => x.id === row.id) : null, name = (auth.name || "").trim(), now = new Date().toISOString();
+      if (old && old.function !== fn && !isAppr(auth)) return err("not_allowed");
+      const n = items.reduce((m, x) => Math.max(m, parseInt(String(x.ref || "").replace(/\D/g, ""), 10) || 0), 0) + 1;
+      const rec = { requester: "", category: "", description: "", priority: "Normal", requested: "", status: "Open", responded: "", action: "", respondedBy: "", evidence: "", followUp: false, remarks: "", ...(old || {}), ...row, function: fn,
+        id: old ? old.id : (row.id || Date.now().toString(36) + Math.random().toString(36).slice(2, 8)), ref: old ? old.ref : (row.ref || "SR-" + String(n).padStart(4, "0")),
+        createdBy: old ? old.createdBy : name, createdAt: old ? old.createdAt : now, updatedBy: name, updatedAt: now };
+      put("support", rec);
+      addActivity(name, fn, "", { action: "support", summary: `${old ? "Updated" : "Logged"} support request ${rec.ref} from ${rec.requester} (${rec.status})` });
+      return ok({ id: rec.id, ref: rec.ref });
+    },
+    deleteSupport(auth, id) { if (!isAppr(auth)) return err("not_allowed"); const o = getStore("support").find((x) => x.id === id); if (!o) return err("not_found"); del("support", id); addActivity(auth.name, o.function, "", { action: "support", summary: "Deleted support request " + o.ref }); return ok(); },
+    saveFeedback(auth, row) {
+      if (!isAppr(auth)) return err("not_allowed");
+      const from = row.from || "Group Strategy";
+      if (!row.unit || !(row.body || "").trim() || !["CEO", "DCEO", "Group Strategy"].includes(from)) return err("bad_request");
+      const old = row.id ? getStore("feedback").find((x) => x.id === row.id) : null;
+      put("feedback", { ackBy: "", ackAt: "", ...(old || {}), id: old ? old.id : (row.id || Date.now().toString(36) + Math.random().toString(36).slice(2, 8)), unit: row.unit, week: row.week || "", from, body: row.body, by: old ? old.by : (auth.name || "").trim(), createdAt: old ? old.createdAt : new Date().toISOString() });
+      addActivity(auth.name, row.unit, row.week || "", { action: "feedback", summary: "Feedback from " + from });
+      return ok();
+    },
+    deleteFeedback(auth, id) { if (!isAppr(auth)) return err("not_allowed"); del("feedback", id); return ok(); },
+    ackFeedback(auth, id) {
+      const f = getStore("feedback").find((x) => x.id === id); if (!f) return err("not_found");
+      if (!isAppr(auth) && !unitOk(auth, f.unit)) return err("not_allowed");
+      put("feedback", { ...f, ackBy: (auth.name || "").trim(), ackAt: new Date().toISOString() }); return ok();
+    },
+    saveAction(auth, row) {
+      const unit = row.unit || ""; if (!unit) return err("bad_request");
+      const appr = isAppr(auth); if (!appr && !unitOk(auth, unit)) return err("not_allowed");
+      const status = row.status || "Open"; if (!["Open", "In progress", "Done", "Closed"].includes(status)) return err("bad_request");
+      if (status === "Closed" && !appr) return err("not_allowed");
+      const old = row.id ? getStore("actions").find((x) => x.id === row.id) : null; if (old && old.unit !== unit) return err("not_allowed");
+      const name = (auth.name || "").trim(), now = new Date().toISOString(), src = appr && ["Self", "CEO", "DCEO", "Group Strategy"].includes(row.source) ? row.source : (old ? old.source : "Self");
+      const rec = { week: "", issue: "", action: "", owner: "", due: "", taskTitle: "", notes: "", closedAt: "", ...(old || {}), ...row, id: old ? old.id : (row.id || Date.now().toString(36) + Math.random().toString(36).slice(2, 8)), unit, status, source: src,
+        createdBy: old ? old.createdBy : name, createdAt: old ? old.createdAt : now, updatedBy: name, updatedAt: now, closedAt: ["Done", "Closed"].includes(status) ? ((old && old.closedAt) || now) : "" };
+      put("actions", rec);
+      addActivity(name, unit, rec.week || "", { action: "corrective", summary: `${old ? "Updated corrective action (" + status + "): " : "Logged corrective action: "}${(rec.action || "").slice(0, 120)}` });
+      return ok({ id: rec.id });
+    },
+    deleteAction(auth, id) { if (!isAppr(auth)) return err("not_allowed"); del("actions", id); return ok(); },
     approverNames: async () => DEFAULT_APPROVERS,
     async uploadEvidence(file, path) { await idbPut(path, file); return { path }; },
     async evidenceUrl(path) { const b = await idbGet(path); if (!b) fail({ code: "not_found", message: "File not found in this browser" }); return URL.createObjectURL(b); },

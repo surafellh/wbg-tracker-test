@@ -2,9 +2,10 @@
 // Colours come from the --viz-* tokens in style.css (validated for colour-blind separation in light and dark mode).
 
 const real = (p) => ((p && p.tasks) || []).filter((t) => t.kind !== "KPI / OKR");
-const pctOf = (t) => (t.status === "Done" ? 100 : typeof t.pct === "number" ? t.pct : null);
+// A task with no status or no % counts as 0, so the average cannot look better than the work really is.
+const pctOf = (t) => (t.status === "Done" ? 100 : typeof t.pct === "number" ? t.pct : 0);
 const avg = (a) => (a.length ? Math.round(a.reduce((x, y) => x + y, 0) / a.length) : null);
-const addDays = (s, n) => { const d = new Date(Date.parse(s + "T00:00:00Z") + n * 864e5); return d.toISOString().slice(0, 10); };
+import { weekEndOf } from "./rules.js";
 
 export function unitMetrics(plan, asOf) {
   const t = real(plan);
@@ -36,7 +37,7 @@ export function renderDashboard(c) {
   const { esc, fmt, weekLabel } = c.h;
   const units = c.units.filter((u) => !c.filter.type || u.type === c.filter.type);
   if (!units.length) return `<div class="panel"><div class="empty"><b>No units to show</b></div></div>`;
-  const asOf = (w) => (addDays(w, 5) < c.today ? addDays(w, 5) : c.today);
+  const asOf = (w) => (weekEndOf(w) < c.today ? weekEndOf(w) : c.today);
   const series = c.weeks.map((w) => ({ w, ...weekMetrics(c.byWeek[w] || {}, units, asOf(w)) }));
   const cur = series.find((s) => s.w === c.week) || series[series.length - 1];
   const prev = series[series.indexOf(cur) - 1];

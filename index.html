@@ -20,12 +20,13 @@
       </div>
       <div class="weeknav" aria-label="Choose week">
         <button id="prevWeek" aria-label="Previous week">‹</button>
-        <div class="label"><b id="weekLabel">—</b><span id="weekSub">Week starting Monday</span></div>
+        <div class="label"><b id="weekLabel">—</b><span id="weekSub">Week starting Saturday</span></div>
         <button id="nextWeek" aria-label="Next week">›</button>
         <button id="thisWeek" class="today-btn">This week</button>
       </div>
     </div>
     <div class="chip-row"><span id="heroChips" style="display:contents"></span><button class="hero-chip who-btn" id="whoBtn" type="button" aria-label="Sign in or change who is updating"></button><span class="hero-chip" id="modeChip" hidden title="No Supabase keys in .env: data is kept in this browser only">Local test mode</span></div>
+    <div class="hero-prog" id="heroProg" hidden></div>
     <nav class="tabs" role="tablist">
       <button role="tab" data-tab="dashboard" aria-selected="true">Dashboard</button>
       <button role="tab" data-tab="overview" aria-selected="false">Overview</button>
@@ -35,6 +36,8 @@
       <button role="tab" data-tab="tasks" aria-selected="false">All tasks</button>
       <button role="tab" data-tab="monthly" aria-selected="false">Monthly report</button>
       <button role="tab" data-tab="approvals" aria-selected="false">Approvals <span class="badge" id="apprCount" hidden></span></button>
+      <button role="tab" data-tab="support" aria-selected="false">Business support</button>
+      <button role="tab" data-tab="fb" aria-selected="false">Feedback <span class="badge" id="fbCount" hidden></span></button>
       <button role="tab" data-tab="activity" aria-selected="false">Activity</button>
       <button role="tab" data-tab="units" aria-selected="false" id="unitsTabBtn" hidden>Units</button>
     </nav>
@@ -45,6 +48,7 @@
   <div class="empty"><b>Loading weekly plans…</b>Connecting to the shared plan store.</div>
 </main>
 <div id="modalRoot"></div>
+<div id="xModalRoot"></div>
 <div id="whoRoot"></div>
 <div class="toast" id="toast" hidden></div>
 
