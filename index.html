@@ -18,24 +18,26 @@
         <h1 id="heroTitle">Weekly Activity Tracking</h1>
         <p class="hero-sub" id="heroSub">Each function and business unit enters and updates its plan for the week.</p>
       </div>
+      <div class="hero-right">
+      <button class="bell" id="bellBtn" type="button" aria-label="Notifications: changes waiting for approval" title="Changes waiting for approval"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg><span class="badge" id="apprCount" hidden></span></button>
       <div class="weeknav" aria-label="Choose week">
         <button id="prevWeek" aria-label="Previous week">‹</button>
         <div class="label"><b id="weekLabel">—</b><span id="weekSub">Week starting Saturday</span></div>
         <button id="nextWeek" aria-label="Next week">›</button>
         <button id="thisWeek" class="today-btn">This week</button>
       </div>
+      </div>
     </div>
     <div class="chip-row"><span id="heroChips" style="display:contents"></span><button class="hero-chip who-btn" id="whoBtn" type="button" aria-label="Sign in or change who is updating"></button><span class="hero-chip" id="modeChip" hidden title="No Supabase keys in .env: data is kept in this browser only">Local test mode</span></div>
     <div class="hero-prog" id="heroProg" hidden></div>
     <nav class="tabs" role="tablist">
       <button role="tab" data-tab="dashboard" aria-selected="true">Dashboard</button>
-      <button role="tab" data-tab="overview" aria-selected="false">Overview</button>
       <button role="tab" data-tab="update" aria-selected="false">This week's update</button>
       <button role="tab" data-tab="plan" aria-selected="false">Next week's plan</button>
       <button role="tab" data-tab="follow" aria-selected="false">Follow-up</button>
       <button role="tab" data-tab="tasks" aria-selected="false">All tasks</button>
       <button role="tab" data-tab="monthly" aria-selected="false">Monthly report</button>
-      <button role="tab" data-tab="approvals" aria-selected="false">Approvals <span class="badge" id="apprCount" hidden></span></button>
+      <button role="tab" data-tab="approvals" aria-selected="false" hidden id="apprTabBtn">Approvals</button>
       <button role="tab" data-tab="support" aria-selected="false">Business support</button>
       <button role="tab" data-tab="fb" aria-selected="false">Feedback <span class="badge" id="fbCount" hidden></span></button>
       <button role="tab" data-tab="activity" aria-selected="false">Activity</button>

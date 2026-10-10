@@ -1,4 +1,4 @@
-# WBG Weekly Activity Tracking (v3, stage 1)
+# WBG Weekly Activity Tracking (v3, stage 1b)
 
 Weekly plans, progress, Ethiopian-calendar monthly reports and an activity log for Wagwago Business Group's functions and business units.
 Vite + vanilla JS front end; data is stored in a free Supabase (Postgres) project.
@@ -36,6 +36,15 @@ Both hosts: connect the Git repository, then set the `VITE_` variables in the ho
 
 - **Vercel:** New Project > import the repo. Framework preset: Vite. Build command `npm run build`, output directory `dist`. Add the environment variables, then Deploy.
 - **Netlify:** Add new site > import the repo. Build command `npm run build`, publish directory `dist`. Add the environment variables under Site configuration, then Deploy.
+
+## What is new in stage 1b
+- **Dark mode** is now neutral black with a richer golden yellow. Light mode is unchanged.
+- **One Dashboard.** Overview is merged into the Dashboard: KPIs and trend on top, then the unit table, blockers and asks, and the task list. There is no separate Overview tab.
+- **Approvals** moved behind the bell icon at the top right (it shows how many changes are waiting). A later stage replaces it with notifications that open the task.
+- **Starting data** (`supabase/seed.sql`, and the local test data) is rebuilt from the 10 Oct 2026 export. Plans saved for Monday 12 Oct are in the week of Sat 10 Oct; Niyat's later plans are in the weeks of 17 Oct, 24 Oct and 31 Oct.
+
+### Loading the new seed into the TEST project
+Run in the SQL Editor, in this order: `truncate activity, plans, units;` then the whole of `supabase/seed.sql`. (The truncate removes the old Monday-dated rows so nothing is duplicated; test project only.) Business support, feedback and corrective actions are not touched.
 
 ## What is new in version 3 (stage 1)
 - **This week's update** columns are now: Task, Type, Department, Due, Priority, Status update, %, Note, Evidence, Owner. Dependencies go in the Note.

@@ -540,13 +540,13 @@ applyPlugin(jsPDF); window.jspdf = { jsPDF }; window.XLSX = XLSX;
     document.querySelectorAll("nav.tabs button").forEach(b => b.setAttribute("aria-selected", String(b.dataset.tab===state.tab)));
     $("#unitsTabBtn").hidden = !isAppr();
     const nb = X.badgeCount(), fbb = $("#fbCount"); if (fbb) { fbb.textContent = nb; fbb.hidden = !nb; }
-    const np = pendingFor().length, ab = $("#apprCount"); if (ab) { ab.textContent = np; ab.hidden = !np; }
+    const np = pendingFor().length, ab = $("#apprCount"); if (ab) { ab.textContent = np; ab.hidden = !np; } const bb = $("#bellBtn"); if (bb) bb.classList.toggle("has", !!np);
     const role = isAppr() ? "Group Strategy approver" : rights.unitOk ? unitName(auth().unit) : "view only";
     $("#whoBtn").innerHTML = myId ? `<b>${esc(myId)}</b> · ${esc(role)} · change` : "Sign in to update";
     $("#modeChip").hidden = dataMode !== "local";
   }
 
-  function renderOverview(){
+  function renderOverview(merged){
     if (!state.units.length) return `<div class="panel"><div class="empty"><b>No units set up yet</b>${isAppr() ? "Open the Units tab to add the functions and business units that report weekly." : "The Strategy Office has not added the reporting units yet."}</div></div>`;
     const rows = sortedUnits().map(u => ({ u, p: state.plans[u.id], s: summarize(state.plans[u.id]) }));
     const tot = rows.reduce((a,r) => ({ total: a.total+r.s.total, done: a.done+r.s.done, blocked: a.blocked+r.s.blocked, high: a.high+r.s.high, highDone: a.highDone+r.s.highDone, overdue: a.overdue+r.s.overdue }), { total:0, done:0, blocked:0, high:0, highDone:0, overdue:0 });
@@ -579,10 +579,10 @@ applyPlugin(jsPDF); window.jspdf = { jsPDF }; window.XLSX = XLSX;
       <div class="ask"><div class="who">${esc(u.name)}</div>
       ${p.blockers ? `<p><b>Blockers:</b> ${esc(p.blockers)}</p>` : ""}
       ${p.asks ? `<p><b>Asks:</b> ${esc(p.asks)}</p>` : ""}</div>`).join("");
-    return `${stats}
-    <div class="grid2">
+    return `${merged ? "" : stats}
+    <div class="grid2" style="${merged ? "margin-top:16px;grid-template-columns:minmax(0,1fr)" : ""}">
       <div class="panel">
-        <div class="panel-head"><h2>Units this week</h2><div class="toolbar"><span class="muted small">Select a unit to open its plan</span>${downloads ? `<button class="btn primary" id="pdfBtn">Performance report (PDF)</button><button class="btn" id="xlsxAllBtn">All plans (Excel)</button>` : ""}</div></div>
+        <div class="panel-head"><h2>Units this week</h2><div class="toolbar"><span class="muted small">Select a unit to open its plan</span>${downloads ? `${merged ? "" : `<button class="btn primary" id="pdfBtn">Performance report (PDF)</button>`}<button class="btn" id="xlsxAllBtn">All plans (Excel)</button>` : ""}</div></div>
         <div class="scroll"><table>
           <thead><tr><th>Unit</th><th>Plan</th><th>Tasks</th><th>Done</th><th>High</th><th>Blocked / overdue</th><th>Avg. complete</th><th>Last update</th></tr></thead>
           <tbody>${tr}</tbody></table></div>
@@ -980,9 +980,8 @@ applyPlugin(jsPDF); window.jspdf = { jsPDF }; window.XLSX = XLSX;
     let html = bannerMsg ? `<div class="banner warn">${esc(bannerMsg)}</div>` : "";
     if (!db) html += `<div class="banner warn">Not connected to the database, so plans cannot be loaded or saved.</div>`;
     if (!state.unitsLoaded || !state.plansLoaded) html += `<div class="panel"><div class="empty"><b>Loading weekly plans…</b>Fetching plans for ${esc(weekLabel(state.week))}.</div></div>`;
-    else if (state.tab==="dashboard") html += renderDash();
-    else if (state.tab==="overview") html += renderOverview() + renderOvTasks();
-    else if (state.tab==="update") html += planBanner() + renderUpdate();
+    else if (state.tab==="dashboard") html += renderDash() + renderOverview(true) + renderOvTasks();
+        else if (state.tab==="update") html += planBanner() + renderUpdate();
     else if (state.tab==="plan") html += planBanner() + renderUpdate() + renderImport();
     else if (state.tab==="tasks") html += renderTasks();
     else if (state.tab==="follow") html += renderFollow();
@@ -1185,6 +1184,7 @@ applyPlugin(jsPDF); window.jspdf = { jsPDF }; window.XLSX = XLSX;
     render();
   });
   main.addEventListener("keydown", e => { const h = e.target.closest && e.target.closest("th[data-sort]"); if (h && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); h.click(); } });
+  $("#bellBtn").onclick = () => goTab("approvals");
   function goTab(to){ const b = document.querySelector(`nav.tabs button[data-tab="${to}"]`); if (b) b.click(); }
   async function openEvidence(spec){
     const [u, i, k] = spec.split("|"), e = ((planFor(u) || {}).tasks || [])[Number(i)]?.ev?.[Number(k)];
