@@ -432,3 +432,16 @@ main{padding-block:16px 48px}
 .gate-tabs{display:flex;gap:2px;padding:3px;background:var(--neutral-bg);border-radius:10px;margin:2px 0 12px}
 .gate-tabs button{flex:1;background:transparent;border:0;border-radius:8px;padding:8px 10px;font-weight:600;cursor:pointer;color:var(--muted)}
 .gate-tabs button[aria-selected="true"]{background:var(--surface);color:var(--ink);box-shadow:0 1px 2px rgba(60,50,10,.12)}
+
+/* Dashboard filter bar (as in the mockup) */
+.dash-bar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:14px}
+.seg{display:inline-flex;gap:2px;padding:3px;background:var(--neutral-bg);border-radius:10px}
+.seg button{background:transparent;border:0;border-radius:8px;padding:6px 14px;cursor:pointer;font-weight:600;color:var(--muted)}
+.seg button[aria-selected="true"]{background:var(--surface);color:var(--ink);box-shadow:0 1px 2px rgba(60,50,10,.12)}
+.dpop-wrap{position:relative}
+.dpop{position:absolute;z-index:40;top:calc(100% + 6px);left:0;width:270px;max-height:60vh;overflow:auto;background:var(--surface);border:1px solid var(--line);border-radius:12px;box-shadow:0 12px 36px rgba(0,0,0,.2);padding:8px}
+.dpop label{display:flex;gap:8px;align-items:center;padding:5px 6px;border-radius:6px;cursor:pointer}
+.dpop label:hover{background:var(--brand-soft)}
+.dpop-top{display:flex;flex-wrap:wrap;gap:4px 12px;padding:2px 6px 8px;border-bottom:1px solid var(--line);margin-bottom:4px}
+.dpop-g{font-size:10.5px;text-transform:uppercase;letter-spacing:.07em;color:var(--muted);font-weight:600;padding:8px 6px 2px}
+.dash-note{margin-left:auto}

@@ -45,7 +45,7 @@ applyPlugin(jsPDF); window.jspdf = { jsPDF }; window.XLSX = XLSX;
   };
   let db = null, api = null, downloads = null, myId = null, isOwner = false, me = null, dataMode = "";
   // The signed-in person (from the database). The database checks every save again.
-  state.requests = []; state.dash = { type: "", range: 8 }; state.dashData = null; state.dashKey = "";
+  state.requests = []; state.dash = { type: "", units: [], period: "week", pop: false, range: 8 }; state.dashData = null; state.dashKey = "";
   state.level = "tasks"; state.history = null; state.lastSave = null; state.base = {}; state.unlock = new Set(); state.reqNotes = {}; state.people = null; state.pu = {};
   const auth = () => me ? { name: me.name || "", role: me.role, title: me.title || "", unit: me.unit || "", departments: me.departments || [] } : {};
   const isAppr = () => isAdmin(me);
@@ -543,7 +543,7 @@ applyPlugin(jsPDF); window.jspdf = { jsPDF }; window.XLSX = XLSX;
   function sortedUnits(){ return [...state.units].sort((a,b) => (a.type||"").localeCompare(b.type||"") || (a.order??99)-(b.order??99) || a.name.localeCompare(b.name)); }
 
   const GROUPS = { dashboard: ["dashboard"], plans: ["update", "plan", "approvals"], delivery: ["support", "fb"], reports: ["tasks", "monthly"] };
-  const SUB_LABEL = { update: "Progress update", plan: "Next plan", approvals: "Approvals", support: "Business support", fb: "Feedback", tasks: "All tasks", monthly: "Monthly report" };
+  const SUB_LABEL = { update: "Progress update", plan: "Next plan", approvals: "Approvals", support: "Business support", fb: "Feedback", tasks: "Weekly report", monthly: "Monthly report" };
   const PAGE_TITLE = { dashboard: ["Dashboards", "How every unit and function is doing this week."], update: ["Plans", "Update progress on this week's tasks."], plan: ["Plans", "Plan the tasks for next week."], approvals: ["Plans", "Changes waiting for approval."], support: ["Delivery", "Support requested from group functions."], fb: ["Delivery", "Feedback and corrective actions."], tasks: ["Reports", "Every task, filtered and downloadable."], monthly: ["Reports", "Consolidated by Ethiopian calendar month."], follow: ["Follow-up", ""], activity: ["Activity log", "Who changed what, and when."], units: ["Settings · Units", "Group Strategy only."], people: ["Settings · People", "Group Strategy only."] };
   const groupOf = t => Object.keys(GROUPS).find(g => GROUPS[g].includes(t)) || "";
   function renderHero(){
@@ -1061,8 +1061,8 @@ applyPlugin(jsPDF); window.jspdf = { jsPDF }; window.XLSX = XLSX;
     const alerts = sortedUnits().flatMap(u => unitAlerts({ unit: u, plan: state.plans[u.id], weekPlans: state.plans, week: state.week, thisMonday: thisMonday(), today: todayIso, requests: [] })).sort((a, b) => levelRank[a.level] - levelRank[b.level]);
     const w = ($("#main").clientWidth || 1000);
     return renderDashboard({ weeks: state.dashData.weeks, byWeek: by, byWeekAll: byAll, units: sortedUnits(), week: state.week, today: todayIso, filter: { ...state.dash, level: state.level },
-      alerts: alerts.filter(a => !state.dash.type || unitOf(a.unit).type === state.dash.type), pending: pendingFor().length, downloads,
-      width: w > 900 ? Math.floor((w - 16) * 2 / 3) - 34 : w - 34, unitName, h: { esc, fmt, weekLabel } });
+      alerts: alerts.filter(a => (!state.dash.type || unitOf(a.unit).type === state.dash.type) && (!state.dash.units.length || state.dash.units.includes(a.unit))), pending: pendingFor().length, downloads,
+      width: w > 900 ? Math.floor((w - 16) * 2 / 3) - 34 : w - 34, unitName, h: { esc, fmt, weekLabel, toEth, ethMonth: w => ethName(toEth(w)) } });
   }
 
   // ---------- events ----------
@@ -1086,6 +1086,9 @@ applyPlugin(jsPDF); window.jspdf = { jsPDF }; window.XLSX = XLSX;
     if (!t) return;
     if (t.dataset.tgl) { const k = t.dataset.tgl; state.expanded.has(k) ? state.expanded.delete(k) : state.expanded.add(k); render(); return; }
     if (t.matches("tr[data-open-unit], .hbar-row[data-open-unit]") || (t.dataset.openUnit && t.matches("button"))) { openUnit(t.dataset.openUnit); return; }
+    if (t.dataset.dper) { state.dash.period = t.dataset.dper; state.dash.range = t.dataset.dper === "quarter" ? 13 : 8; render(); ensureDash(); return; }
+    if (t.id === "dPopBtn") { state.dash.pop = !state.dash.pop; render(); return; }
+    if (t.dataset.dgrp) { const g = t.dataset.dgrp; state.dash.units = g === "all" ? [] : state.units.filter(u => (u.type || "") === g).map(u => u.id); render(); return; }
     if (t.dataset.goto) { goTab(t.dataset.goto); return; }
     if (t.dataset.unlock) { state.unlock.add(t.dataset.unlock); render(); const el = document.getElementById("t-title-" + t.dataset.unlock); if (el) el.focus(); toast("Edit the task. Saving sends the change to Group Strategy for approval."); return; }
     if (t.dataset.withdraw) { api.withdrawRequest(auth(), t.dataset.withdraw).then(r => toast(r.error ? errText(r) : "Request withdrawn")).catch(x => toast(errText(x))); return; }
@@ -1214,6 +1217,7 @@ applyPlugin(jsPDF); window.jspdf = { jsPDF }; window.XLSX = XLSX;
     else if (el.dataset.unitType) { const id = el.dataset.unitType; api.saveUnit(auth(), "update", { id, type: el.value }, `Unit type set to ${el.value}`).then(r => toast(r.error ? errText(r) : "Unit type updated")); }
     else if (el.dataset.evAdd) { if (el.files && el.files.length) addEvidence(el.dataset.evAdd, el.files); el.value = ""; }
     else if (el.id === "restoreFile") { if (el.files && el.files[0]) readRestore(el.files[0]); }
+    else if (el.dataset.dunit) { const s = new Set(state.dash.units); el.checked ? s.add(el.dataset.dunit) : s.delete(el.dataset.dunit); state.dash.units = [...s]; render(); }
     else if (el.id === "dType") { state.dash.type = el.value; render(); }
     else if (el.id === "dRange") { state.dash.range = Number(el.value); render(); }
     else if (el.dataset.reqNote) { state.reqNotes[el.dataset.reqNote] = el.value; }

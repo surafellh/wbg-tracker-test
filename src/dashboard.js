@@ -35,25 +35,37 @@ const heatBin = (v) => (v === null ? -1 : v < 20 ? 0 : v < 40 ? 1 : v < 60 ? 2 :
 
 export function renderDashboard(c) {
   const { esc, fmt, weekLabel } = c.h;
-  const units = c.units.filter((u) => !c.filter.type || u.type === c.filter.type);
+  const sel = c.filter.units || [], per0 = c.filter.period || "week";
+  const units = c.units.filter((u) => (!c.filter.type || u.type === c.filter.type) && (!sel.length || sel.includes(u.id)));
   if (!units.length) return `<div class="panel"><div class="empty"><b>No units to show</b></div></div>`;
   const asOf = (w) => (weekEndOf(w) < c.today ? weekEndOf(w) : c.today);
   const series = c.weeks.map((w) => ({ w, ...weekMetrics(c.byWeek[w] || {}, units, asOf(w)) }));
-  const cur = series.find((s) => s.w === c.week) || series[series.length - 1];
-  const prev = series[series.indexOf(cur) - 1];
+  let cur = series.find((s) => s.w === c.week) || series[series.length - 1];
+  const prev = per0 === "week" ? series[series.indexOf(cur) - 1] : null;
+  const winWeeks = per0 === "week" ? [c.week] : per0 === "quarter" ? c.weeks : c.weeks.filter((w) => { const a = c.h.toEth(w), b = c.h.toEth(c.week); return a.y === b.y && a.m === b.m; });
+  if (per0 !== "week") {
+    const byU = {};
+    units.forEach((u) => { const m = new Map(); let last = null; winWeeks.forEach((w) => { const p = (c.byWeek[w] || {})[u.id]; if (!p) return; last = p; real(p).forEach((t) => m.set(t.ref || t.id, t)); }); if (last) byU[u.id] = { ...last, tasks: [...m.values()] }; });
+    cur = { w: c.week, ...weekMetrics(byU, units, asOf(c.week)) };
+  }
+  const perLabel = per0 === "week" ? "this week" : per0 === "month" ? "this month" : "this quarter (last 13 weeks)";
   const delta = prev && prev.donePct !== null && cur.donePct !== null ? cur.donePct - prev.donePct : null;
 
-  const filters = `<div class="toolbar dash-filters" role="group" aria-label="Dashboard filters">
-    <label class="small muted" for="dType">Show</label><select id="dType"><option value="">All units</option><option ${c.filter.type === "Corporate function" ? "selected" : ""}>Corporate function</option><option ${c.filter.type === "Business unit" ? "selected" : ""}>Business unit</option></select>
-    <label class="small muted" for="dRange">Trend</label><select id="dRange">${[8, 12].map((n) => `<option value="${n}" ${c.filter.range === n ? "selected" : ""}>Last ${n} weeks</option>`).join("")}</select>
-    <label class="small muted" for="dLevel">Count</label><select id="dLevel"><option value="deliverables" ${c.filter.level === "deliverables" ? "selected" : ""}>Deliverables</option><option value="tasks" ${c.filter.level === "tasks" ? "selected" : ""}>All tasks</option></select>
-    <label class="small muted" for="dCat">Category</label><select id="dCat"><option value="">All</option>${["Operational", "Revenue"].map((k) => `<option ${c.filter.category === k ? "selected" : ""}>${k}</option>`).join("")}</select>
-    <span class="small muted">Week of ${esc(weekLabel(c.week))} · use the arrows above to change week</span>
+  const nSel = sel.length, selLbl = !nSel ? "All units and functions" : nSel === 1 ? esc(c.unitName(sel[0])) : nSel + " selected";
+  const grp = (t, lbl) => { const us = c.units.filter((u) => (u.type || "") === t); return us.length ? `<div class="dpop-g">${lbl}</div>${us.map((u) => `<label><input type="checkbox" data-dunit="${esc(u.id)}" ${sel.includes(u.id) ? "checked" : ""}>${esc(u.name)}</label>`).join("")}` : ""; };
+  const types = [...new Set(c.units.map((u) => u.type || ""))];
+  const filters = `<div class="dash-bar" role="group" aria-label="Dashboard filters">
+    <div class="seg" role="tablist">${[["week", "Weekly"], ["month", "Monthly"], ["quarter", "Quarterly"]].map(([k, l]) => `<button role="tab" data-dper="${k}" aria-selected="${per0 === k}">${l}</button>`).join("")}</div>
+    <div class="dpop-wrap"><button class="btn" id="dPopBtn" aria-expanded="${!!c.filter.pop}">${selLbl} <span aria-hidden="true">▾</span></button>
+      ${c.filter.pop ? `<div class="dpop" id="dPop"><div class="dpop-top"><button class="lnk" data-dgrp="all">All</button><button class="lnk" data-dgrp="Business unit">All business units</button><button class="lnk" data-dgrp="Corporate function">All functions</button></div>${types.map((t) => grp(t, esc(t || "Other"))).join("")}</div>` : ""}</div>
+    <select id="dCat" aria-label="Category"><option value="">All categories</option>${["Operational", "Revenue"].map((k) => `<option ${c.filter.category === k ? "selected" : ""}>${k}</option>`).join("")}</select>
+    <select id="dLevel" aria-label="Count"><option value="deliverables" ${c.filter.level === "deliverables" ? "selected" : ""}>Count deliverables</option><option value="tasks" ${c.filter.level === "tasks" ? "selected" : ""}>Count all tasks</option></select>
+    <span class="small muted dash-note">${per0 === "week" ? esc(weekLabel(c.week)) : per0 === "month" ? esc(c.h.ethMonth(c.week)) : "13 weeks to " + esc(fmt(c.week))}</span>
     ${c.downloads ? `<button class="btn" id="pdfBtn">Performance report (PDF)</button>` : ""}</div>`;
 
   const tile = (v, k, sub, cls = "") => `<div class="stat ${cls}"><div class="v">${v}</div><div class="k">${k}</div>${sub ? `<div class="small muted" style="margin-top:4px">${sub}</div>` : ""}</div>`;
   const hero = `<div class="dash-hero panel">
-      <div class="k small muted">Tasks done this week · all ${units.length === c.units.length ? "units" : esc(c.filter.type.toLowerCase() + "s")}</div>
+      <div class="k small muted">Tasks done ${perLabel} · ${units.length === c.units.length ? "all units" : units.length + (units.length === 1 ? " unit" : " units")}</div>
       <div class="hero-fig">${cur.donePct === null ? "–" : cur.donePct + "%"}</div>
       <div class="small">${cur.done} of ${cur.total} tasks${delta === null ? "" : ` · <span class="delta ${delta >= 0 ? "up" : "down"}">${delta >= 0 ? "▲" : "▼"} ${Math.abs(delta)} pts</span> vs last week`}</div>
     </div>`;
@@ -72,7 +84,12 @@ export function renderDashboard(c) {
     if (!rows.length) return "";
     return `<div class="panel" style="margin-top:16px"><div class="panel-head"><h2>Operational and revenue work</h2><span class="small muted">${esc(weekLabel(c.week))}</span></div><div class="stats" style="padding:12px 16px">${rows.map((r) => tile(r.avg === null ? "–" : r.avg + "%", `${esc(r.k)} · average % complete`, `${r.done} of ${r.n} tasks done`)).join("")}</div></div>`;
   })();
-  return `${filters}<div class="dash-top">${hero}${tiles}</div>${catSplit}
+  const asksPanel = (() => {
+    const rows = [];
+    units.forEach((u) => { for (let i = winWeeks.length - 1; i >= 0; i--) { const p = (c.byWeek[winWeeks[i]] || {})[u.id]; if (p && (p.blockers || p.asks)) { rows.push({ u, w: winWeeks[i], b: p.blockers, a: p.asks }); break; } } });
+    return `<div class="panel" style="margin-top:16px"><div class="panel-head"><h2>Blockers and asks</h2><span class="small muted">Latest entered by each unit${per0 === "week" ? "" : " in this period"}</span></div>${rows.length ? `<div class="asks">${rows.map((r) => `<div class="ask"><div class="who"><button class="lnk" data-open-unit="${esc(r.u.id)}">${esc(r.u.name)}</button> · ${esc(weekLabel(r.w))}</div>${r.b ? `<p><b>Blocker:</b> ${esc(r.b)}</p>` : ""}${r.a ? `<p><b>Ask:</b> ${esc(r.a)}</p>` : ""}</div>`).join("")}</div>` : `<div class="empty" style="padding:20px 16px"><b>No blockers or asks</b>Units add them when they update their plan.</div>`}</div>`;
+  })();
+  return `${filters}<div class="dash-top">${hero}${tiles}</div>${catSplit}${asksPanel}
     <div class="grid2" style="margin-top:16px">
       <div class="panel"><div class="panel-head"><h2>Weekly trend</h2><span class="small muted">% of tasks done and average % complete, per week</span></div>${trendChart(series, c)}</div>
       <div class="panel"><div class="panel-head"><h2>Escalations</h2><span class="small muted">Found automatically</span></div>${escalations(c)}</div>
