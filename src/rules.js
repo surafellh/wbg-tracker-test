@@ -6,7 +6,7 @@
 // task, needs approval. Status, %, notes, owner, dependencies and evidence stay open.
 export const LOCKED = ["title", "kind", "dept", "outcome", "due", "priority"];
 // Fields compared when working out what changed (lu / lb are "last updated" stamps, not content).
-export const TASK_FIELDS = ["title", "kind", "dept", "outcome", "owner", "due", "priority", "prevStatus", "prevPct", "status", "pct", "completedAt", "depUnit", "dep", "notes", "ev", "carried", "carriedCount", "blockedSince"];
+export const TASK_FIELDS = ["title", "kind", "dept", "outcome", "owner", "due", "priority", "prevStatus", "prevPct", "status", "pct", "completedAt", "depUnit", "dep", "notes", "ev", "carried", "carriedCount", "blockedSince", "category", "target", "measure", "actual", "lower"];
 export const DEFAULT_APPROVERS = ["Surafel", "Surafel Hailu", "Ataklti", "Ataklti Nega"];
 
 const pad = (n) => String(n).padStart(2, "0");
@@ -54,11 +54,24 @@ export function isApproverName(name, list = DEFAULT_APPROVERS) {
   return (list || []).some((a) => { const k = String(a || "").trim().toLowerCase(); return k && (n.startsWith(k) || n.includes(k)); });
 }
 
+// % complete from a target and an actual figure. null when either is missing.
+// Higher is better by default; with "lower is better" (cost, delay) meeting or beating the target is 100%.
+export function calcPct(t) {
+  if (!t || t.target === "" || t.target == null || t.actual === "" || t.actual == null) return null;
+  const tg = Number(t.target), ac = Number(t.actual);
+  if (!isFinite(tg) || !isFinite(ac)) return null;
+  if (t.lower) return ac <= tg ? 100 : ac <= 0 ? 0 : Math.max(0, Math.min(100, Math.round((tg / ac) * 100)));
+  if (tg <= 0) return null;
+  return Math.max(0, Math.min(100, Math.round((ac / tg) * 100)));
+}
+export const CATEGORIES = ["Operational", "Revenue"];
+
 const same = (f, a, b) => {
   if (f === "kind") return (a || "Task") === (b || "Task");
   if (f === "ev") return JSON.stringify(a || []) === JSON.stringify(b || []);
   if (f === "pct" || f === "prevPct" || f === "carriedCount") return (a ?? null) === (b ?? null) || (a === "" && b == null) || (b === "" && a == null);
-  if (f === "carried") return !!a === !!b;
+  if (f === "carried" || f === "lower") return !!a === !!b;
+  if (f === "target" || f === "actual") return (a === "" || a == null ? "" : Number(a)) === (b === "" || b == null ? "" : Number(b));
   return String(a ?? "") === String(b ?? "");
 };
 

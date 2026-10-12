@@ -2,8 +2,10 @@ import "./style.css";
 import * as XLSX from "xlsx";
 import { jsPDF } from "jspdf";
 import { applyPlugin } from "jspdf-autotable";
-import { createData, configError, getSession, planFromRow, EVIDENCE, fileType } from "./data.js";
-import { LOCKED, planOps, needsApproval, applyOps, isApproverName, addisToday, addisWeekStart, weekStartOf, weekEndOf, nextWeekOf, prevWeekOf, DEFAULT_APPROVERS } from "./rules.js";
+import { createData, configError, planFromRow, EVIDENCE, fileType } from "./data.js";
+import { startGate } from "./gate.js";
+import { ROLES, ROLE_LABEL, ROLE_HELP, isAdmin, unitMember, deptOk, canUndo, canFeedback, canEditDepartments, roleText } from "./access.js";
+import { LOCKED, planOps, needsApproval, applyOps, addisToday, addisWeekStart, calcPct, CATEGORIES, weekStartOf, weekEndOf, nextWeekOf, prevWeekOf } from "./rules.js";
 import { unitAlerts, levelRank, BLOCKED_DAYS } from "./alerts.js";
 import { renderDashboard } from "./dashboard.js";
 import { createExtras } from "./extras.js";
@@ -39,15 +41,19 @@ applyPlugin(jsPDF); window.jspdf = { jsPDF }; window.XLSX = XLSX;
     imp: null, impUnit: "", impPrefill: false, impDefaultUnit: "", importing: false,
     monthBasis: "end", monthByDept: false, monthData: null, monthLoading: false, monthKey: "",
   };
-  let db = null, api = null, downloads = null, myId = null, isOwner = false, session = null, dataMode = "";
-  // rights: what the current person may do. Checked again by the database on every save.
-  let rights = { unitOk: false, approver: false };
-  state.requests = []; state.approverNames = DEFAULT_APPROVERS; state.dash = { type: "", range: 8 }; state.dashData = null; state.dashKey = "";
-  state.history = null; state.lastSave = null; state.base = {}; state.unlock = new Set(); state.pinStatus = null; state.reqNotes = {};
-  const auth = () => { const s = session ? session.get() : {}; return { name: (s.name || "").trim(), unit: s.unit || "", pin: s.pin || "", code: s.code || "" }; };
-  const isAppr = () => !!rights.approver;
-  const canEdit = u => isAppr() || (rights.unitOk && auth().unit === u);
-  const myUnit = () => rights.unitOk ? auth().unit : "";
+  let db = null, api = null, downloads = null, myId = null, isOwner = false, me = null, dataMode = "";
+  // The signed-in person (from the database). The database checks every save again.
+  state.requests = []; state.dash = { type: "", range: 8 }; state.dashData = null; state.dashKey = "";
+  state.history = null; state.lastSave = null; state.base = {}; state.unlock = new Set(); state.reqNotes = {}; state.people = null; state.pu = {};
+  const auth = () => me ? { name: me.name || "", role: me.role, title: me.title || "", unit: me.unit || "", departments: me.departments || [] } : {};
+  const isAppr = () => isAdmin(me);
+  const isLenient = () => !!me && (me.role === "leader" || me.role === "planning");
+  const canEdit = u => isAppr() || unitMember(me, u);
+  const canLead = u => !!u && (isAppr() || (!!me && ["leader", "planning", "manager"].includes(me.role) && me.unit === u));
+  const myUnit = () => me && unitMember(me, me.unit) ? me.unit : "";
+  const mayUndo = () => canUndo(me);
+  const mayDepts = u => canEditDepartments(me, u);
+  const rowEd = (u, t) => !canEdit(u) ? false : (isAppr() || isLenient() || deptOk(me, u, t.dept) || (!t.dept && !savedTask(u, t)));
   let unsubPlans = null;
   const store = { get(k){ try { return localStorage.getItem(k); } catch(e){ return null; } }, set(k,v){ try { localStorage.setItem(k,v); } catch(e){} } };
   const savedUnit = store.get("wp-unit"); if (savedUnit) state.editUnit = savedUnit;
@@ -126,7 +132,7 @@ applyPlugin(jsPDF); window.jspdf = { jsPDF }; window.XLSX = XLSX;
   // ---------- saving: direct changes save now, the rest goes to Group Strategy for approval ----------
   const newId = () => `${Date.now().toString(36)}${uid()}`;
   const ERR = {
-    not_allowed: "Your PIN or approver code does not allow this change. Use the name button at the top to sign in again.",
+    not_allowed: "Your role does not allow this change. If your access was just changed, sign out and in again.", cannot_change_self: "You cannot remove your own Group Strategy access.", title_needed: "Choose CEO or DCEO.", unit_needed: "Choose the unit.", department_needed: "Choose at least one department.", bad_email: "That is not a valid email.", already_registered: "That email already has an account.", name_needed: "Enter a full name.",
     conflict: "Someone saved this plan a moment ago. Their version is now loaded underneath yours: press Save again to add your changes.",
     needs_approval: "This change needs Group Strategy approval.", not_pending: "That request was already decided.",
     too_late: "Undo is only possible for 30 minutes after your own save.", not_found: "Nothing to restore.",
@@ -156,8 +162,9 @@ applyPlugin(jsPDF); window.jspdf = { jsPDF }; window.XLSX = XLSX;
     const ops = planOps(saved, draft);
     if (!ops.length) return { nothing: true };
     const monday = thisMonday(), appr = isAppr();
-    const direct = appr ? ops : ops.filter(o => !needsApproval(o, week, monday, todayIso));
-    const queued = appr ? [] : ops.filter(o => needsApproval(o, week, monday, todayIso));
+    const need = o => isLenient() ? (week < monday || (o.op === "set" && o.f === "completedAt" && o.to && o.to !== todayIso && week === monday)) : needsApproval(o, week, monday, todayIso);
+    const direct = appr ? ops : ops.filter(o => !need(o));
+    const queued = appr ? [] : ops.filter(o => need(o));
     const res = { saved: false, requested: 0 };
     if (direct.length) {
       const latest = opts.latest !== undefined ? opts.latest : (week === state.week ? state.plans[u] : saved);
@@ -189,7 +196,7 @@ applyPlugin(jsPDF); window.jspdf = { jsPDF }; window.XLSX = XLSX;
     state.dirty = false; state.remoteChanged = false; state.dirtyUnits = new Set();
     loadDraft(); render();
     const msg = [saved && (isAll() ? `Saved ${saved} plan${saved === 1 ? "" : "s"}` : "Plan saved"), requested && `${requested} change${requested === 1 ? "" : "s"} sent to Group Strategy for approval`].filter(Boolean).join(" · ") || "Nothing to save";
-    toast(msg, saved && !isAll() && state.lastSave ? { label: "Undo", fn: undoLast } : null);
+    toast(msg, saved && !isAll() && state.lastSave && mayUndo() ? { label: "Undo", fn: undoLast } : null);
   }
   async function undoLast(){
     const ls = state.lastSave; if (!ls) return;
@@ -216,7 +223,7 @@ applyPlugin(jsPDF); window.jspdf = { jsPDF }; window.XLSX = XLSX;
   state.eth = toEth(iso(new Date())); state.monthBasis = "end";
   state.ov = { priority: "High", status: "", unit: "", q: "", all: false };
   state.expanded = new Set(); state.bf = null; state.carryInfo = null; state.carryKey = "";
-  const newFilter = () => ({ unit: "", status: "", statuses: [], priority: "", kind: "", dept: "", q: "", period: "week", from: "", group: false });
+  const newFilter = () => ({ unit: "", status: "", statuses: [], priority: "", kind: "", dept: "", q: "", period: "week", from: "", group: false, category: "" });
   state.filter = newFilter();
   const thisMonday = () => weekStartOf(todayIso);   // start of the current week (Saturday from 10 Oct 2026)
   const nextMonday = () => nextWeekOf(thisMonday());
@@ -323,7 +330,7 @@ applyPlugin(jsPDF); window.jspdf = { jsPDF }; window.XLSX = XLSX;
     const f = state.filter, q = f.q.trim().toLowerCase();
     return poolTasks().filter(t => (!f.unit || t.unit === f.unit)
       && (f.statuses.length ? f.statuses.includes(t.status || "") : (!f.status || (f.status === "none" ? !t.status : t.status === f.status)))
-      && (!f.priority || t.priority === f.priority) && (!f.kind || (t.kind || "Task") === f.kind) && (!f.dept || (t.dept || "") === f.dept)
+      && (!f.priority || t.priority === f.priority) && (!f.kind || (t.kind || "Task") === f.kind) && (!f.category || (t.category || "") === f.category) && (!f.dept || (t.dept || "") === f.dept)
       && (!q || `${t.title} ${t.dept || ""} ${t.owner} ${t.notes}`.toLowerCase().includes(q)));
   }
   const readHead = scope => `${th(scope,"unit","Unit")}${th(scope,"title","Task")}${th(scope,"dept","Department")}${th(scope,"owner","Owner (name)")}${th(scope,"due","Due")}${th(scope,"priority","Priority")}<th>Previous status</th>${th(scope,"status","Status")}${th(scope,"pct","Complete")}<th>Completed on</th><th>Depends on</th><th>Evidence</th><th>Notes</th><th>Updated by</th>`;
@@ -385,6 +392,7 @@ applyPlugin(jsPDF); window.jspdf = { jsPDF }; window.XLSX = XLSX;
           <select id="fStatus" aria-label="Filter by status"><option value="">All statuses</option>${f.statuses.length ? `<option value="__multi__" selected>Selected statuses</option>` : ""}${STATUSES.map(s => `<option ${!f.statuses.length && f.status === s ? "selected" : ""}>${s}</option>`).join("")}<option value="none" ${!f.statuses.length && f.status === "none" ? "selected" : ""}>No status</option></select>
           <select id="fPri" aria-label="Filter by priority"><option value="">All priorities</option>${PRIORITIES.map(p => `<option ${f.priority === p ? "selected" : ""}>${p}</option>`).join("")}</select>
           <select id="fKind" aria-label="Filter by type"><option value="">Tasks and KPI lines</option>${KINDS.map(k => `<option ${f.kind === k ? "selected" : ""}>${k}</option>`).join("")}</select>
+          <select id="fCat" aria-label="Filter by category"><option value="">All categories</option>${CATEGORIES.map(k => `<option ${f.category === k ? "selected" : ""}>${k}</option>`).join("")}</select>
           <input type="text" id="fQ" placeholder="Search tasks, departments or owners" value="${esc(f.q)}" aria-label="Search">
           <label class="small"><input type="checkbox" id="fGroup" ${f.group ? "checked" : ""}> Group by department</label>
         </div>
@@ -538,11 +546,11 @@ applyPlugin(jsPDF); window.jspdf = { jsPDF }; window.XLSX = XLSX;
     $("#thisWeek").textContent = mo ? "This month" : "This week";
     $("#prevWeek").setAttribute("aria-label", mo ? "Previous month" : "Previous week"); $("#nextWeek").setAttribute("aria-label", mo ? "Next month" : "Next week");
     document.querySelectorAll("nav.tabs button").forEach(b => b.setAttribute("aria-selected", String(b.dataset.tab===state.tab)));
-    $("#unitsTabBtn").hidden = !isAppr();
+    $("#unitsTabBtn").hidden = !isAppr(); $("#peopleTabBtn").hidden = !isAppr();
     const nb = X.badgeCount(), fbb = $("#fbCount"); if (fbb) { fbb.textContent = nb; fbb.hidden = !nb; }
     const np = pendingFor().length, ab = $("#apprCount"); if (ab) { ab.textContent = np; ab.hidden = !np; } const bb = $("#bellBtn"); if (bb) bb.classList.toggle("has", !!np);
-    const role = isAppr() ? "Group Strategy approver" : rights.unitOk ? unitName(auth().unit) : "view only";
-    $("#whoBtn").innerHTML = myId ? `<b>${esc(myId)}</b> · ${esc(role)} · change` : "Sign in to update";
+    const role = me ? roleText(me) + (me.unit && !isAppr() && me.role !== "executive" ? " · " + unitName(me.unit) : "") : "";
+    $("#whoBtn").innerHTML = me ? `<b>${esc(me.name)}</b> · ${esc(role)}` : "Sign in";
     $("#modeChip").hidden = dataMode !== "local";
   }
 
@@ -598,17 +606,19 @@ applyPlugin(jsPDF); window.jspdf = { jsPDF }; window.XLSX = XLSX;
   function deptOptions(u, t){
     const list = [...(unitOf(u).departments || [])];
     if (t.dept && !list.includes(t.dept)) list.unshift(t.dept);
-    return `<option value="">${list.length ? "Choose department" : "No department"}</option>` + list.map(d => `<option ${d===t.dept?"selected":""}>${esc(d)}</option>`).join("") + `<option value="__new__">＋ Add a department…</option>`;
+    return `<option value="">${list.length ? "Choose department" : "No department"}</option>` + (isAppr() || isLenient() ? list : list.filter(d => d === t.dept || (me.departments || []).includes(d))).map(d => `<option ${d===t.dept?"selected":""}>${esc(d)}</option>`).join("") + (mayDepts(u) ? `<option value="__new__">＋ Add a department…</option>` : "");
   }
   // A saved task in a week that has started keeps its definition; the unit can ask to change it.
   const savedTask = (u, t) => !!((state.base[u] && state.base[u].tasks) || []).some(x => x.id === t.id);
-  const isLocked = (u, t) => !isAppr() && savedTask(u, t) && state.week <= thisMonday() && !state.unlock.has(t.id);
+  const isLocked = (u, t) => !isAppr() && !isLenient() && savedTask(u, t) && state.week <= thisMonday() && !state.unlock.has(t.id);
   const pendingTask = (u, id) => pendingFor(u, state.week).some(r => (r.patch || []).some(o => o.id === id));
   const fmtSize = n => n >= 1048576 ? (n / 1048576).toFixed(1) + " MB" : Math.max(1, Math.round(n / 1024)) + " KB";
   const sel = (on) => on ? "selected" : "";
+  const hasTgt = t => t.target !== "" && t.target != null && isFinite(Number(t.target));
+  const tgtHtml = (t, dis) => `<div class="tgt small muted"><label>Target <input type="number" step="any" id="t-tg-${t.id}" data-f="target" value="${t.target ?? ""}" placeholder="–" aria-label="Target" ${dis}></label><input type="text" id="t-ms-${t.id}" data-f="measure" value="${esc(t.measure || "")}" placeholder="unit (ETB, %, units)" aria-label="Target unit" maxlength="20" ${dis}><label><input type="checkbox" id="t-lw-${t.id}" data-f="lower" ${t.lower ? "checked" : ""} ${dis}> lower is better</label></div>`;
   function taskRowHtml(u, t, i){
-    const key = `${u}|${i}`, ed = canEdit(u), lk = isLocked(u, t), dis = ed ? "" : "disabled", ldis = (!ed || lk) ? "disabled" : "";
-    const pend = pendingTask(u, t.id), carriedN = t.carriedCount || (t.carried ? 1 : 0);
+    const key = `${u}|${i}`, ed = rowEd(u, t), lk = isLocked(u, t), dis = ed ? "" : "disabled", ldis = (!ed || lk) ? "disabled" : "";
+    const auto = hasTgt(t) && calcPct(t) !== null, pend = pendingTask(u, t.id), carriedN = t.carriedCount || (t.carried ? 1 : 0);
     const tags = [carriedN ? `<span class="tag" title="Brought forward from an earlier week">carried${carriedN > 1 ? ` ${carriedN} weeks` : ""}</span>` : "", pend ? '<span class="pill s-not">change waiting for approval</span>' : "", lk ? '<span class="tag lock" title="Saved task: the title, outcome, type, department, due date and priority are fixed. Use Request change to ask Group Strategy.">🔒 fixed</span>' : ""].join("");
     const main = lk || !ed
       ? `<div class="task-title" title="${esc(t.title)}">${t.priority === "High" ? '<span class="hi-dot" title="High priority"></span>' : ""}${esc(t.title) || '<span class="muted">(no title)</span>'}</div>${t.outcome ? `<div class="task-out"><b>Expected outcome:</b> ${esc(t.outcome)}</div>` : ""}`
@@ -623,13 +633,13 @@ applyPlugin(jsPDF); window.jspdf = { jsPDF }; window.XLSX = XLSX;
     const prevTxt = (t.prevStatus || typeof t.prevPct === "number") ? `<div class="small muted" title="Status at the end of last week">was: ${esc(t.prevStatus || "No status")}${typeof t.prevPct === "number" ? " " + t.prevPct + "%" : ""}</div>` : "";
     const doneTxt = isAppr() ? (t.status === "Done" ? `<label class="small muted">Completed on <input type="date" id="t-cd-${t.id}" data-f="completedAt" value="${esc(t.completedAt || "")}" aria-label="Actual completion date"></label>` : "") : (t.completedAt ? `<div class="small muted" id="t-cd-${t.id}">Done ${esc(fmt(t.completedAt))}</div>` : "");
     return `<tr class="task-row" data-u="${esc(u)}" data-i="${i}">
-      <td class="c-task"><div class="task-main">${main}${tags ? `<div class="task-tags">${tags}</div>` : ""}</div></td>
-      <td class="c-kind"><select id="t-kind-${t.id}" data-f="kind" aria-label="Type" ${ldis}>${KINDS.map(k => `<option ${sel(k === (t.kind || "Task"))}>${k}</option>`).join("")}</select></td>
+      <td class="c-task"><div class="task-main">${main}${tgtHtml(t, dis)}${tags ? `<div class="task-tags">${tags}</div>` : ""}</div></td>
+      <td class="c-kind"><select id="t-kind-${t.id}" data-f="kind" aria-label="Type" ${ldis}>${KINDS.map(k => `<option ${sel(k === (t.kind || "Task"))}>${k}</option>`).join("")}</select><select id="t-cat-${t.id}" data-f="category" aria-label="Category" ${dis} style="margin-top:6px"><option value="" ${sel(!t.category)}>Category</option>${CATEGORIES.map(k => `<option ${sel(k === t.category)}>${k}</option>`).join("")}</select></td>
       <td class="c-dept"><select id="t-dept-${t.id}" data-f="dept" aria-label="Department" ${ldis}>${deptOptions(u, t)}</select></td>
       <td class="c-due"><input type="date" id="t-due-${t.id}" data-f="due" value="${esc(t.due)}" aria-label="Due date" ${ldis}></td>
       <td class="c-pri"><select id="t-pri-${t.id}" data-f="priority" aria-label="Priority" ${ldis}><option value="" ${sel(!t.priority)}>Not set</option>${PRIORITIES.map(p => `<option ${sel(p === t.priority)}>${p}</option>`).join("")}</select></td>
       <td class="c-status"><select id="t-st-${t.id}" data-f="status" aria-label="Status update" ${dis}><option value="" ${sel(!t.status)}>No status</option>${STATUSES.map(x => `<option ${sel(x === t.status)}>${x}</option>`).join("")}</select>${stExtra}${prevTxt}${doneTxt}</td>
-      <td class="c-pct"><input type="number" id="t-pct-${t.id}" data-f="pct" min="0" max="100" step="5" value="${t.pct ?? ""}" placeholder="%" aria-label="Percent complete" ${dis}></td>
+      <td class="c-pct"><input type="number" id="t-pct-${t.id}" data-f="pct" min="0" max="100" step="5" value="${t.pct ?? ""}" placeholder="%" aria-label="Percent complete" ${dis} ${auto ? 'readonly title="Calculated from actual and target"' : ""}>${true ? `<input type="number" step="any" id="t-act-${t.id}" data-f="actual" value="${t.actual ?? ""}" placeholder="Actual" aria-label="Actual figure" title="Actual so far (target ${esc(t.target)} ${esc(t.measure || "")})" ${dis} style="margin-top:6px">` : ""}</td>
       <td class="c-notes"><textarea class="grow" rows="3" id="t-notes-${t.id}" data-f="notes" placeholder="Note, next step or dependency" aria-label="Note" ${dis}>${esc(t.notes)}</textarea>${depNote}</td>
       <td class="c-ev"><div class="ev-col">${ev || (ed ? "" : '<span class="muted small">none</span>')}${ed ? `<label class="btn small ev-add" title="Optional. Up to ${EVIDENCE.maxFiles} files at once, ${fmtSize(EVIDENCE.maxTotal)} in total">📎 Attach<input type="file" multiple accept="${EVIDENCE.accept}" data-ev-add="${esc(u)}|${i}" hidden></label>` : ""}</div></td>
       <td class="c-owner"><input type="text" list="dl-owners-${esc(u)}" id="t-owner-${t.id}" data-f="owner" value="${esc(t.owner)}" placeholder="Name" aria-label="Owner name" ${dis}></td>
@@ -665,7 +675,7 @@ applyPlugin(jsPDF); window.jspdf = { jsPDF }; window.XLSX = XLSX;
   // ---------- version 3: Business support, Feedback and Corrective actions (src/extras.js) ----------
   const X = createExtras({
     state, esc, fmt, th: (...a) => th(...a), sortOrder: (...a) => sortOrder(...a), sortedUnits: () => sortedUnits(), unitName: id => unitName(id), todayIso, toast: (...a) => toast(...a),
-    errText: e => errText(e), render: () => render(), db: () => db, api: () => api, auth: () => auth(), isAppr: () => isAppr(), canEdit: u => canEdit(u), myUnit: () => myUnit(),
+    errText: e => errText(e), render: () => render(), db: () => db, api: () => api, auth: () => auth(), isAppr: () => isAppr(), canEdit: u => canEdit(u), canLead: u => canLead(u), canFeedback: () => canFeedback(me), myUnit: () => myUnit(),
     downloads: () => downloads, libsReady: k => libsReady(k), sheetFromRows: (...a) => sheetFromRows(...a), writeXlsx: (...a) => writeXlsx(...a), XLSX: () => XLSX,
     newPdf: (...a) => newPdf(...a), pdfStyle: () => pdfStyle(), pdfFooter: (...a) => pdfFooter(...a), save: (...a) => save(...a), goTab: t => goTab(t), weekLabel: w => weekLabel(w),
     weekChoices: () => { const t = thisMonday(); return [nextWeekOf(t), t, prevWeekOf(t), prevWeekOf(prevWeekOf(t)), prevWeekOf(prevWeekOf(prevWeekOf(t)))]; }, thisWeek: () => thisMonday(), ALL,
@@ -677,8 +687,8 @@ applyPlugin(jsPDF); window.jspdf = { jsPDF }; window.XLSX = XLSX;
   const nameOf = id => (id ? (state.names[id] || "") : "");
 
   // ---------- accountability: who changed what ----------
-  const FIELDS = ["title","dept","owner","due","priority","status","pct","notes","kind","outcome","depUnit","dep"];
-  const FLAB = { title:"Task", dept:"Department", owner:"Owner", due:"Due", priority:"Priority", status:"Status", pct:"%", notes:"Notes", kind:"Type", outcome:"Expected outcome", prevStatus:"Previous status", prevPct:"Previous %", completedAt:"Completed on", depUnit:"Depends on", dep:"Dependency", ev:"Evidence", carried:"Carried", carriedCount:"Weeks carried", blockedSince:"Blocked since" };
+  const FIELDS = ["title","dept","owner","due","priority","status","pct","notes","kind","outcome","depUnit","dep","category","target","measure","actual","lower"];
+  const FLAB = { category:"Category", target:"Target", measure:"Target unit", actual:"Actual", lower:"Lower is better", title:"Task", dept:"Department", owner:"Owner", due:"Due", priority:"Priority", status:"Status", pct:"%", notes:"Notes", kind:"Type", outcome:"Expected outcome", prevStatus:"Previous status", prevPct:"Previous %", completedAt:"Completed on", depUnit:"Depends on", dep:"Dependency", ev:"Evidence", carried:"Carried", carriedCount:"Weeks carried", blockedSince:"Blocked since" };
   const showV = v => (v === null || v === undefined || v === "") ? "–" : String(v);
   // Requests (approvals) are shared state: everyone sees pending ones; approvers act on them.
   let unsubReq = null;
@@ -782,14 +792,14 @@ applyPlugin(jsPDF); window.jspdf = { jsPDF }; window.XLSX = XLSX;
     const cnt = d => ((state.draft && state.draft.tasks) || []).filter(t => t.dept === d).length;
     const chips = depts.map(d => state.confirmDelete === "dept:" + d
       ? `<span class="confirm">Remove ${esc(d)}? <button class="btn danger" data-dept-yes="${esc(d)}">Remove</button><button class="btn" data-del-no>Keep</button></span>`
-      : `<span class="chip">${esc(d)} <span class="muted small">${cnt(d)} this week</span><button data-dept-del="${esc(d)}" aria-label="Remove ${esc(d)}">×</button></span>`).join("");
+      : `<span class="chip">${esc(d)} <span class="muted small">${cnt(d)} this week</span>${mayDepts(state.editUnit) ? `<button data-dept-del="${esc(d)}" aria-label="Remove ${esc(d)}">×</button>` : ""}</span>`).join("");
     const ppl = people.map((p, i) => state.confirmDelete === "person:" + i
       ? `<li><span class="confirm">Remove ${esc(p.name)}? <button class="btn danger" data-person-yes="${i}">Remove</button><button class="btn" data-del-no>Keep</button></span></li>`
       : `<li><span>${esc(p.name)}${p.dept ? ` <span class="tag">${esc(p.dept)}</span>` : ""}</span><button class="icon-btn" data-person-del="${i}" aria-label="Remove ${esc(p.name)}">×</button></li>`).join("");
     return `<div class="reports" style="border-bottom:1px solid var(--line)">
       <div><label for="newDept">Departments in ${esc(u.name || "")}</label>
         <div class="chipset" style="margin-bottom:10px">${chips || `<span class="muted small">No departments yet. Add the first one below.</span>`}</div>
-        <div class="toolbar"><input type="text" id="newDept" placeholder="New department name" style="flex:1;min-width:160px"><button class="btn primary" id="addDeptBtn">Add department</button></div></div>
+        ${mayDepts(state.editUnit) ? `<div class="toolbar"><input type="text" id="newDept" placeholder="New department name" style="flex:1;min-width:160px"><button class="btn primary" id="addDeptBtn">Add department</button></div>` : `<div class="small muted">Only Group Strategy, the unit's chief or planning can add or remove departments.</div>`}</div>
       <div><label for="newPerson">Staff names (optional, fills the owner suggestions)</label>
         <ul class="plain">${ppl || `<li class="muted small">No names yet.</li>`}</ul>
         <div class="toolbar"><input type="text" id="newPerson" placeholder="Name" style="flex:1;min-width:120px"><select id="newPersonDept" aria-label="Department of this person"><option value="">No department</option>${depts.map(d => `<option>${esc(d)}</option>`).join("")}</select><button class="btn" id="addPersonBtn">Add name</button></div></div>
@@ -821,7 +831,7 @@ applyPlugin(jsPDF); window.jspdf = { jsPDF }; window.XLSX = XLSX;
     const head = `<div class="panel-head">
       <div class="toolbar"><label for="unitPick" class="small muted">Unit</label>
         <select id="unitPick"><option value="">Choose your function or unit…</option>${opts}</select></div>
-      ${single ? `<div class="toolbar">${ed ? `<button class="btn" id="listsBtn">Departments${(unitOf(state.editUnit).departments||[]).length ? ` (${unitOf(state.editUnit).departments.length})` : ""}</button><button class="btn ghost" id="carryBtn">Bring forward unfinished work…</button>` : ""}<button class="btn" id="histBtn" title="Every saved version of this plan">History</button>${downloads ? `<button class="btn" id="unitPdfBtn">Plan (PDF)</button><button class="btn" id="unitXlsxBtn">Plan (Excel)</button>` : ""}${ed ? `<button class="btn primary" id="addTask">+ Add task</button>` : ""}</div>` : ""}
+      ${single ? `<div class="toolbar">${ed && canLead(state.editUnit) ? `<button class="btn" id="listsBtn">Departments${(unitOf(state.editUnit).departments||[]).length ? ` (${unitOf(state.editUnit).departments.length})` : ""}</button><button class="btn ghost" id="carryBtn">Bring forward unfinished work…</button>` : ""}${mayUndo() ? `<button class="btn" id="histBtn" title="Every saved version of this plan">History</button>` : ""}${downloads ? `<button class="btn" id="unitPdfBtn">Plan (PDF)</button><button class="btn" id="unitXlsxBtn">Plan (Excel)</button>` : ""}${ed ? `<button class="btn primary" id="addTask">+ Add task</button>` : ""}</div>` : ""}
       ${isAll() && downloads ? `<div class="toolbar"><button class="btn" id="pdfBtn">Performance report (PDF)</button><button class="btn" id="xlsxAllBtn">All plans (Excel)</button></div>` : ""}
     </div>`;
     if (!state.editUnit || !hasDraft()) return `<div class="panel">${head}<div class="empty"><b>Choose your unit to start</b>Pick your function or business unit. Anyone can view; to update, sign in with your name and your unit's PIN (the name button at the top). Then update status, % complete, notes and evidence as the week goes on.</div></div>`;
@@ -859,7 +869,7 @@ applyPlugin(jsPDF); window.jspdf = { jsPDF }; window.XLSX = XLSX;
     const rdis = ed ? "" : "disabled";
     const us = summarize(d);
     const unitBar = us.total ? `<div style="padding:12px 16px 0">${progressBar(`${u.name || "Unit"}: progress this week`, us.avg, `${us.done} of ${us.total} tasks done${us.noStatus ? ` · ${us.noStatus} with no status yet` : ""}`)}</div>` : "";
-    return `${X.banner(state.editUnit)}${remindersPanel(state.editUnit)}<div class="panel">${head}${unitBar}${state.showLists && ed ? renderLists() : ""}${access}${warn}${requestsPanel(state.editUnit)}${ed ? carryBanner() : ""}${listHint}
+    return `${X.banner(state.editUnit)}${remindersPanel(state.editUnit)}<div class="panel">${head}${unitBar}${state.showLists && ed && canLead(state.editUnit) ? renderLists() : ""}${access}${warn}${requestsPanel(state.editUnit)}${ed ? carryBanner() : ""}${listHint}
       ${ownerDatalist(state.editUnit)}${d.tasks.length ? `<div class="scroll edit-scroll"><table class="edit-table">${editHead()}<tbody>${sortOrder(d.tasks, "edit").map(i => taskRowHtml(state.editUnit, d.tasks[i], i)).join("")}</tbody></table></div>` : `<div class="empty"><b>No tasks yet for ${esc(unitName(state.editUnit))}</b>${ed ? "Add this week's tasks, or copy last week's unfinished ones." : "Nothing entered for this week."}</div>`}
       <div class="reports">
         <div><label for="f-wins">Key results this week</label><textarea id="f-wins" data-r="wins" placeholder="What was achieved" ${rdis}>${esc(d.wins)}</textarea></div>
@@ -882,7 +892,7 @@ applyPlugin(jsPDF); window.jspdf = { jsPDF }; window.XLSX = XLSX;
   function renderApprovals(){
     const pend = state.requests.filter(r => r.status === "pending"), done = state.requests.filter(r => r.status !== "pending").slice(0, 30);
     const intro = isAppr() ? `<div class="banner info">Changes to past weeks, to fixed task fields and task removals wait here. Approving applies the change to the plan as it is now and records it in the Activity log; rejecting leaves the plan unchanged. The unit sees your note.</div>`
-      : `<div class="banner info">These changes are waiting for Group Strategy (${state.approverNames.map(esc).join(", ")}). Only approvers can accept them; sign in with the approver code to act.</div>`;
+      : `<div class="banner info">These changes are waiting for Group Strategy. Only Group Strategy can accept or reject them.</div>`;
     const card = r => `<div class="panel req-card" style="margin-bottom:12px"><div class="panel-head"><div><div class="unit-name">${esc(unitName(r.unit))} · <span class="muted">week of ${esc(weekLabel(r.week))}</span></div>
         <div class="small muted">Asked by <b>${esc(r.by || "?")}</b> on ${esc(fmt((r.createdAt || "").slice(0, 10)))} ${esc((r.createdAt || "").slice(11, 16))} UTC · ${esc(r.summary)}</div></div>
         ${isAppr() ? `<div class="toolbar"><input type="text" id="note-${esc(r.id)}" data-req-note="${esc(r.id)}" value="${esc(state.reqNotes[r.id] || "")}" placeholder="Note to the unit (optional)" style="min-width:200px"><button class="btn danger" data-reject="${esc(r.id)}">Reject</button><button class="btn primary" data-approve="${esc(r.id)}">Approve</button></div>` : (canEdit(r.unit) ? `<button class="btn" data-withdraw="${esc(r.id)}">Withdraw</button>` : "")}</div>
@@ -918,7 +928,7 @@ applyPlugin(jsPDF); window.jspdf = { jsPDF }; window.XLSX = XLSX;
     const rows = h.list.map(v => { const p = planFromRow(v.old), s = summarize(p); return `<tr class="${h.preview === v.id ? "sel" : ""}"><td class="small num">${esc(v.at.slice(0, 10))} ${esc(v.at.slice(11, 16))} UTC</td><td class="small">${esc(p.updatedBy || p.source || "–")}</td><td class="small">${esc(v.by || "–")}</td><td class="num small">${s.total} · ${s.done} done</td><td><button class="btn small" data-hprev="${esc(v.id)}">View</button>${isAppr() ? ` <button class="btn small" data-hrestore="${esc(v.id)}">Restore</button>` : ""}</td></tr>`; }).join("");
     const pv = h.preview && h.list.find(v => v.id === h.preview), pp = pv && planFromRow(pv.old);
     root.innerHTML = `<div class="overlay"><div class="modal wide" role="dialog" aria-modal="true" aria-labelledby="hTitle">
-      <div class="panel-head"><div><h2 id="hTitle">History · ${esc(unitName(state.editUnit))} · ${esc(weekLabel(state.week))}</h2><div class="small muted">A copy is kept automatically every time this plan is changed. ${isAppr() ? "Restore puts a copy back; the current version is kept as a copy too, so a restore can be undone." : "Group Strategy approvers can restore any copy. You can undo your own save for 30 minutes from the message that appears after saving."}</div></div><button class="icon-btn" id="hClose" aria-label="Close">×</button></div>
+      <div class="panel-head"><div><h2 id="hTitle">History · ${esc(unitName(state.editUnit))} · ${esc(weekLabel(state.week))}</h2><div class="small muted">A copy is kept automatically every time this plan is changed. ${isAppr() ? "Restore puts a copy back; the current version is kept as a copy too, so a restore can be undone." : "You can restore copies of your own unit\u2019s plan (managers: own departments only) for the current and future weeks. The current version is kept as a copy too."}</div></div><button class="icon-btn" id="hClose" aria-label="Close">×</button></div>
       <div class="small" style="padding:10px 16px">Current version: ${cur && cur.updatedAt ? `saved ${esc(cur.updatedAt.slice(0, 16).replace("T", " "))} UTC by ${esc(cur.updatedBy || cur.source || "data load")}` : "not saved"}</div>
       ${h.loading ? `<div class="empty"><b>Loading history…</b></div>` : h.error ? `<div class="banner warn" style="margin:16px">History is not available yet. Run supabase/upgrade-1-safe.sql first.</div>` : rows ? `<div class="scroll"><table><thead><tr><th>Copy taken</th><th>Version saved by</th><th>Replaced by</th><th>Tasks</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>` : `<div class="empty"><b>No earlier versions</b>Copies appear after the first change to this plan.</div>`}
       ${pp ? `<div class="panel-head" style="border-top:1px solid var(--line)"><h2>Copy from ${esc(pv.at.slice(0, 16).replace("T", " "))} UTC</h2></div><div class="scroll" style="max-height:320px;overflow:auto"><table><thead><tr><th>Task</th><th>Status</th><th>%</th><th>Notes</th></tr></thead><tbody>${pp.tasks.map(t => `<tr><td>${esc(t.title)}</td><td><span class="pill ${statusClass(t.status)}">${esc(t.status || "No status")}</span></td><td class="num small">${t.pct ?? "–"}</td><td class="small muted">${esc(t.notes)}</td></tr>`).join("") || `<tr><td colspan="4" class="muted">No tasks</td></tr>`}</tbody></table></div>` : ""}
@@ -927,16 +937,13 @@ applyPlugin(jsPDF); window.jspdf = { jsPDF }; window.XLSX = XLSX;
 
   // ---------- units, PINs and backups (approvers) ----------
   function renderUnits(){
-    const ps = state.pinStatus || {};
     const rows = sortedUnits().map(u => `<tr>
       <td><input type="text" id="u-name-${esc(u.id)}" data-unit-name="${esc(u.id)}" value="${esc(u.name)}" aria-label="Unit name"></td>
       <td><select data-unit-type="${esc(u.id)}" id="u-type-${esc(u.id)}" aria-label="Unit type"><option ${u.type==="Corporate function"?"selected":""}>Corporate function</option><option ${u.type==="Business unit"?"selected":""}>Business unit</option></select></td>
-      <td>${ps[u.id] ? `<span class="pill s-done">PIN set</span>` : `<span class="pill s-bad">No PIN</span>`}</td>
-      <td><div class="toolbar"><input type="text" id="pin-${esc(u.id)}" placeholder="New PIN (4+ characters)" autocomplete="off" style="width:170px"><button class="btn small" data-setpin="${esc(u.id)}">Set PIN</button></div></td>
       <td>${state.confirmDelete==="unit:"+u.id ? `<span class="confirm">Remove unit? Past plans stay saved. <button class="btn danger" data-unit-del-yes="${esc(u.id)}">Remove</button><button class="btn" data-del-no>Cancel</button></span>` : `<button class="btn ghost danger" data-unit-del="${esc(u.id)}">Remove</button>`}</td></tr>`).join("");
     return `<div class="panel" style="margin-bottom:16px">
-      <div class="panel-head"><h2>Reporting units and PINs</h2><span class="muted small">Approvers only. A unit can update its plan only with its PIN. PINs are stored scrambled: if one is forgotten, set a new one and tell the unit.</span></div>
-      <div class="scroll"><table><thead><tr><th>Name</th><th>Type</th><th>PIN</th><th>Change PIN</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>
+      <div class="panel-head"><h2>Reporting units</h2><span class="muted small">Group Strategy only. People are assigned to units in the People tab.</span></div>
+      <div class="scroll"><table><thead><tr><th>Name</th><th>Type</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>
       <div class="save-bar"><div class="toolbar"><input type="text" id="newUnitName" placeholder="New unit name"><select id="newUnitType"><option>Corporate function</option><option>Business unit</option></select><button class="btn primary" id="addUnit">Add unit</button></div></div>
     </div>
     <div class="grid2 even">
@@ -946,12 +953,8 @@ applyPlugin(jsPDF); window.jspdf = { jsPDF }; window.XLSX = XLSX;
         <p class="small"><b>Restore from a backup file</b> puts back every unit and plan in the file. Plans that change are kept in History first, so this can be undone.</p>
         <div class="toolbar"><input type="file" id="restoreFile" accept=".json,application/json"></div>
         ${state.restore ? `<div class="banner warn" style="margin:10px 0 0">${esc(state.restore.name)}: ${state.restore.units} units, ${state.restore.plans} plans, saved ${esc(state.restore.at || "?")}. <button class="btn danger" id="restoreGo" style="margin-left:6px">Restore now</button> <button class="btn" id="restoreCancel">Cancel</button></div>` : ""}</div></div>
-      <div class="panel"><div class="panel-head"><h2>Approver code</h2></div>
-        <div class="asks"><p class="small">Approvers are people whose name starts with or contains: ${state.approverNames.map(n => `<span class="tag">${esc(n)}</span>`).join(" ")}, and who enter this code. Change the list in Supabase (table <code>app_config</code>, key <code>approver_names</code>).</p>
-        <div class="toolbar"><input type="password" id="newCode" placeholder="New approver code (6+ characters)" autocomplete="new-password"><button class="btn" id="codeBtn">Change code</button></div></div></div>
     </div>`;
   }
-  async function loadPinStatus(){ if (!isAppr()) return; try { const r = await api.pinStatus(auth()); if (!r.error) { state.pinStatus = r.units || {}; if (state.tab === "units") render(); } } catch (e) {} }
   async function downloadBackup(){
     try {
       const [units, plans, activity, requests] = await Promise.all(["units", "plans", "activity", "change_requests"].map(t => api.readAll(t)));
@@ -991,7 +994,8 @@ applyPlugin(jsPDF); window.jspdf = { jsPDF }; window.XLSX = XLSX;
     else if (state.tab==="activity") html += renderActivity();
     else if (state.tab==="approvals") html += renderApprovals();
     else if (state.tab==="units" && isAppr()) html += renderUnits();
-    else if (state.tab==="units") html += `<div class="panel"><div class="empty"><b>Group Strategy approvers only</b>Sign in with an approver name and the approver code to manage units and PINs.</div></div>`;
+    else if (state.tab==="people" && isAppr()) html += renderPeople();
+    else if (state.tab==="units" || state.tab==="people") html += `<div class="panel"><div class="empty"><b>Group Strategy only</b>Only Group Strategy can manage units and people.</div></div>`;
     main.innerHTML = html;
     growAll();
     if (active) { const el = document.getElementById(active); if (el && el.focus) { el.focus(); if (el.setSelectionRange && el.type==="text") { const n = el.value.length; try { el.setSelectionRange(n,n); } catch(e){} } } }
@@ -1022,10 +1026,11 @@ applyPlugin(jsPDF); window.jspdf = { jsPDF }; window.XLSX = XLSX;
   function renderDash(){
     if (!state.units.length) return `<div class="panel"><div class="empty"><b>No units set up yet</b></div></div>`;
     if (!state.dashData) return `<div class="panel"><div class="empty"><b>Collecting the last ${state.dash.range} weeks…</b></div></div>`;
-    const by = { ...state.dashData.by, [state.week]: state.plans };
+    const byAll = { ...state.dashData.by, [state.week]: state.plans }, cat = state.dash.category || "";
+    const by = !cat ? byAll : Object.fromEntries(Object.entries(byAll).map(([w, ps]) => [w, Object.fromEntries(Object.entries(ps || {}).map(([k, p]) => [k, p ? { ...p, tasks: (p.tasks || []).filter(t => (t.category || "") === cat) } : p]))]));
     const alerts = sortedUnits().flatMap(u => unitAlerts({ unit: u, plan: state.plans[u.id], weekPlans: state.plans, week: state.week, thisMonday: thisMonday(), today: todayIso, requests: [] })).sort((a, b) => levelRank[a.level] - levelRank[b.level]);
     const w = ($("#main").clientWidth || 1000);
-    return renderDashboard({ weeks: state.dashData.weeks, byWeek: by, units: sortedUnits(), week: state.week, today: todayIso, filter: state.dash,
+    return renderDashboard({ weeks: state.dashData.weeks, byWeek: by, byWeekAll: byAll, units: sortedUnits(), week: state.week, today: todayIso, filter: state.dash,
       alerts: alerts.filter(a => !state.dash.type || unitOf(a.unit).type === state.dash.type), pending: pendingFor().length, downloads,
       width: w > 900 ? Math.floor((w - 16) * 2 / 3) - 34 : w - 34, unitName, h: { esc, fmt, weekLabel } });
   }
@@ -1043,7 +1048,7 @@ applyPlugin(jsPDF); window.jspdf = { jsPDF }; window.XLSX = XLSX;
     state.tab = to; state.confirmDelete = null;
     if (to === "plan" && state.week < nextMonday() && !state.dirty) { state.week = nextMonday(); state.draft = null; state.allDrafts = null; subscribePlans(); }
     else if (to === "update" && state.week > thisMonday() && !state.dirty) { state.week = thisMonday(); state.draft = null; state.allDrafts = null; subscribePlans(); }
-    if ((state.tab==="update"||state.tab==="plan") && !hasDraft()) loadDraft(); if (state.tab==="activity") subscribeActivity(); if (state.tab==="units") loadPinStatus(); if (state.tab==="monthly" && db && !state.monthLoading && (!state.monthData || state.monthKey !== `${state.eth.y}-${state.eth.m}${state.monthBasis}`)) { render(); loadMonth(); return; } render(); });
+    if ((state.tab==="update"||state.tab==="plan") && !hasDraft()) loadDraft(); if (state.tab==="activity") subscribeActivity(); if (state.tab==="people") loadPeople(); if (state.tab==="monthly" && db && !state.monthLoading && (!state.monthData || state.monthKey !== `${state.eth.y}-${state.eth.m}${state.monthBasis}`)) { render(); loadMonth(); return; } render(); });
 
   const main = $("#main");
   main.addEventListener("click", e => {
@@ -1059,14 +1064,13 @@ applyPlugin(jsPDF); window.jspdf = { jsPDF }; window.XLSX = XLSX;
     if (t.dataset.ev) { openEvidence(t.dataset.ev); return; }
     if (t.dataset.evp) { api.evidenceUrl(t.dataset.evp, t.dataset.evn).then(url => { const a = document.createElement("a"); a.href = url; a.target = "_blank"; a.rel = "noopener"; if (api.mode === "local") a.download = t.dataset.evn; document.body.appendChild(a); a.click(); a.remove(); }).catch(() => toast("Could not open the file")); return; }
     if (t.dataset.evDel) { const [u, i, k] = t.dataset.evDel.split("|"); const task = planFor(u).tasks[Number(i)]; task.ev = (task.ev || []).filter((_, j) => j !== Number(k)); state.dirtyUnits.add(u); state.dirty = true; render(); return; }
-    if (t.dataset.setpin) { setPin(t.dataset.setpin); return; }
-    if (t.id === "signInBtn") { showWho(); return; }
+    if (t.dataset.pe) { peopleClick(t); return; }
+    if (t.id === "signInBtn") { showMenu(); return; }
     if (t.id === "histBtn") { openHistory(); return; }
     if (t.id === "backupBtn") { downloadBackup(); return; }
     if (t.id === "restoreCancel") { state.restore = null; render(); return; }
     if (t.id === "restoreGo") { doRestore(); return; }
-    if (t.id === "codeBtn") { changeCode(); return; }
-    if (t.id==="addTask" || t.dataset.addUnit) { const u = t.dataset.addUnit || state.editUnit, d = planFor(u); const nt = { id: uid(), title:"", outcome:"", dept:"", owner:"", due:"", priority:"Medium", status:"Not started", pct:0, notes:"", kind:"Task", depUnit:"", dep:"", ev:[] }; d.tasks.push(nt); state.dirty = true; state.dirtyUnits.add(u); render(); const el = document.getElementById("t-title-"+nt.id); el && el.focus(); }
+    if (t.id==="addTask" || t.dataset.addUnit) { const u = t.dataset.addUnit || state.editUnit, d = planFor(u); const nt = { id: uid(), title:"", outcome:"", dept: (me && ["manager","staff"].includes(me.role) && (me.departments||[]).length === 1) ? me.departments[0] : "", owner:"", due:"", priority:"Medium", status:"Not started", pct:0, notes:"", kind:"Task", depUnit:"", dep:"", ev:[] }; d.tasks.push(nt); state.dirty = true; state.dirtyUnits.add(u); render(); const el = document.getElementById("t-title-"+nt.id); el && el.focus(); }
     else if (t.id==="listsBtn") { state.showLists = !state.showLists; render(); }
     else if (t.id==="listsCancel") { state.showLists = false; render(); }
     else if (t.id==="addDeptBtn") addDept();
@@ -1123,6 +1127,11 @@ applyPlugin(jsPDF); window.jspdf = { jsPDF }; window.XLSX = XLSX;
       state.dirtyUnits.add(u);
       if (el.classList.contains("grow")) grow(el);
       if (f==="pct") { const v = el.value==="" ? null : Math.max(0, Math.min(100, Number(el.value))); task.pct = v; if (v===100 && task.status!=="Done") { task.status = "Done"; statusSideEffects(task); markDirty(); render(); return; } }
+      else if (f==="target" || f==="actual" || f==="measure" || f==="lower") {
+        if (f==="lower") task.lower = el.checked; else if (f==="measure") task.measure = el.value; else task[f] = el.value === "" ? "" : Number(el.value);
+        const c = calcPct(task);
+        if (c !== null) { task.pct = c; if (c === 100 && task.status !== "Done") { task.status = "Done"; statusSideEffects(task); markDirty(); render(); return; } if (f !== "measure") { const pe = document.getElementById("t-pct-" + task.id); if (pe) pe.value = c; } }
+      }
       else { task[f] = el.value; if (f==="status") { statusSideEffects(task); markDirty(); render(); return; } }
       markDirty();
     } else if (el.dataset.r) { state.draft[el.dataset.r] = el.value; state.dirtyUnits.add(state.editUnit); markDirty(); }
@@ -1140,6 +1149,14 @@ applyPlugin(jsPDF); window.jspdf = { jsPDF }; window.XLSX = XLSX;
   main.addEventListener("mouseout", e => { const el = e.target.closest("[data-tip]"); if (!el || (e.relatedTarget && el.contains(e.relatedTarget))) return; tip.hidden = true; const xh = el.closest("svg")?.querySelector(".xhair"); if (xh) xh.style.display = "none"; });
   main.addEventListener("change", e => {
     const el = e.target;
+    if (el.dataset.pu) {
+      const [pid, k] = el.dataset.pu.split("|"), q = x => document.querySelector(`[data-pu="${CSS.escape(pid)}|${x}"]`);
+      if (k === "unit") q("departments").innerHTML = DEPT_OPTS(el.value, []);
+      if (k === "role") q("title").hidden = el.value !== "executive";
+      return;
+    }
+    if (el.id === "inv-role") { $("#inv-title").hidden = el.value !== "executive"; return; }
+    if (el.id === "inv-unit") { $("#inv-dept").innerHTML = DEPT_OPTS(el.value, []); return; }
     if (el.id==="unitPick") {
       if (state.dirty) { el.value = state.editUnit || ""; toast("Save or discard your changes first"); return; }
       openUnit(el.value, true);
@@ -1153,6 +1170,8 @@ applyPlugin(jsPDF); window.jspdf = { jsPDF }; window.XLSX = XLSX;
     else if (el.id==="ovUnit") { state.ov.unit = el.value; render(); }
     else if (el.id==="fPri") { state.filter.priority = el.value; render(); }
     else if (el.id==="fKind") { state.filter.kind = el.value; render(); }
+    else if (el.id==="fCat") { state.filter.category = el.value; render(); }
+    else if (el.id === "dCat") { state.dash.category = el.value; render(); }
     else if (el.id==="impUnit") { state.impUnit = el.value; state.impDefaultUnit = el.value ? unitName(el.value) : ""; render(); }
     else if (el.id==="impPrefill") { state.impPrefill = el.checked; }
     else if (el.id==="impFile") { if (el.files && el.files[0]) readImportFile(el.files[0]); }
@@ -1211,17 +1230,6 @@ applyPlugin(jsPDF); window.jspdf = { jsPDF }; window.XLSX = XLSX;
       state.dirtyUnits.add(u); state.dirty = true; render(); toast("Attached. Save the plan to keep the evidence with the task.");
     } catch (e) { render(); toast("Upload failed: " + (e.message || "check your connection")); }
   }
-  async function setPin(u){
-    const el = document.getElementById("pin-" + u), pin = (el && el.value || "").trim();
-    if (pin.length < 4) { toast(ERR.pin_too_short); return; }
-    try { const r = await api.setUnitPin(auth(), u, pin); if (r.error) { toast(errText(r)); return; } toast(`PIN set for ${unitName(u)}. Share it with the unit only.`); loadPinStatus(); }
-    catch (e) { toast(errText(e)); }
-  }
-  async function changeCode(){
-    const v = ($("#newCode").value || "").trim(); if (v.length < 6) { toast(ERR.code_too_short); return; }
-    try { const r = await api.changeApproverCode(auth(), v); if (r.error) { toast(errText(r)); return; } const s = session.get(); session.set({ ...s, code: v }); toast("Approver code changed. Tell the other approver."); render(); }
-    catch (e) { toast(errText(e)); }
-  }
   async function doRestore(){
     const r = state.restore; if (!r) return;
     try { const res = await api.restoreBackup(auth(), r.data); toast(res.error ? errText(res) : `Restored ${res.units} units and ${res.plans} plans`); state.restore = null; state.dashKey = ""; render(); }
@@ -1243,7 +1251,7 @@ applyPlugin(jsPDF); window.jspdf = { jsPDF }; window.XLSX = XLSX;
     const id = name.toLowerCase().replace(/[^a-z0-9]+/g,"-").replace(/^-|-$/g,"").slice(0,40) || uid();
     if (state.units.some(u => u.id===id)) { toast("A unit with that name already exists"); return; }
     const r = await api.saveUnit(auth(), "add", { id, name, type, order: state.units.length + 1 }, `Added unit "${name}"`);
-    toast(r.error ? errText(r) : "Unit added. Set its PIN so it can update its plan."); if (!r.error) loadPinStatus();
+    toast(r.error ? errText(r) : "Unit added. Assign people to it in the People tab.");
   }
 
   async function exportCsv(){
@@ -1471,11 +1479,17 @@ applyPlugin(jsPDF); window.jspdf = { jsPDF }; window.XLSX = XLSX;
   }
 
   // ---------- template download and import ----------
-  const TCOLS = ["Week starting","Unit","Department","Task / deliverable","Type","Owner","Due date","Priority","Status","% complete","Notes / next step","Expected outcome","Depends on (unit)","Dependency details"];
+  const TCOLS = ["Week starting","Unit","Department","Task / deliverable","Type","Category","Owner","Due date","Priority","Status","Target","Target unit","Actual","Lower is better","% complete","Notes / next step","Expected outcome","Depends on (unit)","Dependency details"];
+  const TCOLS_OLD = ["Week starting","Unit","Department","Task / deliverable","Type","Owner","Due date","Priority","Status","% complete","Notes / next step","Expected outcome","Depends on (unit)","Dependency details"];
   const SCOLS = ["Week starting","Unit","Key results this week","Blockers and issues","Asks to top management or other units"];
-  const TWIDTH = [14,32,22,60,11,24,12,10,13,11,50,40,26,34];
+  const TWIDTH = [14,32,22,60,11,13,24,12,10,13,10,12,10,10,11,50,40,26,34];
   function colKey(h){
     const k = String(h ?? "").toLowerCase().replace(/[^a-z0-9%]+/g, " ").trim(); if (!k) return "";
+    if (/^category/.test(k)) return "category";
+    if (/target unit|^measure|unit of measure/.test(k)) return "measure";
+    if (/^target/.test(k)) return "target";
+    if (/^actual/.test(k)) return "actual";
+    if (/lower/.test(k)) return "lower";
     if (/outcome|expected result/.test(k)) return "outcome";
     if (/depend.*unit|depends on/.test(k)) return "depUnit";
     if (/dependenc/.test(k)) return "dep";
@@ -1514,15 +1528,24 @@ applyPlugin(jsPDF); window.jspdf = { jsPDF }; window.XLSX = XLSX;
     const part = state.units.filter(u => norm(u.name).includes(k) || k.includes(norm(u.name)));
     return part.length === 1 ? part[0] : null;
   }
+  // "Did you mean": closest name by spelling or by shared words
+  const lev = (a, b) => { const m = a.length, n = b.length, d = Array.from({ length: m + 1 }, (_, i) => [i, ...Array(n).fill(0)]); for (let j = 1; j <= n; j++) d[0][j] = j; for (let i = 1; i <= m; i++) for (let j = 1; j <= n; j++) d[i][j] = Math.min(d[i-1][j] + 1, d[i][j-1] + 1, d[i-1][j-1] + (a[i-1] === b[j-1] ? 0 : 1)); return d[m][n]; };
+  function suggest(txt, names){
+    const k = norm(txt); if (!k) return "";
+    const kw = new Set(k.split(" ")); let best = "", bs = 0;
+    names.forEach(n => { const nk = norm(n), nw = new Set(nk.split(" ")), inter = [...kw].filter(w => nw.has(w)).length, jac = inter / (new Set([...kw, ...nw]).size || 1), sp = 1 - lev(k, nk) / Math.max(k.length, nk.length, 1), s = Math.max(jac, sp); if (s > bs) { bs = s; best = n; } });
+    return bs >= 0.45 ? best : "";
+  }
   function parseRow(raw, map, ctx){
     const g = f => (map[f] != null ? raw[map[f]] : "");
     const r = { err: [], warn: [], row: {} };
     const title = String(g("title") ?? "").trim();
     const unitTxt = String(g("unit") ?? "").trim() || ctx.defaultUnit || "";
     if (!title && !unitTxt) return null;
+    if (!title && !Object.keys(map).some(f => !["week", "unit", "kind"].includes(f) && String(raw[map[f]] ?? "").trim() !== "")) return null;
     const unit = matchUnit(unitTxt);
     if (!title) r.err.push("No task title");
-    if (!unitTxt) r.err.push("No unit"); else if (!unit) r.err.push(`Unit "${unitTxt}" not found`);
+    if (!unitTxt) r.err.push("No unit"); else if (!unit) { const sg = suggest(unitTxt, state.units.map(u => u.name)); r.err.push(`Unit "${unitTxt}" not found${sg ? `. Did you mean "${sg}"?` : ". Pick it from the dropdown in the template."}`); }
     r.unit = unit; r.unitTxt = unitTxt;
     const wv = g("week"); let week = state.week;
     if (wv !== "" && wv != null) { const w = toIso(wv, ctx.year); if (w) week = weekStartOf(w); else r.warn.push("Week not understood, used the selected week"); }
@@ -1547,7 +1570,17 @@ applyPlugin(jsPDF); window.jspdf = { jsPDF }; window.XLSX = XLSX;
     const depTxt = String(g("depUnit") ?? "").trim(), depU = depTxt ? matchUnit(depTxt) : null;
     if (depTxt && !depU) r.warn.push(`Depends-on unit "${depTxt}" not found, kept in dependency details`);
     const dep = [String(g("dep") ?? "").trim(), depTxt && !depU ? depTxt : ""].filter(Boolean).join(" · ");
-    r.row = { title, dept: String(g("dept") ?? "").trim(), owner: String(g("owner") ?? "").trim(), due, priority, status, pct, notes, kind, outcome: String(g("outcome") ?? "").trim(), depUnit: depU ? depU.id : "", dep };
+    let dept = String(g("dept") ?? "").trim();
+    if (dept && unit) { const list = unit.departments || [], hit = list.find(d => norm(d) === norm(dept)); if (hit) dept = hit; else { const sg = suggest(dept, list); r.err.push(`Department "${dept}" is not in ${unit.name}${sg ? `. Did you mean "${sg}"?` : list.length ? "" : ". This unit has no departments yet; ask Group Strategy or planning to add them in the app"}. Departments are never created by import.`); } }
+    const catTxt = String(g("category") ?? "").trim(), category = CATEGORIES.find(c => c.toLowerCase() === catTxt.toLowerCase()) || "";
+    if (catTxt && !category) r.warn.push(`Category "${catTxt}" not recognised, left blank`);
+    const num = v => { if (v === "" || v == null) return ""; const n = typeof v === "number" ? v : parseFloat(String(v).replace(/,/g, "")); return isFinite(n) ? n : null; };
+    let target = num(g("target")), actual = num(g("actual"));
+    if (target === null) { r.warn.push(`Target "${g("target")}" is not a number, ignored`); target = ""; }
+    if (actual === null) { r.warn.push(`Actual "${g("actual")}" is not a number, ignored`); actual = ""; }
+    const measure = String(g("measure") ?? "").trim(), lower = /^(y|yes|true|1)/i.test(String(g("lower") ?? "").trim());
+    const cp = calcPct({ target, actual, lower }); if (cp !== null) { pct = cp; if (cp === 100 && !status) status = "Done"; }
+    r.row = { category, target, measure, actual, lower, title, dept, owner: String(g("owner") ?? "").trim(), due, priority, status, pct, notes, kind, outcome: String(g("outcome") ?? "").trim(), depUnit: depU ? depU.id : "", dep };
     return r;
   }
   function findHeader(rows, keyFn, min){
@@ -1569,45 +1602,67 @@ applyPlugin(jsPDF); window.jspdf = { jsPDF }; window.XLSX = XLSX;
       if (ss) { const sr = XLSX.utils.sheet_to_json(wb.Sheets[ss], { header: 1, raw: true, defval: "" }); const sh = findHeader(sr, sumKey, 2);
         if (sh) for (let i = sh.i + 1; i < sr.length; i++) { const row = sr[i]; const u = matchUnit(row[sh.map.unit]); const txt = f => String(sh.map[f] != null ? row[sh.map[f]] ?? "" : "").trim(); if (!u || !(txt("wins") || txt("blockers") || txt("asks"))) continue;
           const wv = sh.map.week != null ? toIso(row[sh.map.week], year) : ""; sums.push({ unit: u, week: wv ? weekStartOf(wv) : state.week, wins: txt("wins"), blockers: txt("blockers"), asks: txt("asks") }); } }
-      state.imp = { fileName: file.name, rows: parsed, sums, mode: state.imp && state.imp.mode || "merge", newDepts: true };
+      state.imp = { fileName: file.name, rows: parsed, sums, mode: state.imp && state.imp.mode || "merge", newDepts: false };
       if (!parsed.length && !sums.length) state.imp.error = "The file has no task rows."; else setTimeout(computeImpact, 0);
     } catch (e) { state.imp = { error: "Could not read this file. Save it as .xlsx or .csv and try again." }; }
     render();
   }
   function templateRows(unitId, prefill){
     const units = unitId ? state.units.filter(u => u.id === unitId) : sortedUnits(); const out = [];
-    if (prefill) units.forEach(u => (state.plans[u.id]?.tasks || []).forEach(t => out.push([state.week, u.name, t.dept || "", t.title || "", t.kind || "Task", t.owner || "", t.due || "", t.priority || "", t.status || "", typeof t.pct === "number" ? t.pct / 100 : "", t.notes || "", t.outcome || "", t.depUnit ? unitName(t.depUnit) : "", t.dep || ""])));
-    else if (unitId) for (let i = 0; i < 15; i++) out.push([state.week, units[0].name, "", "", "Task", "", "", "", "", "", "", "", "", ""]);
+    const row = (u, t) => [state.week, u.name, t.dept || "", t.title || "", t.kind || "Task", t.category || "", t.owner || "", t.due || "", t.priority || "", t.status || "", t.target ?? "", t.measure || "", t.actual ?? "", t.lower ? "Yes" : "", typeof t.pct === "number" ? t.pct / 100 : "", t.notes || "", t.outcome || "", t.depUnit ? unitName(t.depUnit) : "", t.dep || ""];
+    if (prefill) units.forEach(u => (state.plans[u.id]?.tasks || []).forEach(t => out.push(row(u, t))));
+    else if (unitId) for (let i = 0; i < 15; i++) out.push(row(units[0], {}));
     return out;
   }
   async function downloadTemplate(){
-    if (!libsReady("xlsx")) return;
     const unitId = state.impUnit || "", prefill = !!state.impPrefill;
-    const wb = XLSX.utils.book_new();
-    const rows = templateRows(unitId, prefill);
-    const ws = sheetFromRows([TCOLS, ...rows], TWIDTH); pctFormat(ws, 9, 1);
-    XLSX.utils.book_append_sheet(wb, ws, "Weekly plan");
-    const su = (unitId ? state.units.filter(u => u.id === unitId) : sortedUnits()).map(u => { const p = state.plans[u.id]; return [state.week, u.name, (p && p.wins) || "", (p && p.blockers) || "", (p && p.asks) || ""]; });
-    XLSX.utils.book_append_sheet(wb, sheetFromRows([SCOLS, ...su], [14,32,50,50,50]), "Summary");
-    const ins = [["How to fill in this template"], [],
-      ["1","One row per task. Fill the 'Weekly plan' sheet. Keep the header row exactly as it is."],
-      ["2","Unit: the exact name of your function or business unit (see the list below)."],
-      ["3","Department: a department inside your unit. A new name is added to the unit automatically on import."],
-      ["4","Week starting: any date inside the week (for example 2026-10-05). Leave blank to use the week selected on the page."],
-      ["5","Type: Task, or KPI / OKR for indicator lines."],
-      ["6","Due date: write it as 2026-10-09 or 9-Oct-2026. Text such as 'Q1' is kept in the notes instead."],
-      ["7","Priority: High, Medium or Low."],
-      ["8","Status: Not started, In progress, Done, Blocked or Delayed."],
-      ["9","% complete: 0 to 100 (50 or 50%). Done with no % counts as 100%."],
-      ["10","'Summary' sheet (optional): key results, blockers and asks for the week, one row per unit."],
-      ["11","On import, rows with the same task title as an existing task update it. New titles are added."],
-      ["12","Expected outcome: what will exist or change when the task is done. Depends on (unit): the unit you need something from; Dependency details: what you need."],
-      ["13","Once a week has started, saved tasks keep their title, outcome, type, department, due date and priority. Changes to those, and anything for a past week, are sent to Group Strategy for approval."], [],
-      ["Units and their departments"], ["Unit","Type","Departments"],
-      ...sortedUnits().map(u => [u.name, u.type || "", (u.departments || []).join(", ")])];
-    XLSX.utils.book_append_sheet(wb, sheetFromRows(ins, [28,40,80]), "Instructions");
+    let ExcelJS; try { ExcelJS = (await import("exceljs")).default; } catch (e) { toast("The Excel tool did not load. Reload the page and try again."); return; }
+    const wb = new ExcelJS.Workbook();
+    const ws = wb.addWorksheet("Weekly plan", { views: [{ state: "frozen", ySplit: 1 }] });
+    const lists = wb.addWorksheet("Lists", { state: "veryHidden" });
+    const allU = sortedUnits(), units = unitId ? allU.filter(u => u.id === unitId) : allU;
+    // Lists sheet: A = units, B.. = departments of each unit (one column per unit), then fixed lists
+    lists.getCell(1, 1).value = "Units"; units.forEach((u, i) => { lists.getCell(i + 2, 1).value = u.name; });
+    units.forEach((u, i) => { const c = i + 2; lists.getCell(1, c).value = u.name; const ds = u.departments || []; (ds.length ? ds : [""]).forEach((d, r) => { lists.getCell(r + 2, c).value = d; }); const L = lists.getColumn(c).letter; wb.definedNames.add(`Lists!$${L}$2:$${L}$${Math.max(2, ds.length + 1)}`, "D_" + (i + 1)); });
+    const fixed = { Type: KINDS, Category: CATEGORIES, Priority: PRIORITIES, Status: STATUSES, YesNo: ["Yes", "No"] }; const fcol0 = units.length + 3;
+    Object.entries(fixed).forEach(([k, v], j) => { const c = fcol0 + j; lists.getCell(1, c).value = k; v.forEach((x, r) => { lists.getCell(r + 2, c).value = x; }); const L = lists.getColumn(c).letter; wb.definedNames.add(`Lists!$${L}$2:$${L}$${v.length + 1}`, "L_" + k); });
+    const ul = lists.getColumn(1).letter; wb.definedNames.add(`Lists!$A$2:$A$${Math.max(2, units.length + 1)}`, "L_Units");
+    ws.columns = TCOLS.map((h, i) => ({ header: h, key: "c" + i, width: TWIDTH[i] }));
+    const hr = ws.getRow(1); hr.font = { bold: true, color: { argb: "FF2A2208" } }; hr.alignment = { vertical: "middle", wrapText: true }; hr.height = 32;
+    hr.eachCell(c => { c.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFF5C518" } }; });
+    templateRows(unitId, prefill).forEach(r => ws.addRow(r));
+    const LAST = 600, col = n => TCOLS.indexOf(n) + 1, colL = n => ws.getColumn(col(n)).letter;
+    const list = (n, f, msg) => { for (let r = 2; r <= LAST; r++) ws.getCell(r, col(n)).dataValidation = { type: "list", allowBlank: true, formulae: [f(r)], showErrorMessage: true, errorStyle: "stop", errorTitle: n, error: msg, showInputMessage: true, promptTitle: n, prompt: "Pick from the list" }; };
+    list("Unit", () => "L_Units", "Pick the unit from the dropdown. Do not type or change the name.");
+    list("Department", r => `INDIRECT("D_"&MATCH($${colL("Unit")}${r},L_Units,0))`, "Pick a department from the list for the unit chosen. Choose the Unit first.");
+    list("Type", () => "L_Type", "Pick Task or KPI / OKR."); list("Category", () => "L_Category", "Pick Operational or Revenue.");
+    list("Priority", () => "L_Priority", "Pick High, Medium or Low."); list("Status", () => "L_Status", "Pick a status from the list."); list("Lower is better", () => "L_YesNo", "Pick Yes or No.");
+    for (let r = 2; r <= LAST; r++) {
+      ws.getCell(r, col("Due date")).dataValidation = { type: "date", operator: "greaterThan", formulae: [new Date(2020, 0, 1)], allowBlank: true, showErrorMessage: true, errorTitle: "Due date", error: "Enter a date, for example 2026-10-16." };
+      ws.getCell(r, col("Week starting")).dataValidation = { type: "date", operator: "greaterThan", formulae: [new Date(2020, 0, 1)], allowBlank: true, showErrorMessage: true, errorTitle: "Week starting", error: "Enter a date inside the week." };
+      ["Target", "Actual"].forEach(n => { ws.getCell(r, col(n)).dataValidation = { type: "decimal", operator: "between", formulae: [-1e12, 1e12], allowBlank: true, showErrorMessage: true, errorTitle: n, error: "Enter a number only. Put the unit in the Target unit column." }; });
+      ws.getCell(r, col("% complete")).dataValidation = { type: "decimal", operator: "between", formulae: [0, 1], allowBlank: true, showErrorMessage: true, errorTitle: "% complete", error: "Enter 0% to 100%. Leave empty if you fill Target and Actual: it is calculated." };
+      ws.getCell(r, col("% complete")).numFmt = "0%";
+    }
+    ["Task / deliverable", "Notes / next step", "Expected outcome", "Dependency details"].forEach(n => { ws.getColumn(col(n)).alignment = { wrapText: true, vertical: "top" }; });
+    const su = wb.addWorksheet("Summary"); su.columns = SCOLS.map((h, i) => ({ header: h, key: "s" + i, width: [14,32,50,50,50][i] })); su.getRow(1).font = { bold: true };
+    units.forEach(u => { const p = state.plans[u.id]; su.addRow([state.week, u.name, (p && p.wins) || "", (p && p.blockers) || "", (p && p.asks) || ""]); });
+    for (let r = 2; r <= units.length + 40; r++) su.getCell(r, 2).dataValidation = { type: "list", allowBlank: true, formulae: ["L_Units"], showErrorMessage: true, errorStyle: "stop", error: "Pick the unit from the dropdown." };
+    const ins = wb.addWorksheet("Instructions"); ins.columns = [{ width: 8 }, { width: 110 }];
+    [["How to fill in this template"], [],
+      ["1","One row per task on the 'Weekly plan' sheet. Keep the header row as it is. Almost every column is a dropdown: pick, do not type."],
+      ["2","Unit: pick your function or business unit. Department: pick a department of that unit (choose the Unit first). Departments are never created by import; ask Group Strategy or your planning team to add one in the app."],
+      ["3","Type: Task, or KPI / OKR for indicator lines. Category: Operational or Revenue."],
+      ["4","Week starting: any date inside the week. Leave blank to use the week selected on the page."],
+      ["5","Target, Target unit and Actual: for measurable work, enter the target (for example 500), its unit (ETB, units, %) and the actual so far. % complete is then calculated for you. Pick 'Yes' under Lower is better when less is better, for example cost or delay."],
+      ["6","Without a target, enter % complete yourself (0% to 100%). Done with no % counts as 100%."],
+      ["7","Due date: a real date. Priority: High, Medium or Low. Status: Not started, In progress, Done, Blocked or Delayed."],
+      ["8","On import, rows with the same task title as an existing task update it. New titles are added. You see a review first, and rows with a wrong unit or department are held back with a suggestion."],
+      ["9","Once a week has started, saved tasks keep their title, outcome, type, department, due date and priority. Changes to those, and anything for a past week, go to Group Strategy for approval."]].forEach(r => ins.addRow(r));
+    ins.getRow(1).font = { bold: true, size: 14 };
+    const buf = await wb.xlsx.writeBuffer();
     const nm = unitId ? safeName(unitName(unitId)) : "all units";
-    await writeXlsx(wb, `Weekly plan template ${nm} ${state.week}.xlsx`, "Template saved");
+    await save(`Weekly plan template ${nm} ${state.week}.xlsx`, buf, "Template saved");
   }
   async function commitImport(){
     if (state.imp && state.imp.mode === "replace" && !state.imp.confirmed) { state.imp.needConfirm = true; render(); return; }
@@ -1630,17 +1685,13 @@ applyPlugin(jsPDF); window.jspdf = { jsPDF }; window.XLSX = XLSX;
         g.rows.forEach(r => {
           const key = norm(r.row.title); const ex = plan.tasks.find(t => norm(t.title) === key);
           if (ex) { FIELDS.forEach(f => { const v = r.row[f]; if (v !== "" && v !== null && v !== undefined) ex[f] = v; }); if (r.row.status) statusSideEffects(ex); }
-          else { const nt = { id: uid(), title: r.row.title, outcome: r.row.outcome, dept: r.row.dept, owner: r.row.owner, due: r.row.due, priority: r.row.priority, status: r.row.status, pct: r.row.pct, notes: r.row.notes, kind: r.row.kind, depUnit: r.row.depUnit, dep: r.row.dep, ev: [] }; if (nt.status) statusSideEffects(nt); if (r.row.pct !== null && r.row.pct !== undefined) nt.pct = r.row.pct; plan.tasks.push(nt); }
+          else { const nt = { id: uid(), category: r.row.category, target: r.row.target, measure: r.row.measure, actual: r.row.actual, lower: r.row.lower, title: r.row.title, outcome: r.row.outcome, dept: r.row.dept, owner: r.row.owner, due: r.row.due, priority: r.row.priority, status: r.row.status, pct: r.row.pct, notes: r.row.notes, kind: r.row.kind, depUnit: r.row.depUnit, dep: r.row.dep, ev: [] }; if (nt.status) statusSideEffects(nt); if (r.row.pct !== null && r.row.pct !== undefined) nt.pct = r.row.pct; plan.tasks.push(nt); }
         });
         if (g.sum) { ["wins","blockers","asks"].forEach(f => { if (g.sum[f]) plan[f] = g.sum[f]; }); }
         const res = await persistPlan(g.unit.id, g.week, latest, plan, { latest, source: "Import: " + imp.fileName, action: "import", prefix: `Imported ${imp.fileName}: ` });
         if (res.error) throw Object.assign(new Error(res.error), { code: res.error });
         if (res.nothing) continue;
         if (res.saved) { nTasks += g.rows.length; nGroups++; } nReq += res.requested || 0;
-        if (imp.newDepts) {
-          const have = g.unit.departments || []; const add = [...new Set(g.rows.map(r => r.row.dept).filter(d => d && !have.some(h => h.toLowerCase() === d.toLowerCase())))];
-          if (add.length) await api.saveUnit(auth(), "lists", { id: g.unit.id, departments: [...have, ...add] }, "Added departments from import: " + add.join(", "));
-        }
       }
       toast([nGroups ? `Imported ${nTasks} rows into ${nGroups} plan${nGroups > 1 ? "s" : ""}` : "", nReq ? `${nReq} change${nReq > 1 ? "s" : ""} sent for approval` : "", skipped.length ? `Skipped (no PIN for): ${[...new Set(skipped)].join(", ")}` : ""].filter(Boolean).join(" · ") || "Nothing changed. The file matches what is saved.");
       state.imp = null;
@@ -1664,7 +1715,7 @@ applyPlugin(jsPDF); window.jspdf = { jsPDF }; window.XLSX = XLSX;
         ${imp.needConfirm ? `<div class="banner warn" style="margin:0"><b>Replace will delete ${imp.impact ? imp.impact.rem : "the"} saved task(s) in these plan weeks.</b> The replaced versions are kept in History. <button class="btn danger" id="impConfirm" style="margin-left:6px">Yes, replace</button> <button class="btn" id="impNoConfirm">Cancel</button></div>` : ""}
         <div class="toolbar"><label class="small" for="impMode">If a task title already exists</label>
           <select id="impMode"><option value="merge" ${imp.mode === "merge" ? "selected" : ""}>Update it and add new ones</option><option value="replace" ${imp.mode === "replace" ? "selected" : ""}>Replace the unit's whole plan for that week</option></select>
-          <label class="small"><input type="checkbox" id="impDepts" ${imp.newDepts ? "checked" : ""}> Add new departments to the unit</label></div>
+          <span class="small muted">Departments are never created by an import. Rows with an unknown department are held back.</span></div>
         <div class="scroll" style="max-height:420px;overflow:auto"><table><thead><tr><th>Row</th><th>Unit</th><th>Week</th><th>Task</th><th>Department</th><th>Owner</th><th>Due</th><th>Priority</th><th>Status</th><th>%</th><th>Notice</th></tr></thead><tbody>${shown}</tbody></table></div>
         ${imp.rows.length > 150 ? `<div class="small muted">Showing the first 150 of ${imp.rows.length} rows. All ready rows are imported.</div>` : ""}
         <div class="toolbar"><button class="btn primary" id="impGo" ${(!ok.length && !imp.sums.length) || state.importing ? "disabled" : ""}>${state.importing ? "Importing…" : `Import ${ok.length} row${ok.length === 1 ? "" : "s"}`}</button><button class="btn" id="impClear">Cancel</button></div></div>`;
@@ -1689,67 +1740,93 @@ applyPlugin(jsPDF); window.jspdf = { jsPDF }; window.XLSX = XLSX;
     state.filter = f; state.tab = "tasks"; state.expanded = new Set(); render();
   }
 
-  // ---------- who is using the app: name + unit PIN, or approver code ----------
-  async function checkRights(silent){
-    const a = auth();
-    if (!api || (!a.pin && !a.code)) { rights = { unitOk: false, approver: false }; return rights; }
-    try { const r = await api.login(a); rights = { unitOk: !!r.unitOk, approver: !!r.approver }; if (!silent && r.lockedOut) toast("Too many wrong tries. Wait 15 minutes and try again."); }
-    catch (e) { /* offline: keep what we had */ }
-    return rights;
+  // ---------- who is signed in ----------
+  function showMenu(){
+    const root = $("#whoRoot");
+    root.innerHTML = `<div class="overlay"><div class="modal" style="max-width:420px" role="dialog" aria-modal="true" aria-labelledby="whoTitle">
+      <div class="panel-head"><h2 id="whoTitle">${esc(me.name)}</h2><button class="icon-btn" id="whoX" aria-label="Close">×</button></div>
+      <div style="padding:12px 16px" class="small"><div>${esc(me.email || "")}</div><div class="muted">${esc(roleText(me))}${me.unit ? " · " + esc(unitName(me.unit)) : ""}${(me.departments || []).length ? " · " + esc(me.departments.join(", ")) : ""}</div></div>
+      <div class="save-bar"><span></span><div class="toolbar"><button class="btn" id="whoOut">Sign out</button></div></div></div></div>`;
+    $("#whoX").onclick = () => { root.innerHTML = ""; };
+    $("#whoOut").onclick = async () => { await api.signOut(); location.reload(); };
   }
-  function showWho(){
-    const root = $("#whoRoot"), s = session.get();
-    const unitOpts = sortedUnits().map(u => `<option value="${esc(u.id)}" ${u.id === s.unit ? "selected" : ""}>${esc(u.name)}</option>`).join("");
-    root.innerHTML = `<div class="overlay"><form class="modal" id="whoForm" style="max-width:460px" aria-labelledby="whoTitle">
-      <div class="panel-head"><h2 id="whoTitle">Sign in to update</h2>${s.name ? '<button type="button" class="icon-btn" id="whoX" aria-label="Close">×</button>' : ""}</div>
-      <div class="small muted" style="padding:10px 16px 0">Anyone can view. To change a plan you need your unit's PIN from Group Strategy. Your name is saved with every change.</div>
-      <div class="field"><label for="whoName">Your name</label><input type="text" id="whoName" value="${esc(s.name || "")}" maxlength="60" autocomplete="name" required></div>
-      <div class="field"><label for="whoUnit">Your unit</label><select id="whoUnit"><option value="">Choose your unit (or view only)</option>${unitOpts}</select></div>
-      <div class="field"><label for="whoPin">Unit PIN</label><input type="password" id="whoPin" autocomplete="off" inputmode="text" value="${esc(s.pin || "")}"></div>
-      <div class="field" id="apprField" ${isApproverName(s.name, state.approverNames) ? "" : "hidden"}><label for="whoCode">Group Strategy approver code</label><input type="password" id="whoCode" autocomplete="off" value="${esc(s.code || "")}"><span class="small muted">Only for approving changes and managing units. Leave empty otherwise.</span></div>
-      <div class="save-bar"><span class="small" id="whoErr" style="color:var(--bad)"></span><div class="toolbar">${s.pin || s.code ? '<button type="button" class="btn" id="whoOut">Sign out</button>' : ""}<button type="button" class="btn" id="whoView">View only</button><button class="btn primary" type="submit">Sign in</button></div></div></form></div>`;
-    const input = $("#whoName"); input.focus(); input.select();
-    input.oninput = () => { $("#apprField").hidden = !isApproverName(input.value, state.approverNames); };
-    const close = () => { root.innerHTML = ""; render(); };
-    const finish = async (name, unit, pin, code) => {
-      session.set({ name, unit, pin, code }); myId = name;
-      await checkRights(true);
-      if (state.tab === "units" && !isAppr()) state.tab = "dashboard";
-      if (rights.unitOk && !state.dirty && (!state.editUnit || state.editUnit === ALL)) { state.editUnit = unit; store.set("wp-unit", unit); }
-      loadDraft(); close();
-      toast(isAppr() ? `Signed in as ${name}, Group Strategy approver` : rights.unitOk ? `Signed in as ${name} for ${unitName(unit)}` : `Viewing as ${name}`);
-      if (isAppr()) loadPinStatus();
-    };
-    $("#whoView").onclick = () => { const name = input.value.trim(); if (!name) { $("#whoErr").textContent = "Enter your name."; return; } finish(name, "", "", ""); };
-    const out = $("#whoOut"); if (out) out.onclick = () => finish(input.value.trim() || s.name, "", "", "");
-    const x = $("#whoX"); if (x) x.onclick = () => { root.innerHTML = ""; };
-    $("#whoForm").onsubmit = async e => {
-      e.preventDefault();
-      const name = input.value.trim(), unit = $("#whoUnit").value, pin = $("#whoPin").value.trim(), code = $("#apprField").hidden ? "" : $("#whoCode").value.trim();
-      const err = m => { $("#whoErr").textContent = m; };
-      if (!name) return err("Enter your name.");
-      if (!code && !(unit && pin)) return err("Choose your unit and enter its PIN, or press View only.");
-      err("Checking…");
-      let r; try { r = await api.login({ name, unit, pin, code }); } catch (x) { return err("Could not reach the server. Check your connection."); }
-      if (r.lockedOut) return err("Too many wrong tries. Wait 15 minutes.");
-      if (code && !r.approver) return err("That approver code is not right.");
-      if (unit && pin && !r.unitOk) return err(r.hasPin ? `That PIN is not right for ${unitName(unit)}.` : `${unitName(unit)} has no PIN yet. Ask Group Strategy to set one.`);
-      finish(name, r.unitOk ? unit : "", r.unitOk ? pin : "", r.approver ? code : "");
-    };
+
+  // ---------- People (Group Strategy only) ----------
+  const ROLE_OPTS = (cur) => ROLES.map(r => `<option value="${r}" ${r === cur ? "selected" : ""}>${esc(ROLE_LABEL[r] || r)}</option>`).join("");
+  const UNIT_OPTS = (cur) => `<option value="">No unit</option>` + sortedUnits().map(u => `<option value="${esc(u.id)}" ${u.id === cur ? "selected" : ""}>${esc(u.name)}</option>`).join("");
+  const DEPT_OPTS = (unit, cur) => ((unitOf(unit).departments) || []).map(d => `<option ${(cur || []).includes(d) ? "selected" : ""}>${esc(d)}</option>`).join("");
+  async function loadPeople(){
+    if (!isAppr() || !api) return;
+    state.people = state.people || { loading: true };
+    try { const r = await api.adminUsers(); state.people = r.error ? { error: r.error } : { ...r }; } catch (e) { state.people = { error: e.code || "error" }; }
+    if (state.tab === "people") render();
+  }
+  function renderPeople(){
+    const p = state.people;
+    if (!p || p.loading) return `<div class="panel"><div class="empty"><b>Loading people…</b></div></div>`;
+    if (p.error) return `<div class="panel"><div class="empty"><b>Could not load people</b>${esc(errText({ error: p.error }))}</div></div>`;
+    const sel = (id, k, opts, cls = "") => `<select data-pu="${esc(id)}|${k}" class="${cls}" aria-label="${k}">${opts}</select>`;
+    const rows = (p.users || []).map(u => {
+      const id = u.id, self = me && me.id === id;
+      return `<tr data-prow="${esc(id)}"><td><input type="text" data-pu="${esc(id)}|name" value="${esc(u.name)}" aria-label="Name"><div class="small muted">${esc(u.email)}${u.setupDone ? "" : " · not set up yet"}</div></td>
+        <td>${sel(id, "role", ROLE_OPTS(u.role))}<select data-pu="${esc(id)}|title" aria-label="Title" ${u.role === "executive" ? "" : "hidden"}><option ${u.title === "CEO" ? "selected" : ""}>CEO</option><option ${u.title === "DCEO" ? "selected" : ""}>DCEO</option></select></td>
+        <td>${sel(id, "unit", UNIT_OPTS(u.unit))}</td>
+        <td><select multiple size="3" data-pu="${esc(id)}|departments" aria-label="Departments">${DEPT_OPTS(u.unit, u.departments)}</select></td>
+        <td>${sel(id, "status", `<option ${u.status === "active" ? "selected" : ""}>active</option><option ${u.status === "disabled" ? "selected" : ""}>disabled</option>`)}</td>
+        <td><button class="btn small primary" data-pe="save-user" data-id="${esc(id)}" ${self ? 'title="You cannot change your own role or disable yourself"' : ""}>Save</button></td></tr>`;
+    }).join("");
+    const reqs = (p.requests || []).map(r => `<tr data-rrow="${esc(r.id)}"><td><b>${esc(r.name)}</b><div class="small muted">${esc(r.email)} · ${esc(r.contact || "")}</div>${r.note ? `<div class="small">${esc(r.note)}</div>` : ""}</td>
+      <td>${esc(r.unit ? unitName(r.unit) : "–")}</td>
+      <td><select data-rq="${esc(r.id)}|role">${ROLE_OPTS("staff")}</select> <select data-rq="${esc(r.id)}|unit">${UNIT_OPTS(r.unit)}</select></td>
+      <td><button class="btn small primary" data-pe="req-yes" data-id="${esc(r.id)}">Approve</button> <button class="btn small" data-pe="req-no" data-id="${esc(r.id)}">Reject</button></td></tr>`).join("");
+    const invs = (p.invites || []).map(i => `<tr><td>${esc(i.email)}<div class="small muted">${esc(i.name || "")}</div></td><td>${esc(ROLE_LABEL[i.role] || i.role)}${i.title ? " · " + esc(i.title) : ""}</td><td>${esc(i.unit ? unitName(i.unit) : "–")}</td><td>${esc((i.departments || []).join(", "))}</td><td><button class="btn small ghost danger" data-pe="inv-del" data-id="${esc(i.email)}">Remove</button></td></tr>`).join("");
+    const nu = state.pu.newUnit || "";
+    return `<div class="panel" style="margin-bottom:16px"><div class="panel-head"><h2>People</h2><span class="muted small">Role and unit decide what each person can see and change. Changes apply on their next action.</span></div>
+      <div class="scroll"><table id="peopleTbl"><thead><tr><th>Name</th><th>Role</th><th>Unit</th><th>Departments</th><th>Access</th><th></th></tr></thead><tbody>${rows || `<tr><td colspan="6" class="muted">No people yet</td></tr>`}</tbody></table></div></div>
+    ${reqs ? `<div class="panel" style="margin-bottom:16px"><div class="panel-head"><h2>Access requests</h2></div><div class="scroll"><table><thead><tr><th>Who</th><th>Asked for</th><th>Give access as</th><th></th></tr></thead><tbody>${reqs}</tbody></table></div></div>` : ""}
+    <div class="panel" style="margin-bottom:16px"><div class="panel-head"><h2>Invite someone</h2><span class="muted small">Invited people sign in with their email and get the role you set here.</span></div>
+      <div class="toolbar" style="padding:12px 16px;flex-wrap:wrap"><input type="email" id="inv-email" placeholder="email@company.com"><input type="text" id="inv-name" placeholder="Full name (optional)"><select id="inv-role">${ROLE_OPTS("staff")}</select><select id="inv-title" hidden><option>CEO</option><option>DCEO</option></select><select id="inv-unit">${UNIT_OPTS(nu)}</select><select id="inv-dept" multiple size="3" aria-label="Departments"></select><button class="btn primary" data-pe="invite">Send invite</button></div>
+      <div class="small muted" style="padding:0 16px 12px">${Object.entries(ROLE_HELP).map(([k, v]) => `<b>${esc(ROLE_LABEL[k] || k)}</b>: ${esc(v)}`).join(" · ")}</div>
+      ${invs ? `<div class="scroll"><table><thead><tr><th>Email</th><th>Role</th><th>Unit</th><th>Departments</th><th></th></tr></thead><tbody>${invs}</tbody></table></div>` : ""}</div>
+    <div class="grid2 even"><div class="panel"><div class="panel-head"><h2>Allowed email domains</h2></div><div class="asks"><p class="small">People with these company email domains can sign themselves up (they start as Staff in the unit they choose). Everyone else needs an invite or an approved request.</p>
+      <div class="toolbar"><input type="text" id="domainsIn" style="min-width:260px" value="${esc((p.domains || []).join(", "))}"><button class="btn" data-pe="domains">Save domains</button></div></div></div>
+      <div class="panel"><div class="panel-head"><h2>Daily backups</h2></div><div class="asks"><p class="small">A copy of all units and plans is kept every night. Download one to keep offline.</p><div id="backupList" class="toolbar" style="flex-wrap:wrap"><button class="btn" data-pe="backups">Show available days</button></div></div></div></div>`;
+  }
+  async function peopleClick(t){
+    const a = t.dataset.pe, id = t.dataset.id;
+    const done = async (r, ok) => { if (r && r.error) { toast(errText(r)); return; } toast(ok); state.people = null; await loadPeople(); };
+    try {
+      if (a === "save-user") {
+        const g = k => document.querySelector(`[data-pu="${CSS.escape(id)}|${k}"]`), role = g("role").value;
+        const deps = [...g("departments").selectedOptions].map(o => o.value), ttl = g("title");
+        await done(await api.adminSaveUser(id, { name: g("name").value, role, title: role === "executive" ? (ttl ? ttl.value : "CEO") : "", unit: g("unit").value || null, departments: deps, status: g("status").value }), "Saved");
+      } else if (a === "invite") {
+        const role = $("#inv-role").value, d = { email: $("#inv-email").value, name: $("#inv-name").value, role, title: role === "executive" ? $("#inv-title").value : "", unit: $("#inv-unit").value || null, departments: [...$("#inv-dept").selectedOptions].map(o => o.value) };
+        await done(await api.adminInvite(d), "Invite saved. They can now sign in with that email.");
+      } else if (a === "inv-del") await done(await api.adminDeleteInvite(id), "Invite removed");
+      else if (a === "req-yes" || a === "req-no") {
+        const role = document.querySelector(`[data-rq="${CSS.escape(id)}|role"]`).value, unit = document.querySelector(`[data-rq="${CSS.escape(id)}|unit"]`).value;
+        await done(await api.adminDecideAccess(id, a === "req-yes", { role, unit: unit || null, title: role === "executive" ? "CEO" : "", departments: [] }), a === "req-yes" ? "Approved. They can now sign in." : "Rejected");
+      } else if (a === "domains") await done(await api.adminSetDomains($("#domainsIn").value.split(/[ ,;]+/).filter(Boolean)), "Domains saved");
+      else if (a === "backups") {
+        const r = await api.adminBackups(); if (r.error) { toast(errText(r)); return; }
+        const days = r.days || []; $("#backupList").innerHTML = days.length ? days.map(d => `<button class="btn small" data-pe="backup-get" data-id="${esc(d.day || d)}">${esc(d.day || d)}</button>`).join("") : `<span class="muted small">No backups yet.</span>`;
+      } else if (a === "backup-get") {
+        const r = await api.adminGetBackup(id); if (r.error) { toast(errText(r)); return; }
+        await save(`WBG tracker backup ${id}.json`, JSON.stringify(r.data || r, null, 1), "Backup downloaded");
+      }
+    } catch (e) { toast(errText(e)); }
   }
 
   // ---------- boot ----------
   render();
-  (async () => {
-    const cfgErr = configError();
-    if (cfgErr) { bannerMsg = cfgErr; state.unitsLoaded = state.plansLoaded = true; render(); return; }
-    const data = createData(); ({ db, api, downloads } = data); dataMode = data.mode;
-    session = getSession(); myId = session.get().name || "";
-    $("#whoBtn").onclick = showWho;
-    api.approverNames().then(n => { state.approverNames = n; }).catch(() => {});
-    checkRights(true).then(() => { render(); if (isAppr()) loadPinStatus(); });
+  function startApp(profile){
+    me = profile; myId = profile.name; api.setProfile && api.setProfile(profile);
+    api.onSignedOut(() => location.reload());
+    $("#whoBtn").onclick = showMenu;
+    if (!state.editUnit || state.editUnit === ALL) { const mu = myUnit(); if (mu) { state.editUnit = mu; store.set("wp-unit", mu); } }
+    if (!isAppr() && state.editUnit && !myUnit() && me.role !== "executive" && me.role !== "leader") state.editUnit = null;
     subscribeRequests(); X.subscribe();
-    if (!myId) setTimeout(() => { if (state.unitsLoaded) showWho(); else { const iv = setInterval(() => { if (state.unitsLoaded) { clearInterval(iv); showWho(); } }, 200); } }, 0);
     window.addEventListener("offline", () => banner("You are offline. Changes will not save until the connection returns."));
     window.addEventListener("online", () => { bannerMsg = ""; subscribePlans(); render(); });
     db.collection("units").onSnapshot(snap => {
@@ -1761,5 +1838,13 @@ applyPlugin(jsPDF); window.jspdf = { jsPDF }; window.XLSX = XLSX;
       render();
     }, err => banner(`Could not load units (${err.code}). Reload the page to reconnect.`));
     subscribePlans();
+  }
+  (async () => {
+    const cfgErr = configError();
+    if (cfgErr) { bannerMsg = cfgErr; state.unitsLoaded = state.plansLoaded = true; render(); return; }
+    const data = createData(); ({ db, api, downloads } = data); dataMode = data.mode;
+    let cur = null; try { cur = await api.session(); } catch (e) { cur = null; }
+    const p = await startGate(api, cur && cur.status === "active" && cur.setupDone ? cur : cur);
+    startApp(p);
   })();
 })();

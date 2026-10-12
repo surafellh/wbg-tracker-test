@@ -69,7 +69,7 @@ export function createExtras(c) {
     const reqs = [...new Set(pool.map((r) => r.requester).filter(Boolean))].sort();
     const cnt = (s) => pool.filter((r) => r.status === s).length;
     const list = supFiltered(), order = c.sortOrder(list, "sup", supVal), shown = order.slice(0, f.show).map((i) => list[i]);
-    const canAdd = c.isAppr() || (f.fn && c.canEdit(f.fn)) || (!f.fn && c.myUnit() && fns.some((u) => u.id === c.myUnit()));
+    const canAdd = c.isAppr() || (f.fn && c.canLead(f.fn)) || (!f.fn && c.canLead(c.myUnit()) && fns.some((u) => u.id === c.myUnit()));
     const showFn = !f.fn;
     const sh = (k, l) => c.th("sup", k, l);
     const rows = shown.map((r) => {
@@ -139,14 +139,14 @@ export function createExtras(c) {
         <div class="fb-top"><span class="pill ${x.from === "CEO" ? "s-bad" : x.from === "DCEO" ? "s-prog" : "s-done"}">${esc(x.from)}</span> <b>${esc(c.unitName(x.unit))}</b>
           <span class="small muted">${x.week ? esc(c.weekLabel(x.week)) + " · " : ""}${esc(fmt((x.createdAt || "").slice(0, 10)))}${x.by ? " · " + esc(x.by) : ""}</span></div>
         <div class="fb-body">${esc(x.body)}</div>
-        <div class="fb-foot small">${x.ackAt ? `<span class="muted">Acknowledged by ${esc(x.ackBy)} on ${esc(fmt(x.ackAt.slice(0, 10)))}</span>` : (c.canEdit(x.unit) ? `<button class="btn small" data-x="fb-ack" data-id="${esc(x.id)}">Acknowledge</button> <button class="btn small ghost" data-x="act-from-fb" data-unit="${esc(x.unit)}" data-id="${esc(x.id)}">Log a corrective action</button>` : '<span class="muted">Not yet acknowledged</span>')}
-          ${c.isAppr() ? `<button class="btn small ghost" data-x="fb-edit" data-id="${esc(x.id)}">Edit</button>` : ""}</div></div>`).join("");
+        <div class="fb-foot small">${x.ackAt ? `<span class="muted">Acknowledged by ${esc(x.ackBy)} on ${esc(fmt(x.ackAt.slice(0, 10)))}</span>` : (c.canLead(x.unit) ? `<button class="btn small" data-x="fb-ack" data-id="${esc(x.id)}">Acknowledge</button> <button class="btn small ghost" data-x="act-from-fb" data-unit="${esc(x.unit)}" data-id="${esc(x.id)}">Log a corrective action</button>` : '<span class="muted">Not yet acknowledged</span>')}
+          ${c.canFeedback() ? `<button class="btn small ghost" data-x="fb-edit" data-id="${esc(x.id)}">Edit</button>` : ""}</div></div>`).join("");
       return `<div class="panel">${head}
         <div class="toolbar" style="padding:10px 16px 12px;border-bottom:1px solid var(--line)">${unitSel("fbunit", f.unit)}
           <select data-xf="fbfrom" aria-label="From"><option value="">From: anyone</option>${FROM.map((x) => `<option ${f.from === x ? "selected" : ""}>${x}</option>`).join("")}</select>
           <select data-xf="fback" aria-label="Acknowledged"><option value="">All</option><option value="new" ${f.ack === "new" ? "selected" : ""}>Not acknowledged</option><option value="done" ${f.ack === "done" ? "selected" : ""}>Acknowledged</option></select>
-          <span class="small muted">${list.length} message${list.length === 1 ? "" : "s"}</span>${c.isAppr() ? `<button class="btn primary" data-x="fb-new" style="margin-left:auto">+ Give feedback</button>` : ""}</div>
-        <div style="padding:12px 16px">${cards || `<div class="empty"><b>No feedback yet</b>${c.isAppr() ? "Use “Give feedback” to record feedback from the CEO, DCEO or Group Strategy for a unit." : "Feedback given to your unit will appear here."}</div>`}
+          <span class="small muted">${list.length} message${list.length === 1 ? "" : "s"}</span>${c.canFeedback() ? `<button class="btn primary" data-x="fb-new" style="margin-left:auto">+ Give feedback</button>` : ""}</div>
+        <div style="padding:12px 16px">${cards || `<div class="empty"><b>No feedback yet</b>${c.canFeedback() ? "Use “Give feedback” to record feedback from the CEO, DCEO or Group Strategy for a unit." : "Feedback given to your unit will appear here."}</div>`}
         ${list.length > f.ashow ? `<div class="toolbar"><button class="btn" data-x="fb-more">Show more</button></div>` : ""}</div></div>`;
     }
     const q = f.aq.trim().toLowerCase();
@@ -156,7 +156,7 @@ export function createExtras(c) {
       return `<tr class="clickable" data-x="act-open" data-id="${esc(a.id)}" tabindex="0"><td class="small"><b>${esc(c.unitName(a.unit))}</b></td><td><span class="pill ${a.source === "Self" ? "s-none" : a.source === "CEO" ? "s-bad" : a.source === "DCEO" ? "s-prog" : "s-done"}">${esc(a.source)}</span></td>
         <td class="sup-req">${esc(a.issue)}${a.taskTitle ? `<div class="small muted">Task: ${esc(a.taskTitle)}</div>` : ""}</td><td class="sup-req">${esc(a.action)}</td><td class="small">${esc(a.owner)}</td>
         <td class="num small ${late ? "late" : ""}">${esc(fmt(a.due))}${late ? " · overdue" : ""}</td><td><span class="pill ${statusCls(a.status)}">${esc(a.status)}</span></td><td class="small muted">${esc(fmt((a.updatedAt || "").slice(0, 10)))}</td></tr>`; }).join("");
-    const canLog = c.isAppr() || !!c.myUnit();
+    const canLog = c.isAppr() || c.canLead(c.myUnit());
     return `<div class="panel">${head}
       <div class="toolbar" style="padding:10px 16px 12px;border-bottom:1px solid var(--line)">${unitSel("fbunit", f.unit)}
         <select data-xf="astatus" aria-label="Status"><option value="active" ${f.astatus === "active" ? "selected" : ""}>Active (open, in progress)</option>${ACT_STATUS.map((x) => `<option ${f.astatus === x ? "selected" : ""}>${x}</option>`).join("")}<option value="all" ${f.astatus === "all" ? "selected" : ""}>All</option></select>
@@ -187,7 +187,7 @@ export function createExtras(c) {
     const first = root.querySelector("textarea, input[type=text], select"); if (first && m.isNew) first.focus();
   }
   function supModal(m) {
-    const r = m.row, ed = m.canEdit, d = ed ? "" : "disabled", fns = fnUnits().filter((u) => c.isAppr() || c.canEdit(u.id) || u.id === r.function);
+    const r = m.row, ed = m.canEdit, d = ed ? "" : "disabled", fns = fnUnits().filter((u) => c.isAppr() || c.canLead(u.id) || u.id === r.function);
     const names = c.sortedUnits().map((u) => `<option value="${esc(u.name)}">`).join("");
     return `<div class="panel-head"><div><h2>${m.isNew ? "Log a support request" : `Request ${esc(r.ref || "")}`}</h2>${!m.isNew && r.updatedBy ? `<div class="small muted">Last updated ${esc(fmt((r.updatedAt || "").slice(0, 10)))} by ${esc(r.updatedBy)}</div>` : ""}</div></div>
       <div class="xgrid">
@@ -214,7 +214,7 @@ export function createExtras(c) {
     return `<div class="panel-head"><div><h2>${m.isNew ? "Give feedback" : "Edit feedback"}</h2></div></div>
       <div class="xgrid">
         ${field("fb-unit", "Unit", `<select id="fb-unit">${c.sortedUnits().map((u) => `<option value="${esc(u.id)}" ${u.id === r.unit ? "selected" : ""}>${esc(u.name)}</option>`).join("")}</select>`)}
-        ${field("fb-from", "Feedback from", `<select id="fb-from">${opt(FROM, r.from || "Group Strategy")}</select>`)}
+        ${field("fb-from", "Feedback from", `<select id="fb-from">${c.isAppr() ? opt(FROM, r.from || "Group Strategy") : opt([c.auth().title], c.auth().title)}</select>`)}
         ${field("fb-week", "About the week (optional)", `<select id="fb-week"><option value="">No specific week</option>${weeks.map((w) => `<option value="${w}" ${w === r.week ? "selected" : ""}>${esc(c.weekLabel(w))}</option>`).join("")}</select>`)}
         ${field("fb-body", "Feedback", `<textarea id="fb-body" rows="5" placeholder="What was observed, and what is expected">${esc(r.body)}</textarea>`, true)}
       </div>
@@ -251,7 +251,7 @@ export function createExtras(c) {
       const fn = f.fn || (c.myUnit() && fnUnits().some((u) => u.id === c.myUnit()) ? c.myUnit() : "");
       state.xm = { type: "support", isNew: true, canEdit: true, row: { function: fn, requester: "", category: "", description: "", priority: "Normal", requested: c.todayIso, status: "Open", responded: "", action: "", respondedBy: "", evidence: "", followUp: false, remarks: "" } }; drawModal();
     }
-    else if (x === "sup-open") { const r = state.support.find((y) => y.id === id); if (r) { state.xm = { type: "support", isNew: false, canEdit: c.canEdit(r.function), row: { ...r } }; drawModal(); } }
+    else if (x === "sup-open") { const r = state.support.find((y) => y.id === id); if (r) { state.xm = { type: "support", isNew: false, canEdit: c.canLead(r.function), row: { ...r } }; drawModal(); } }
     else if (x === "sup-save") {
       const m = state.xm, r = m.row;
       const row = { id: m.isNew ? undefined : r.id, ref: r.ref, function: v("sp-fn"), requester: v("sp-req").trim(), category: v("sp-cat"), description: v("sp-desc").trim(), priority: v("sp-pri"), requested: v("sp-date"), status: v("sp-st"), responded: v("sp-rdate"), action: v("sp-act").trim(), respondedBy: v("sp-by").trim(), evidence: v("sp-ev").trim(), followUp: v("sp-fu") === "yes", remarks: v("sp-rem").trim() };
@@ -277,7 +277,7 @@ export function createExtras(c) {
     else if (x === "fb-ack") { const res = await c.api().ackFeedback(A(), id); ok(res, "Acknowledged"); }
     else if (x === "act-from-fb") { const fb = state.fbs.find((y) => y.id === id) || {}; g.view = "actions"; state.xm = { type: "action", isNew: true, canEdit: true, row: { unit: el.dataset.unit, source: fb.from || "Self", issue: fb.body || "", action: "", owner: "", due: "", status: "Open", taskTitle: "", notes: "", week: fb.week || "" } }; c.render(); drawModal(); }
     else if (x === "act-new") { const u = g.unit || c.myUnit() || (c.sortedUnits()[0] || {}).id || ""; state.xm = { type: "action", isNew: true, canEdit: true, row: { unit: u, source: c.isAppr() ? "Group Strategy" : "Self", issue: "", action: "", owner: "", due: "", status: "Open", taskTitle: "", notes: "", week: "" } }; drawModal(); }
-    else if (x === "act-open") { const r = state.acts.find((y) => y.id === id); if (r) { state.xm = { type: "action", isNew: false, canEdit: c.canEdit(r.unit), row: { ...r } }; drawModal(); } }
+    else if (x === "act-open") { const r = state.acts.find((y) => y.id === id); if (r) { state.xm = { type: "action", isNew: false, canEdit: c.canLead(r.unit), row: { ...r } }; drawModal(); } }
     else if (x === "act-save") {
       const m = state.xm, r = m.row;
       const row = { id: m.isNew ? undefined : r.id, unit: v("ac-unit") || r.unit, source: c.isAppr() ? v("ac-src") : (r.source || "Self"), issue: v("ac-issue").trim(), action: v("ac-action").trim(), owner: v("ac-owner").trim(), due: v("ac-due"), status: v("ac-st"), taskTitle: v("ac-task").trim(), notes: v("ac-notes").trim(), week: r.week || "" };
