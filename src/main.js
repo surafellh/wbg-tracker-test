@@ -1746,8 +1746,16 @@ applyPlugin(jsPDF); window.jspdf = { jsPDF }; window.XLSX = XLSX;
     root.innerHTML = `<div class="overlay"><div class="modal" style="max-width:420px" role="dialog" aria-modal="true" aria-labelledby="whoTitle">
       <div class="panel-head"><h2 id="whoTitle">${esc(me.name)}</h2><button class="icon-btn" id="whoX" aria-label="Close">×</button></div>
       <div style="padding:12px 16px" class="small"><div>${esc(me.email || "")}</div><div class="muted">${esc(roleText(me))}${me.unit ? " · " + esc(unitName(me.unit)) : ""}${(me.departments || []).length ? " · " + esc(me.departments.join(", ")) : ""}</div></div>
-      <div class="save-bar"><span></span><div class="toolbar"><button class="btn" id="whoOut">Sign out</button></div></div></div></div>`;
+      <div id="pwBox" style="padding:0 16px 12px" hidden><label class="small muted" for="pwA">New password (at least 10 characters)</label><input type="password" id="pwA" autocomplete="new-password" style="width:100%"><label class="small muted" for="pwB">Repeat it</label><input type="password" id="pwB" autocomplete="new-password" style="width:100%"><div class="small" id="pwErr" style="color:var(--bad);min-height:1.2em"></div><button class="btn primary" id="pwSave">Save password</button></div>
+      <div class="save-bar"><button class="btn" id="pwOpen">Change password</button><div class="toolbar"><button class="btn" id="whoOut">Sign out</button></div></div></div></div>`;
     $("#whoX").onclick = () => { root.innerHTML = ""; };
+    $("#pwOpen").onclick = () => { $("#pwBox").hidden = false; $("#pwOpen").hidden = true; $("#pwA").focus(); };
+    $("#pwSave").onclick = async () => {
+      const a = $("#pwA").value, b = $("#pwB").value, e = m => { $("#pwErr").textContent = m; };
+      if (a.length < 10) return e("Use at least 10 characters."); if (a !== b) return e("The two passwords are not the same.");
+      const r = await api.setPassword(a); if (r.error) return e(/same|different/i.test(r.error) ? "Choose a password you have not used before." : "Could not save: " + r.error);
+      root.innerHTML = ""; toast("Password changed");
+    };
     $("#whoOut").onclick = async () => { await api.signOut(); location.reload(); };
   }
 
@@ -1773,7 +1781,7 @@ applyPlugin(jsPDF); window.jspdf = { jsPDF }; window.XLSX = XLSX;
         <td>${sel(id, "unit", UNIT_OPTS(u.unit))}</td>
         <td><select multiple size="3" data-pu="${esc(id)}|departments" aria-label="Departments">${DEPT_OPTS(u.unit, u.departments)}</select></td>
         <td>${sel(id, "status", `<option ${u.status === "active" ? "selected" : ""}>active</option><option ${u.status === "disabled" ? "selected" : ""}>disabled</option>`)}</td>
-        <td><button class="btn small primary" data-pe="save-user" data-id="${esc(id)}" ${self ? 'title="You cannot change your own role or disable yourself"' : ""}>Save</button></td></tr>`;
+        <td><button class="btn small primary" data-pe="save-user" data-id="${esc(id)}" ${self ? 'title="You cannot change your own role or disable yourself"' : ""}>Save</button> ${self ? "" : `<button class="btn small ghost" data-pe="reset-pw" data-id="${esc(id)}" title="Removes their password and signs them out. They sign in with a code and choose a new password.">Reset password</button>`}</td></tr>`;
     }).join("");
     const reqs = (p.requests || []).map(r => `<tr data-rrow="${esc(r.id)}"><td><b>${esc(r.name)}</b><div class="small muted">${esc(r.email)} · ${esc(r.contact || "")}</div>${r.note ? `<div class="small">${esc(r.note)}</div>` : ""}</td>
       <td>${esc(r.unit ? unitName(r.unit) : "–")}</td>
@@ -1800,6 +1808,9 @@ applyPlugin(jsPDF); window.jspdf = { jsPDF }; window.XLSX = XLSX;
         const g = k => document.querySelector(`[data-pu="${CSS.escape(id)}|${k}"]`), role = g("role").value;
         const deps = [...g("departments").selectedOptions].map(o => o.value), ttl = g("title");
         await done(await api.adminSaveUser(id, { name: g("name").value, role, title: role === "executive" ? (ttl ? ttl.value : "CEO") : "", unit: g("unit").value || null, departments: deps, status: g("status").value }), "Saved");
+      } else if (a === "reset-pw") {
+        if (!confirm("Remove this person's password and sign them out everywhere? They can sign in again with a code and choose a new password.")) return;
+        await done(await api.adminResetPassword(id), "Password reset. They sign in with a code.");
       } else if (a === "invite") {
         const role = $("#inv-role").value, d = { email: $("#inv-email").value, name: $("#inv-name").value, role, title: role === "executive" ? $("#inv-title").value : "", unit: $("#inv-unit").value || null, departments: [...$("#inv-dept").selectedOptions].map(o => o.value) };
         await done(await api.adminInvite(d), "Invite saved. They can now sign in with that email.");

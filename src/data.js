@@ -55,8 +55,18 @@ function planJson(p) {
   return { unit: p.unit, week: p.week, tasks: p.tasks || [], wins: p.wins || "", blockers: p.blockers || "", asks: p.asks || "", source: p.source || "" };
 }
 
+// "Stay signed in": the session lives in localStorage (kept across restarts) or sessionStorage (ends when the browser closes).
+const REMEMBER_KEY = "wbg_remember";
+const remember = () => { try { return localStorage.getItem(REMEMBER_KEY) !== "0"; } catch (e) { return true; } };
+const sessionStore = {
+  getItem: (k) => { try { return localStorage.getItem(k) ?? sessionStorage.getItem(k); } catch (e) { return null; } },
+  setItem: (k, v) => { try { if (remember()) { localStorage.setItem(k, v); sessionStorage.removeItem(k); } else { sessionStorage.setItem(k, v); localStorage.removeItem(k); } } catch (e) {} },
+  removeItem: (k) => { try { localStorage.removeItem(k); sessionStorage.removeItem(k); } catch (e) {} },
+};
+const setRemember = (on) => { try { localStorage.setItem(REMEMBER_KEY, on ? "1" : "0"); } catch (e) {} };
+
 function createSupabaseData() {
-  const sb = createClient(URL_, KEY_, { auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: false }, realtime: { params: { eventsPerSecond: 5 } } });
+  const sb = createClient(URL_, KEY_, { auth: { storage: sessionStore, persistSession: true, autoRefreshToken: true, detectSessionInUrl: false }, realtime: { params: { eventsPerSecond: 5 } } });
   let roleNow = "";   // employees read plans through a function that hides other departments
   const live = new Map();
   const bump = (table) => (live.get(table) || new Set()).forEach((f) => f());
@@ -147,6 +157,17 @@ function createSupabaseData() {
     async sendCode(email) { const { error } = await sb.auth.signInWithOtp({ email, options: { shouldCreateUser: true } }); return error ? { error: error.message, status: error.status } : { ok: true }; },
     async verifyCode(email, token) { const { error } = await sb.auth.verifyOtp({ email, token, type: "email" }); if (error) return { error: error.message }; return { profile: await this.me() }; },
     async signOut() { roleNow = ""; await sb.auth.signOut(); },
+    async signInPassword(email, password, stay) {
+      setRemember(stay !== false);
+      const { error } = await sb.auth.signInWithPassword({ email, password });
+      if (error) return { error: error.message, status: error.status };
+      return { profile: await this.me() };
+    },
+    // a code sign-in also honours "stay signed in": the choice is stored before the session is created
+    setRemember(on) { setRemember(on); },
+    async hasPassword() { const { data } = await sb.auth.getUser(); return !!(data && data.user && data.user.user_metadata && data.user.user_metadata.has_password); },
+    async setPassword(password) { const { error } = await sb.auth.updateUser({ password, data: { has_password: true } }); return error ? { error: error.message } : { ok: true }; },
+    adminResetPassword: (id) => rpc("wbg_admin_reset_password", { p_user: id }),
     onSignedOut(fn) { sb.auth.onAuthStateChange((ev) => { if (ev === "SIGNED_OUT") fn(); }); },
     async publicUnits() { const { data, error } = await sb.rpc("wbg_public_units"); if (error) fail(error); return data || []; },
     async requestAccess(r) { const { data, error } = await sb.rpc("wbg_request_access", { p_email: r.email, p_name: r.name, p_unit: r.unit || "", p_contact: r.contact || "", p_note: r.note || "" }); if (error) return { error: error.message }; return data; },
@@ -444,6 +465,11 @@ function createLocalData() {
     localSignIn(id) { const p = people().find((x) => x.id === id); if (!p) return null; write("wbg_local_session", id); return meOut(p); },
     async checkEmail(email) { const e = (email || "").trim().toLowerCase(), d = e.split("@")[1] || ""; return { allowed: /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(e) && (domains().includes(d) || invites().some((i) => i.email === e) || people().some((p) => p.email === e)) }; },
     async sendCode() { return { ok: true }; },
+    setRemember() {},
+    async signInPassword(email, password) { const e = (email || "").trim().toLowerCase(), p = people().find((x) => x.email === e); if (!p || !p.pw || p.pw !== password) return { error: "Invalid login credentials" }; write("wbg_local_session", p.id); return { profile: meOut(p) }; },
+    async hasPassword() { const p = prof(); return !!(p && p.pw); },
+    async setPassword(password) { const l = people(), p = l.find((x) => x.id === curId()); if (!p) return { error: "not_signed_in" }; p.pw = password; setPeople(l); return { ok: true }; },
+    async adminResetPassword(id) { if (!isAppr(A())) return err("not_allowed"); const l = people(), p = l.find((x) => x.id === id); if (!p) return err("not_found"); delete p.pw; setPeople(l); addActivity(A().name, p.unit || "", "", { action: "user", summary: `Reset the password of ${p.email}` }); return ok(); },
     async verifyCode(email, code) { const e = (email || "").trim().toLowerCase(); let p = people().find((x) => x.email === e); if (!p) { const inv = invites().find((i) => i.email === e); p = { id: e, email: e, name: inv ? inv.name : "", role: inv ? inv.role : "staff", title: inv ? inv.title : "", unit: inv ? inv.unit : null, departments: inv ? inv.departments : [], status: "active", setupDone: false, invited: !!inv }; setPeople([...people(), p]); } write("wbg_local_session", p.id); return { profile: meOut(p) }; },
     async signOut() { try { localStorage.removeItem("wbg_local_session"); } catch (x) {} },
     onSignedOut() {},
@@ -494,7 +520,7 @@ function createLocalData() {
   };
   // every change runs as the signed-in person, never as what the page says
   for (const k of Object.keys(api)) {
-    if (typeof api[k] !== "function" || /^(session|me|setProfile|localPeople|localSignIn|checkEmail|sendCode|verifyCode|signOut|onSignedOut|publicUnits|requestAccess|completeSignup|admin\w+|uploadEvidence|evidenceUrl|readAll)$/.test(k)) continue;
+    if (typeof api[k] !== "function" || /^(session|me|setProfile|setRemember|signInPassword|hasPassword|setPassword|localPeople|localSignIn|checkEmail|sendCode|verifyCode|signOut|onSignedOut|publicUnits|requestAccess|completeSignup|admin\w+|uploadEvidence|evidenceUrl|readAll)$/.test(k)) continue;
     const f = api[k]; api[k] = (_ignored, ...rest) => f(A(), ...rest);
   }
 
