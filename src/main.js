@@ -4,11 +4,13 @@ import { jsPDF } from "jspdf";
 import { applyPlugin } from "jspdf-autotable";
 import { createData, configError, planFromRow, EVIDENCE, fileType } from "./data.js";
 import { startGate } from "./gate.js";
+import { groupTasks, rollupOf, rolledPlan, leafPlan, leafTasks, parentChoices, weightOf } from "./rollup.js";
 import { ROLES, ROLE_LABEL, ROLE_HELP, isAdmin, unitMember, deptOk, canUndo, canFeedback, canEditDepartments, roleText } from "./access.js";
 import { LOCKED, planOps, needsApproval, applyOps, addisToday, addisWeekStart, calcPct, CATEGORIES, weekStartOf, weekEndOf, nextWeekOf, prevWeekOf } from "./rules.js";
 import { unitAlerts, levelRank, BLOCKED_DAYS } from "./alerts.js";
 import { renderDashboard } from "./dashboard.js";
 import { createExtras } from "./extras.js";
+import { openViewer, canPreview } from "./viewer.js";
 applyPlugin(jsPDF); window.jspdf = { jsPDF }; window.XLSX = XLSX;
 
 (() => {
@@ -44,7 +46,7 @@ applyPlugin(jsPDF); window.jspdf = { jsPDF }; window.XLSX = XLSX;
   let db = null, api = null, downloads = null, myId = null, isOwner = false, me = null, dataMode = "";
   // The signed-in person (from the database). The database checks every save again.
   state.requests = []; state.dash = { type: "", range: 8 }; state.dashData = null; state.dashKey = "";
-  state.history = null; state.lastSave = null; state.base = {}; state.unlock = new Set(); state.reqNotes = {}; state.people = null; state.pu = {};
+  state.level = "tasks"; state.history = null; state.lastSave = null; state.base = {}; state.unlock = new Set(); state.reqNotes = {}; state.people = null; state.pu = {};
   const auth = () => me ? { name: me.name || "", role: me.role, title: me.title || "", unit: me.unit || "", departments: me.departments || [] } : {};
   const isAppr = () => isAdmin(me);
   const isLenient = () => !!me && (me.role === "leader" || me.role === "planning");
@@ -68,8 +70,8 @@ applyPlugin(jsPDF); window.jspdf = { jsPDF }; window.XLSX = XLSX;
   const planId = (week, unit) => `${week}_${unit}`;
   function emptyPlan(unit){ return { week: state.week, unit, tasks: [], wins: "", blockers: "", asks: "", updatedAt: null, updatedBy: null }; }
   function summarize(p){
-    const t = ((p && p.tasks) || []).filter(x => x.kind !== "KPI / OKR");
-    const kpi = ((p && p.tasks) || []).length - t.length;
+    const t = leafTasks((p && p.tasks) || []).filter(x => x.kind !== "KPI / OKR");
+    const kpi = ((p && p.tasks) || []).length - ((p && p.tasks) || []).filter(x => x.kind !== "KPI / OKR").length;
     const done = t.filter(x => x.status==="Done").length;
     const blocked = t.filter(x => x.status==="Blocked").length;
     const high = t.filter(x => x.priority==="High").length;
@@ -159,6 +161,8 @@ applyPlugin(jsPDF); window.jspdf = { jsPDF }; window.XLSX = XLSX;
   // saved = the plan as it was when editing started; draft = the edited copy; latest = what is in the store now
   async function persistPlan(u, week, saved, draft, opts = {}){
     draft.tasks = (draft.tasks || []).filter(t => (t.title || "").trim());
+    const unnumbered = draft.tasks.filter(t => !t.ref);
+    if (unnumbered.length) { const r = await api.allocRefs(auth(), u, unnumbered.length); if (r.error) return { error: r.error }; unnumbered.forEach((t, i) => { t.ref = `${r.prefix}-${String(r.start + i).padStart(4, "0")}`; }); }
     const ops = planOps(saved, draft);
     if (!ops.length) return { nothing: true };
     const monday = thisMonday(), appr = isAppr();
@@ -244,14 +248,14 @@ applyPlugin(jsPDF); window.jspdf = { jsPDF }; window.XLSX = XLSX;
   function fetchCarry(){
     if (!((state.tab === "update" || state.tab === "plan") && db && state.editUnit && !isAll() && state.draft)) return;
     const key = `${state.week}|${state.editUnit}`; if (state.carryKey === key) return; state.carryKey = key;
-    db.doc(`plans/${planId(prevWeekOf(state.week), state.editUnit)}`).get().then(s => { state.carryInfo = { key, items: s.exists ? realTasks(s.data()).filter(t => t.status !== "Done") : [] }; render(); }).catch(() => {});
+    db.doc(`plans/${planId(prevWeekOf(state.week), state.editUnit)}`).get().then(s => { state.carryInfo = { key, items: s.exists ? allRealTasks(s.data()).filter(t => t.status !== "Done") : [] }; render(); }).catch(() => {});
   }
   async function openBf(){
     if (!db || isAll() || !state.editUnit || !state.draft) { toast("Choose one unit first"); return; }
     let prev = null;
     try { const s = await db.doc(`plans/${planId(prevWeekOf(state.week), state.editUnit)}`).get(); prev = s.exists ? s.data() : null; } catch (e) { toast("Could not read last week's plan"); return; }
     const have = new Set(state.draft.tasks.map(t => norm(t.title)));
-    const items = realTasks(prev).filter(t => t.status !== "Done").map(t => ({ t, dup: have.has(norm(t.title)), checked: !have.has(norm(t.title)) && (t.status === "In progress" || t.status === "Not started" || !t.status) }));
+    const items = allRealTasks(prev).filter(t => t.status !== "Done").map(t => ({ t, dup: have.has(norm(t.title)), checked: !have.has(norm(t.title)) && (t.status === "In progress" || t.status === "Not started" || !t.status) }));
     if (!items.length) { toast("Nothing unfinished in last week's plan"); return; }
     state.bf = { items, week: prevWeekOf(state.week) }; renderModal();
   }
@@ -297,10 +301,10 @@ applyPlugin(jsPDF); window.jspdf = { jsPDF }; window.XLSX = XLSX;
   // ---------- overview: task detail ----------
   function renderOvTasks(){
     if (!state.units.length || !state.plansLoaded) return "";
-    const o = state.ov, pool = allTasks().filter(t => t.kind !== "KPI / OKR"), q = o.q.trim().toLowerCase();
+    const o = state.ov, pool = levelTasks().filter(t => t.kind !== "KPI / OKR"), q = o.q.trim().toLowerCase();
     const cnt = { high: pool.filter(t => t.priority === "High").length, done: pool.filter(t => t.status === "Done").length, ns: pool.filter(t => t.status === "Not started").length };
     const pr = { High: 0, Medium: 1, Low: 2 };
-    const list = pool.filter(t => (!o.unit || t.unit === o.unit) && (!o.priority || (o.priority === "none" ? !t.priority : t.priority === o.priority)) && (!o.status || (o.status === "none" ? !t.status : t.status === o.status)) && (!q || `${t.title} ${t.dept || ""} ${t.owner || ""}`.toLowerCase().includes(q)))
+    const list = pool.filter(t => (!o.unit || t.unit === o.unit) && (!o.priority || (o.priority === "none" ? !t.priority : t.priority === o.priority)) && (!o.status || (o.status === "none" ? !t.status : t.status === o.status)) && (!q || `${t.ref || ""} ${t.title} ${t.dept || ""} ${t.owner || ""}`.toLowerCase().includes(q)))
       .sort((a, b) => (pr[a.priority] ?? 3) - (pr[b.priority] ?? 3) || a.unitName.localeCompare(b.unitName));
     if (state.sort.ov && state.sort.ov.k) { const sorted = sortedBy(list, "ov"); list.length = 0; list.push(...sorted); }
     const shown = o.all ? list : list.slice(0, 50);
@@ -322,27 +326,33 @@ applyPlugin(jsPDF); window.jspdf = { jsPDF }; window.XLSX = XLSX;
   function allTasks(){
     return sortedUnits().flatMap(u => (state.plans[u.id]?.tasks || []).map(t => ({ ...t, unit: u.id, unitName: u.name })));
   }
+  // the same list, but following the chosen level (deliverables rolled up, or the individual tasks)
+  function levelTasks(){
+    return sortedUnits().flatMap(u => ((state.plans[u.id] && levelPlan(state.plans[u.id]).tasks) || []).map(t => ({ ...t, unit: u.id, unitName: u.name })));
+  }
   function poolTasks(){
     if (state.filter.period === "month" && state.monthData) return (monthStats() || []).flatMap(r => r.all.map(t => ({ ...t, unit: r.u.id, unitName: r.u.name })));
-    return allTasks();
+    return levelTasks();
   }
   function filteredTasks(){
     const f = state.filter, q = f.q.trim().toLowerCase();
     return poolTasks().filter(t => (!f.unit || t.unit === f.unit)
       && (f.statuses.length ? f.statuses.includes(t.status || "") : (!f.status || (f.status === "none" ? !t.status : t.status === f.status)))
       && (!f.priority || t.priority === f.priority) && (!f.kind || (t.kind || "Task") === f.kind) && (!f.category || (t.category || "") === f.category) && (!f.dept || (t.dept || "") === f.dept)
-      && (!q || `${t.title} ${t.dept || ""} ${t.owner} ${t.notes}`.toLowerCase().includes(q)));
+      && (!q || `${t.ref || ""} ${t.title} ${t.dept || ""} ${t.owner} ${t.notes}`.toLowerCase().includes(q)));
   }
   const readHead = scope => `${th(scope,"unit","Unit")}${th(scope,"title","Task")}${th(scope,"dept","Department")}${th(scope,"owner","Owner (name)")}${th(scope,"due","Due")}${th(scope,"priority","Priority")}<th>Previous status</th>${th(scope,"status","Status")}${th(scope,"pct","Complete")}<th>Completed on</th><th>Depends on</th><th>Evidence</th><th>Notes</th><th>Updated by</th>`;
   const READ_COLS = 14;
   const evLinks = t => (t.ev || []).length ? (t.ev || []).map(e => `<button class="lnk ev-open" type="button" data-evp="${esc(e.path)}" data-evn="${esc(e.name)}" title="${esc(e.name)}">📎${(t.ev || []).length > 1 ? "" : " " + esc(e.name.length > 14 ? e.name.slice(0, 12) + "…" : e.name)}</button>`).join("") : '<span class="muted small">–</span>';
-  function readRow(t){
+  const refChip = (t, unit) => t.ref ? `<button class="ref" type="button" data-open-task="${esc(unit)}|${esc(t.id)}" title="Open ${esc(t.ref)}">${esc(t.ref)}</button>` : "";
+  const soon = d => { if (!d) return false; const n = (new Date(d + "T00:00:00") - new Date(todayIso + "T00:00:00")) / 864e5; return n >= 0 && n <= 3; };
+  function readRow(t, sub){
     const late = t.due && t.due < todayIso && t.status !== "Done", lateDone = t.status === "Done" && t.due && t.completedAt && t.completedAt > t.due;
     return `<tr>
       <td class="small"><b>${esc(t.unitName)}</b></td>
-      <td class="c-read-task" title="${esc(t.title)}${t.outcome ? "\nExpected outcome: " + esc(t.outcome) : ""}">${t.priority === "High" ? '<span class="hi-dot" title="High priority"></span>' : ""}${esc(t.title)}${t.kind === "KPI / OKR" ? ' <span class="tag">KPI / OKR</span>' : ""}${t.carried ? ` <span class="tag">carried${(t.carriedCount || 1) > 1 ? " " + t.carriedCount + " weeks" : ""}</span>` : ""}${t.outcome ? `<div class="small muted">Outcome: ${esc(t.outcome)}</div>` : ""}</td>
+      <td class="c-read-task${sub ? " sub" : ""}" title="${esc(t.title)}${t.outcome ? "\nExpected outcome: " + esc(t.outcome) : ""}">${t.priority === "High" ? '<span class="hi-dot" title="High priority"></span>' : ""}${sub ? "↳ " : ""}${refChip(t, t.unit)} ${esc(t.title)}${t.kidCount ? ` <button class="tag kid-tgl" type="button" data-kids="${esc(t.unit)}|${esc(t.ref)}">${state.expanded.has("kid:" + t.unit + "|" + t.ref) ? "▾" : "▸"} ${t.kidCount} tasks</button>` : ""}${t.kind === "KPI / OKR" ? ' <span class="tag">KPI / OKR</span>' : ""}${t.carried ? ` <span class="tag">carried${(t.carriedCount || 1) > 1 ? " " + t.carriedCount + " weeks" : ""}</span>` : ""}${t.outcome ? `<div class="small muted">Outcome: ${esc(t.outcome)}</div>` : ""}</td>
       <td class="small">${esc(t.dept || "")}</td><td class="small">${esc(t.owner)}</td>
-      <td class="num small" style="color:${late ? "var(--bad)" : "inherit"}">${esc(fmt(t.due))}</td>
+      <td class="num small" style="color:${late ? "var(--bad)" : soon(t.due) && t.status !== "Done" ? "var(--warn)" : "inherit"}" ${late ? 'title="Overdue"' : soon(t.due) && t.status !== "Done" ? 'title="Due within 3 days"' : ""}>${esc(fmt(t.due))}</td>
       <td class="small">${t.priority ? esc(t.priority) : '<span class="muted">–</span>'}</td>
       <td>${t.prevStatus ? `<span class="pill ${statusClass(t.prevStatus)}">${esc(t.prevStatus)}</span>` : '<span class="muted small">–</span>'}</td>
       <td><span class="pill ${statusClass(t.status)}">${esc(t.status || "No status")}</span></td>
@@ -352,6 +362,12 @@ applyPlugin(jsPDF); window.jspdf = { jsPDF }; window.XLSX = XLSX;
       <td class="small" style="white-space:nowrap">${evLinks(t)}</td>
       <td class="small muted">${esc(t.notes)}</td>
       <td class="small" style="white-space:nowrap">${t.lu ? `${esc(fmt(t.lu.slice(0, 10)))} ${t.lb ? `<span class="muted" data-person="${esc(t.lb)}"></span>` : `<span class="muted">data load</span>`}` : '<span class="muted">–</span>'}</td></tr>`;
+  }
+  // a deliverable row, followed by its tasks when expanded
+  function readRows(t){
+    let h = readRow(t);
+    if (t.kidCount && state.expanded.has("kid:" + t.unit + "|" + t.ref)) h += ((state.plans[t.unit] && state.plans[t.unit].tasks) || []).filter(k => k.parent === t.ref).map(k => readRow({ ...k, unit: t.unit, unitName: t.unitName }, true)).join("");
+    return h;
   }
   function filterChips(){
     const f = state.filter, c = [];
@@ -377,10 +393,10 @@ applyPlugin(jsPDF); window.jspdf = { jsPDF }; window.XLSX = XLSX;
         keys.forEach(k => {
           const key = uid_ + "|" + k, open = flat || state.expanded.has(key), ts = u.d.get(k);
           if (!flat) body += `<tr class="clickable" data-tgl="${esc(key)}" tabindex="0"><td colspan="${READ_COLS}"><b>${open ? "▾" : "▸"} ${esc(k || "(no department)")}</b> <span class="small muted">${ts.length}</span></td></tr>`;
-          if (open) body += ts.map(readRow).join("");
+          if (open) body += ts.map(readRows).join("");
         });
       });
-    } else body = list.map(readRow).join("");
+    } else body = list.map(readRows).join("");
     return `<div class="panel">
       ${f.from === "monthly" ? `<div class="toolbar" style="padding:12px 16px;border-bottom:1px solid var(--line)"><button class="btn" id="backMonthly">‹ Back to monthly report</button><span class="small muted">Showing the tasks behind the number you selected.</span></div>` : ""}
       ${chips.length ? `<div class="chipset" style="padding:12px 16px;border-bottom:1px solid var(--line)">${chips.map(([k, l]) => `<span class="chip">${esc(l)}<button data-chip="${k}" aria-label="Remove filter">×</button></span>`).join("")}</div>` : ""}
@@ -393,7 +409,8 @@ applyPlugin(jsPDF); window.jspdf = { jsPDF }; window.XLSX = XLSX;
           <select id="fPri" aria-label="Filter by priority"><option value="">All priorities</option>${PRIORITIES.map(p => `<option ${f.priority === p ? "selected" : ""}>${p}</option>`).join("")}</select>
           <select id="fKind" aria-label="Filter by type"><option value="">Tasks and KPI lines</option>${KINDS.map(k => `<option ${f.kind === k ? "selected" : ""}>${k}</option>`).join("")}</select>
           <select id="fCat" aria-label="Filter by category"><option value="">All categories</option>${CATEGORIES.map(k => `<option ${f.category === k ? "selected" : ""}>${k}</option>`).join("")}</select>
-          <input type="text" id="fQ" placeholder="Search tasks, departments or owners" value="${esc(f.q)}" aria-label="Search">
+          ${month ? "" : `<select id="fLevel" aria-label="Show"><option value="deliverables" ${state.level === "deliverables" ? "selected" : ""}>Deliverables</option><option value="tasks" ${state.level === "tasks" ? "selected" : ""}>All tasks</option></select>`}
+          <input type="text" id="fQ" placeholder="Search by reference, task, department or owner" value="${esc(f.q)}" aria-label="Search">
           <label class="small"><input type="checkbox" id="fGroup" ${f.group ? "checked" : ""}> Group by department</label>
         </div>
         <div class="toolbar"><span class="small muted">${list.length} tasks</span>${downloads ? `<button class="btn" id="tasksPdfBtn">PDF</button><button class="btn" id="tasksXlsxBtn">Excel</button><button class="btn" id="exportBtn">CSV</button>` : ""}</div>
@@ -618,12 +635,15 @@ applyPlugin(jsPDF); window.jspdf = { jsPDF }; window.XLSX = XLSX;
   const tgtHtml = (t, dis) => `<div class="tgt small muted"><label>Target <input type="number" step="any" id="t-tg-${t.id}" data-f="target" value="${t.target ?? ""}" placeholder="–" aria-label="Target" ${dis}></label><input type="text" id="t-ms-${t.id}" data-f="measure" value="${esc(t.measure || "")}" placeholder="unit (ETB, %, units)" aria-label="Target unit" maxlength="20" ${dis}><label><input type="checkbox" id="t-lw-${t.id}" data-f="lower" ${t.lower ? "checked" : ""} ${dis}> lower is better</label></div>`;
   function taskRowHtml(u, t, i){
     const key = `${u}|${i}`, ed = rowEd(u, t), lk = isLocked(u, t), dis = ed ? "" : "disabled", ldis = (!ed || lk) ? "disabled" : "";
-    const auto = hasTgt(t) && calcPct(t) !== null, pend = pendingTask(u, t.id), carriedN = t.carriedCount || (t.carried ? 1 : 0);
+    const kidsL = t.ref ? ((planFor(u) || {}).tasks || []).filter(x => x.parent === t.ref) : [], roll = rollupOf(t, kidsL);
+    const auto = (hasTgt(t) && calcPct(t) !== null) || !!roll, pend = pendingTask(u, t.id), carriedN = t.carriedCount || (t.carried ? 1 : 0);
     const tags = [carriedN ? `<span class="tag" title="Brought forward from an earlier week">carried${carriedN > 1 ? ` ${carriedN} weeks` : ""}</span>` : "", pend ? '<span class="pill s-not">change waiting for approval</span>' : "", lk ? '<span class="tag lock" title="Saved task: the title, outcome, type, department, due date and priority are fixed. Use Request change to ask Group Strategy.">🔒 fixed</span>' : ""].join("");
-    const main = lk || !ed
+    const refLine = `<div class="task-ref">${t.ref ? `<span class="ref">${esc(t.ref)}</span>` : '<span class="muted small">numbering…</span>'}${t.parent ? ` <span class="tag" title="This task is part of a deliverable">↳ under ${esc(t.parent)}</span>` : ""}${roll ? ` <span class="tag" title="Deliverable made of ${roll.total} tasks; progress is calculated from them">${roll.done}/${roll.total} tasks</span>` : ""} <button class="lnk" type="button" data-open-task="${esc(u)}|${esc(t.id)}">Open</button></div>`;
+    const main0 = lk || !ed
       ? `<div class="task-title" title="${esc(t.title)}">${t.priority === "High" ? '<span class="hi-dot" title="High priority"></span>' : ""}${esc(t.title) || '<span class="muted">(no title)</span>'}</div>${t.outcome ? `<div class="task-out"><b>Expected outcome:</b> ${esc(t.outcome)}</div>` : ""}`
       : `<textarea class="grow title-in" rows="2" id="t-title-${t.id}" data-f="title" placeholder="Task or deliverable" aria-label="Task">${esc(t.title)}</textarea>
          <textarea class="grow out-in" rows="2" id="t-outcome-${t.id}" data-f="outcome" placeholder="Expected outcome: what will exist or change when this is done" aria-label="Expected outcome">${esc(t.outcome || "")}</textarea>`;
+    const main = refLine + main0;
     const side = !ed ? "" : `${lk ? `<button class="btn small" data-unlock="${esc(t.id)}" title="Edit the fixed fields. The change goes to Group Strategy for approval.">Request change</button>` : ""}
       ${state.confirmDelete === t.id ? `<span class="confirm">${savedTask(u, t) && !isAppr() && state.week <= thisMonday() ? "Ask to remove?" : "Remove?"} <button class="btn danger" data-del-yes="${esc(key)}">Yes</button><button class="btn" data-del-no>No</button></span>` : `<button class="icon-btn" data-del="${t.id}" aria-label="Remove task" title="Remove task">×</button>`}`;
     const others = sortedUnits().filter(x => x.id !== u);
@@ -639,7 +659,7 @@ applyPlugin(jsPDF); window.jspdf = { jsPDF }; window.XLSX = XLSX;
       <td class="c-due"><input type="date" id="t-due-${t.id}" data-f="due" value="${esc(t.due)}" aria-label="Due date" ${ldis}></td>
       <td class="c-pri"><select id="t-pri-${t.id}" data-f="priority" aria-label="Priority" ${ldis}><option value="" ${sel(!t.priority)}>Not set</option>${PRIORITIES.map(p => `<option ${sel(p === t.priority)}>${p}</option>`).join("")}</select></td>
       <td class="c-status"><select id="t-st-${t.id}" data-f="status" aria-label="Status update" ${dis}><option value="" ${sel(!t.status)}>No status</option>${STATUSES.map(x => `<option ${sel(x === t.status)}>${x}</option>`).join("")}</select>${stExtra}${prevTxt}${doneTxt}</td>
-      <td class="c-pct"><input type="number" id="t-pct-${t.id}" data-f="pct" min="0" max="100" step="5" value="${t.pct ?? ""}" placeholder="%" aria-label="Percent complete" ${dis} ${auto ? 'readonly title="Calculated from actual and target"' : ""}>${true ? `<input type="number" step="any" id="t-act-${t.id}" data-f="actual" value="${t.actual ?? ""}" placeholder="Actual" aria-label="Actual figure" title="Actual so far (target ${esc(t.target)} ${esc(t.measure || "")})" ${dis} style="margin-top:6px">` : ""}</td>
+      <td class="c-pct"><input type="number" id="t-pct-${t.id}" data-f="pct" min="0" max="100" step="5" value="${roll ? roll.pct : (t.pct ?? "")}" placeholder="%" aria-label="Percent complete" ${dis} ${auto ? `readonly title="${roll ? "Calculated from its tasks (weighted)" : "Calculated from actual and target"}"` : ""}>${true ? `<input type="number" step="any" id="t-act-${t.id}" data-f="actual" value="${t.actual ?? ""}" placeholder="Actual" aria-label="Actual figure" title="Actual so far (target ${esc(t.target)} ${esc(t.measure || "")})" ${dis} style="margin-top:6px">` : ""}</td>
       <td class="c-notes"><textarea class="grow" rows="3" id="t-notes-${t.id}" data-f="notes" placeholder="Note, next step or dependency" aria-label="Note" ${dis}>${esc(t.notes)}</textarea>${depNote}</td>
       <td class="c-ev"><div class="ev-col">${ev || (ed ? "" : '<span class="muted small">none</span>')}${ed ? `<label class="btn small ev-add" title="Optional. Up to ${EVIDENCE.maxFiles} files at once, ${fmtSize(EVIDENCE.maxTotal)} in total">📎 Attach<input type="file" multiple accept="${EVIDENCE.accept}" data-ev-add="${esc(u)}|${i}" hidden></label>` : ""}</div></td>
       <td class="c-owner"><input type="text" list="dl-owners-${esc(u)}" id="t-owner-${t.id}" data-f="owner" value="${esc(t.owner)}" placeholder="Name" aria-label="Owner name" ${dis}></td>
@@ -680,15 +700,18 @@ applyPlugin(jsPDF); window.jspdf = { jsPDF }; window.XLSX = XLSX;
     newPdf: (...a) => newPdf(...a), pdfStyle: () => pdfStyle(), pdfFooter: (...a) => pdfFooter(...a), save: (...a) => save(...a), goTab: t => goTab(t), weekLabel: w => weekLabel(w),
     weekChoices: () => { const t = thisMonday(); return [nextWeekOf(t), t, prevWeekOf(t), prevWeekOf(prevWeekOf(t)), prevWeekOf(prevWeekOf(prevWeekOf(t)))]; }, thisWeek: () => thisMonday(), ALL,
   });
-  const realTasks = p => ((p && p.tasks) || []).filter(t => t.kind !== "KPI / OKR");
+  // counts follow the chosen level: deliverables (rolled up) or the individual tasks behind them
+  const levelPlan = p => !p ? p : (state.level === "deliverables" ? rolledPlan(p) : leafPlan(p));
+  const realTasks = p => ((p && levelPlan(p).tasks) || []).filter(t => t.kind !== "KPI / OKR");
+  const allRealTasks = p => ((p && p.tasks) || []).filter(t => t.kind !== "KPI / OKR");
   const kpiTasks = p => ((p && p.tasks) || []).filter(t => t.kind === "KPI / OKR");
   const norm = s => String(s ?? "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
   const short = s => { s = String(s || ""); return s.length > 70 ? s.slice(0, 67) + "…" : s; };
   const nameOf = id => (id ? (state.names[id] || "") : "");
 
   // ---------- accountability: who changed what ----------
-  const FIELDS = ["title","dept","owner","due","priority","status","pct","notes","kind","outcome","depUnit","dep","category","target","measure","actual","lower"];
-  const FLAB = { category:"Category", target:"Target", measure:"Target unit", actual:"Actual", lower:"Lower is better", title:"Task", dept:"Department", owner:"Owner", due:"Due", priority:"Priority", status:"Status", pct:"%", notes:"Notes", kind:"Type", outcome:"Expected outcome", prevStatus:"Previous status", prevPct:"Previous %", completedAt:"Completed on", depUnit:"Depends on", dep:"Dependency", ev:"Evidence", carried:"Carried", carriedCount:"Weeks carried", blockedSince:"Blocked since" };
+  const FIELDS = ["title","dept","owner","due","priority","status","pct","notes","kind","outcome","depUnit","dep","category","target","measure","actual","lower","parent","weight"];
+  const FLAB = { ref:"Reference", parent:"Part of", weight:"Weight", category:"Category", target:"Target", measure:"Target unit", actual:"Actual", lower:"Lower is better", title:"Task", dept:"Department", owner:"Owner", due:"Due", priority:"Priority", status:"Status", pct:"%", notes:"Notes", kind:"Type", outcome:"Expected outcome", prevStatus:"Previous status", prevPct:"Previous %", completedAt:"Completed on", depUnit:"Depends on", dep:"Dependency", ev:"Evidence", carried:"Carried", carriedCount:"Weeks carried", blockedSince:"Blocked since" };
   const showV = v => (v === null || v === undefined || v === "") ? "–" : String(v);
   // Requests (approvals) are shared state: everyone sees pending ones; approvers act on them.
   let unsubReq = null;
@@ -1000,6 +1023,8 @@ applyPlugin(jsPDF); window.jspdf = { jsPDF }; window.XLSX = XLSX;
     growAll();
     if (active) { const el = document.getElementById(active); if (el && el.focus) { el.focus(); if (el.setSelectionRange && el.type==="text") { const n = el.value.length; try { el.setSelectionRange(n,n); } catch(e){} } } }
     fillPeople(); fetchCarry(); fetchNext();
+    if (state.panel) renderPanel();
+    if (state.pendingPanel && (state.tab === "update" || state.tab === "plan")) { const pp = state.pendingPanel; state.pendingPanel = null; if (panelDraft(pp.u) && panelDraft(pp.u).tasks.some(x => x.id === pp.id)) { state.panel = { u: pp.u, id: pp.id }; renderPanel(); } }
     if (state.tab === "dashboard") ensureDash();
   }
   function growAll(){ document.querySelectorAll("#main textarea.grow").forEach(grow); }
@@ -1026,11 +1051,12 @@ applyPlugin(jsPDF); window.jspdf = { jsPDF }; window.XLSX = XLSX;
   function renderDash(){
     if (!state.units.length) return `<div class="panel"><div class="empty"><b>No units set up yet</b></div></div>`;
     if (!state.dashData) return `<div class="panel"><div class="empty"><b>Collecting the last ${state.dash.range} weeks…</b></div></div>`;
-    const byAll = { ...state.dashData.by, [state.week]: state.plans }, cat = state.dash.category || "";
+    const lvl = ps => Object.fromEntries(Object.entries(ps || {}).map(([k, p]) => [k, levelPlan(p)]));
+    const byAll = Object.fromEntries(Object.entries({ ...state.dashData.by, [state.week]: state.plans }).map(([w, ps]) => [w, lvl(ps)])), cat = state.dash.category || "";
     const by = !cat ? byAll : Object.fromEntries(Object.entries(byAll).map(([w, ps]) => [w, Object.fromEntries(Object.entries(ps || {}).map(([k, p]) => [k, p ? { ...p, tasks: (p.tasks || []).filter(t => (t.category || "") === cat) } : p]))]));
     const alerts = sortedUnits().flatMap(u => unitAlerts({ unit: u, plan: state.plans[u.id], weekPlans: state.plans, week: state.week, thisMonday: thisMonday(), today: todayIso, requests: [] })).sort((a, b) => levelRank[a.level] - levelRank[b.level]);
     const w = ($("#main").clientWidth || 1000);
-    return renderDashboard({ weeks: state.dashData.weeks, byWeek: by, byWeekAll: byAll, units: sortedUnits(), week: state.week, today: todayIso, filter: state.dash,
+    return renderDashboard({ weeks: state.dashData.weeks, byWeek: by, byWeekAll: byAll, units: sortedUnits(), week: state.week, today: todayIso, filter: { ...state.dash, level: state.level },
       alerts: alerts.filter(a => !state.dash.type || unitOf(a.unit).type === state.dash.type), pending: pendingFor().length, downloads,
       width: w > 900 ? Math.floor((w - 16) * 2 / 3) - 34 : w - 34, unitName, h: { esc, fmt, weekLabel } });
   }
@@ -1062,7 +1088,7 @@ applyPlugin(jsPDF); window.jspdf = { jsPDF }; window.XLSX = XLSX;
     if (t.dataset.approve) { decide(t.dataset.approve, true); return; }
     if (t.dataset.reject) { decide(t.dataset.reject, false); return; }
     if (t.dataset.ev) { openEvidence(t.dataset.ev); return; }
-    if (t.dataset.evp) { api.evidenceUrl(t.dataset.evp, t.dataset.evn).then(url => { const a = document.createElement("a"); a.href = url; a.target = "_blank"; a.rel = "noopener"; if (api.mode === "local") a.download = t.dataset.evn; document.body.appendChild(a); a.click(); a.remove(); }).catch(() => toast("Could not open the file")); return; }
+    if (t.dataset.evp) { viewEvidence({ path: t.dataset.evp, name: t.dataset.evn }); return; }
     if (t.dataset.evDel) { const [u, i, k] = t.dataset.evDel.split("|"); const task = planFor(u).tasks[Number(i)]; task.ev = (task.ev || []).filter((_, j) => j !== Number(k)); state.dirtyUnits.add(u); state.dirty = true; render(); return; }
     if (t.dataset.pe) { peopleClick(t); return; }
     if (t.id === "signInBtn") { showMenu(); return; }
@@ -1070,7 +1096,9 @@ applyPlugin(jsPDF); window.jspdf = { jsPDF }; window.XLSX = XLSX;
     if (t.id === "backupBtn") { downloadBackup(); return; }
     if (t.id === "restoreCancel") { state.restore = null; render(); return; }
     if (t.id === "restoreGo") { doRestore(); return; }
-    if (t.id==="addTask" || t.dataset.addUnit) { const u = t.dataset.addUnit || state.editUnit, d = planFor(u); const nt = { id: uid(), title:"", outcome:"", dept: (me && ["manager","staff"].includes(me.role) && (me.departments||[]).length === 1) ? me.departments[0] : "", owner:"", due:"", priority:"Medium", status:"Not started", pct:0, notes:"", kind:"Task", depUnit:"", dep:"", ev:[] }; d.tasks.push(nt); state.dirty = true; state.dirtyUnits.add(u); render(); const el = document.getElementById("t-title-"+nt.id); el && el.focus(); }
+    if (t.dataset.openTask) { openPanel(t.dataset.openTask); return; }
+    if (t.dataset.kids) { const k = "kid:" + t.dataset.kids; state.expanded.has(k) ? state.expanded.delete(k) : state.expanded.add(k); render(); return; }
+    if (t.id==="addTask" || t.dataset.addUnit) { const u = t.dataset.addUnit || state.editUnit, nt = makeTask(u); render(); const el = document.getElementById("t-title-"+nt.id); el && el.focus(); }
     else if (t.id==="listsBtn") { state.showLists = !state.showLists; render(); }
     else if (t.id==="listsCancel") { state.showLists = false; render(); }
     else if (t.id==="addDeptBtn") addDept();
@@ -1124,16 +1152,10 @@ applyPlugin(jsPDF); window.jspdf = { jsPDF }; window.XLSX = XLSX;
     if (el.dataset.f) {
       const tr = el.closest("tr"), u = tr.dataset.u, i = Number(tr.dataset.i), f = el.dataset.f, task = planFor(u).tasks[i];
       if (f==="dept" && el.value==="__new__") { el.value = task.dept || ""; if (isAll()) { toast("Open the unit on its own to add a department"); return; } state.showLists = true; render(); setTimeout(() => { const n = $("#newDept"); n && n.focus(); }); return; }
-      state.dirtyUnits.add(u);
       if (el.classList.contains("grow")) grow(el);
-      if (f==="pct") { const v = el.value==="" ? null : Math.max(0, Math.min(100, Number(el.value))); task.pct = v; if (v===100 && task.status!=="Done") { task.status = "Done"; statusSideEffects(task); markDirty(); render(); return; } }
-      else if (f==="target" || f==="actual" || f==="measure" || f==="lower") {
-        if (f==="lower") task.lower = el.checked; else if (f==="measure") task.measure = el.value; else task[f] = el.value === "" ? "" : Number(el.value);
-        const c = calcPct(task);
-        if (c !== null) { task.pct = c; if (c === 100 && task.status !== "Done") { task.status = "Done"; statusSideEffects(task); markDirty(); render(); return; } if (f !== "measure") { const pe = document.getElementById("t-pct-" + task.id); if (pe) pe.value = c; } }
-      }
-      else { task[f] = el.value; if (f==="status") { statusSideEffects(task); markDirty(); render(); return; } }
+      const again = applyField(u, task, f, el);
       markDirty();
+      if (again) render();
     } else if (el.dataset.r) { state.draft[el.dataset.r] = el.value; state.dirtyUnits.add(state.editUnit); markDirty(); }
     else if (el.id==="fQ") { state.filter.q = el.value; render(); }
     else if (el.id==="ovQ") { state.ov.q = el.value; render(); }
@@ -1172,6 +1194,7 @@ applyPlugin(jsPDF); window.jspdf = { jsPDF }; window.XLSX = XLSX;
     else if (el.id==="fKind") { state.filter.kind = el.value; render(); }
     else if (el.id==="fCat") { state.filter.category = el.value; render(); }
     else if (el.id === "dCat") { state.dash.category = el.value; render(); }
+    else if (el.id === "dLevel" || el.id === "fLevel") { state.level = el.value; store.set("wp-level", el.value); render(); }
     else if (el.id==="impUnit") { state.impUnit = el.value; state.impDefaultUnit = el.value ? unitName(el.value) : ""; render(); }
     else if (el.id==="impPrefill") { state.impPrefill = el.checked; }
     else if (el.id==="impFile") { if (el.files && el.files[0]) readImportFile(el.files[0]); }
@@ -1190,6 +1213,22 @@ applyPlugin(jsPDF); window.jspdf = { jsPDF }; window.XLSX = XLSX;
     else if (el.id === "dRange") { state.dash.range = Number(el.value); render(); }
     else if (el.dataset.reqNote) { state.reqNotes[el.dataset.reqNote] = el.value; }
   });
+  // Applies one edited field to a task. Shared by the table rows and the task panel. Returns true when the screen must be redrawn.
+  function applyField(u, task, f, el){
+    state.dirtyUnits.add(u);
+    if (f==="pct") { const v = el.value==="" ? null : Math.max(0, Math.min(100, Number(el.value))); task.pct = v; if (v===100 && task.status!=="Done") { task.status = "Done"; statusSideEffects(task); return true; } return false; }
+    if (f==="target" || f==="actual" || f==="measure" || f==="lower") {
+      if (f==="lower") task.lower = el.checked; else if (f==="measure") task.measure = el.value; else task[f] = el.value === "" ? "" : Number(el.value);
+      const c = calcPct(task);
+      if (c !== null) { task.pct = c; if (c === 100 && task.status !== "Done") { task.status = "Done"; statusSideEffects(task); return true; } if (f !== "measure") { document.querySelectorAll(`#t-pct-${task.id}, #p-pct`).forEach(pe => { pe.value = c; }); } }
+      return false;
+    }
+    if (f==="weight") { const w = Number(el.value); task.weight = isFinite(w) && w > 0 ? w : 1; return false; }
+    if (f==="parent") { task.parent = el.value; return true; }
+    task[f] = el.value;
+    if (f==="status") { statusSideEffects(task); return true; }
+    return false;
+  }
   // Status drives the automatic fields: completion date, 100% on Done, and how long a task has been blocked.
   function statusSideEffects(t){
     if (t.status === "Done") { t.pct = 100; if (!t.completedAt) t.completedAt = todayIso; }
@@ -1205,11 +1244,119 @@ applyPlugin(jsPDF); window.jspdf = { jsPDF }; window.XLSX = XLSX;
   main.addEventListener("keydown", e => { const h = e.target.closest && e.target.closest("th[data-sort]"); if (h && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); h.click(); } });
   $("#bellBtn").onclick = () => goTab("approvals");
   function goTab(to){ const b = document.querySelector(`nav.tabs button[data-tab="${to}"]`); if (b) b.click(); }
+  // A new empty task in a unit's draft; its reference number is requested right away.
+  function makeTask(u, extra){
+    const d = planFor(u);
+    const nt = { id: uid(), title:"", outcome:"", dept: (me && ["manager","staff"].includes(me.role) && (me.departments||[]).length === 1) ? me.departments[0] : "", owner:"", due:"", priority:"Medium", status:"Not started", pct:0, notes:"", kind:"Task", depUnit:"", dep:"", ev:[], ...(extra || {}) };
+    d.tasks.push(nt); state.dirty = true; state.dirtyUnits.add(u);
+    api.allocRefs(auth(), u, 1).then(r => { if (!r.error && !nt.ref) { nt.ref = `${r.prefix}-${String(r.start).padStart(4, "0")}`; render(); } }).catch(() => {});
+    return nt;
+  }
+  // ---------- task panel ----------
+  // state.panel = { u, id }. Editable when this unit's draft is open for editing (This week's update / Next week's plan); otherwise read-only.
+  const panelDraft = u => ((state.tab === "update" || state.tab === "plan") && (isAll() || state.editUnit === u)) ? planFor(u) : null;
+  function panelTask(){
+    const pn = state.panel; if (!pn) return null;
+    const d = panelDraft(pn.u), src = d || state.plans[pn.u];
+    const t = ((src || {}).tasks || []).find(x => x.id === pn.id);
+    return t ? { t, tasks: src.tasks, editable: !!d && canEdit(pn.u) } : null;
+  }
+  function openPanel(spec){ const [u, id] = spec.split("|"); state.panel = { u, id }; renderPanel(); }
+  function closePanel(){ state.panel = null; renderPanel(); render(); }
+  function renderPanel(){
+    const root = $("#panelRoot"); if (!root) return;
+    const pk = panelTask();
+    if (!pk) { root.innerHTML = ""; if (state.panel) state.panel = null; return; }
+    const { t, tasks, editable } = pk, u = state.panel.u, ed = editable && rowEd(u, t), lk = ed && isLocked(u, t);
+    const dis = ed ? "" : "disabled", ldis = (!ed || lk) ? "disabled" : "";
+    const kids = t.ref ? tasks.filter(x => x.parent === t.ref) : [], roll = rollupOf(t, kids), auto = (hasTgt(t) && calcPct(t) !== null) || !!roll;
+    const choices = parentChoices(tasks, t), parentOpts = `<option value="">None (a deliverable on its own)</option>` + choices.map(c => `<option value="${esc(c.ref)}" ${c.ref === t.parent ? "selected" : ""}>${esc(c.ref)} · ${esc(short(c.title))}</option>`).join("") + (t.parent && !choices.some(c => c.ref === t.parent) ? `<option value="${esc(t.parent)}" selected>${esc(t.parent)}</option>` : "");
+    const act = document.activeElement, keep = act && root.contains(act) && act.id ? { id: act.id, s: act.selectionStart, e: act.selectionEnd } : null;
+    const fld = (label, inner) => `<label class="pf"><span class="small muted">${label}</span>${inner}</label>`;
+    const others = sortedUnits().filter(x => x.id !== u);
+    const kidRows = kids.map(k => `<tr><td>${refChip(k, u) || '<span class="muted small">…</span>'}</td><td>${esc(k.title) || '<span class="muted">(no title)</span>'}</td><td class="small">${esc(k.owner || "")}</td><td><span class="pill ${statusClass(k.status)}">${esc(k.status || "No status")}</span></td><td><div class="prog"><div class="bar"><i style="width:${k.status === "Done" ? 100 : (k.pct || 0)}%"></i></div><span class="num">${k.status === "Done" ? 100 : (k.pct || 0)}%</span></div></td><td class="small">${ed && !lk ? `<input type="number" class="w-in" min="0.1" step="any" data-pk="${esc(k.id)}" value="${weightOf(k)}" aria-label="Weight of ${esc(k.ref || "task")}">` : weightOf(k)}</td></tr>`).join("");
+    const ev = (t.ev || []).map((e, k) => `<div class="ev-line"><span>📎 ${esc(e.name)} <span class="small muted">${fmtSize(e.size || 0)}</span></span><span class="toolbar"><button class="btn small" type="button" data-pev="${k}">${canPreview(e.name) ? "View" : "Open"}</button><button class="btn small" type="button" data-pdl="${k}">Download</button>${ed ? `<button class="icon-btn" type="button" data-pevdel="${k}" aria-label="Remove ${esc(e.name)}">×</button>` : ""}</span></div>`).join("");
+    const canSub = ed && t.ref && !t.parent;
+    const locked = lk ? `<div class="small muted">🔒 Saved task: the title, outcome, type, department, due date and priority are fixed. Use <b>Request change</b> in the table to ask Group Strategy.</div>` : "";
+    root.innerHTML = `<div class="overlay" id="pnOverlay"><div class="modal wide task-panel" role="dialog" aria-modal="true" aria-label="Task ${esc(t.ref || "")}">
+      <div class="panel-head"><div><div><span class="ref big">${esc(t.ref || "numbering…")}</span> ${t.parent ? `<span class="tag">↳ under ${esc(t.parent)}</span>` : ""} <span class="tag">${esc(unitName(u))}</span> ${t.carried ? '<span class="tag">carried</span>' : ""}</div></div>
+        <div class="toolbar">${!ed && editable === false && state.tab !== "update" && state.tab !== "plan" && canEdit(u) && state.filter.period !== "month" && !state.panel.ro ? `<button class="btn" id="pnEdit">Edit in this week's update</button>` : ""}<button class="icon-btn" id="pnClose" aria-label="Close">×</button></div></div>
+      <div class="panel-body">
+        ${locked}
+        ${fld("Task or deliverable", ed && !lk ? `<textarea class="grow" rows="2" id="p-title" data-pf="title">${esc(t.title)}</textarea>` : `<div class="p-val"><b>${esc(t.title) || "(no title)"}</b></div>`)}
+        ${fld("Expected outcome", ed && !lk ? `<textarea class="grow" rows="2" id="p-outcome" data-pf="outcome">${esc(t.outcome || "")}</textarea>` : `<div class="p-val">${esc(t.outcome || "–")}</div>`)}
+        <div class="pgrid">
+          ${fld("Type", `<select id="p-kind" data-pf="kind" ${ldis}>${KINDS.map(k => `<option ${sel(k === (t.kind || "Task"))}>${k}</option>`).join("")}</select>`)}
+          ${fld("Category", `<select id="p-cat" data-pf="category" ${dis}><option value="">–</option>${CATEGORIES.map(k => `<option ${sel(k === t.category)}>${k}</option>`).join("")}</select>`)}
+          ${fld("Department", `<select id="p-dept" data-pf="dept" ${ldis}>${deptOptions(u, t).replace(/<option value="__new__">[^<]*<\/option>/, "")}</select>`)}
+          ${fld("Owner", `<input type="text" id="p-owner" data-pf="owner" value="${esc(t.owner)}" ${dis}>`)}
+          ${fld("Due", `<input type="date" id="p-due" data-pf="due" value="${esc(t.due)}" ${ldis}>`)}
+          ${fld("Priority", `<select id="p-pri" data-pf="priority" ${ldis}><option value="">Not set</option>${PRIORITIES.map(p => `<option ${sel(p === t.priority)}>${p}</option>`).join("")}</select>`)}
+          ${fld("Status", `<select id="p-st" data-pf="status" ${dis}><option value="">No status</option>${STATUSES.map(x => `<option ${sel(x === t.status)}>${x}</option>`).join("")}</select>`)}
+          ${fld("% complete", `<input type="number" id="p-pct" data-pf="pct" min="0" max="100" step="5" value="${roll ? roll.pct : (t.pct ?? "")}" ${dis} ${auto ? "readonly" : ""}>`)}
+        </div>
+        <div class="pgrid">
+          ${fld("Target", `<input type="number" step="any" id="p-target" data-pf="target" value="${t.target ?? ""}" ${dis}>`)}
+          ${fld("Target unit", `<input type="text" id="p-measure" data-pf="measure" value="${esc(t.measure || "")}" maxlength="20" placeholder="ETB, %, units" ${dis}>`)}
+          ${fld("Actual so far", `<input type="number" step="any" id="p-actual" data-pf="actual" value="${t.actual ?? ""}" ${dis}>`)}
+          ${fld("Lower is better", `<input type="checkbox" id="p-lower" data-pf="lower" ${t.lower ? "checked" : ""} ${dis}>`)}
+          ${fld("Weight in its deliverable", `<input type="number" min="0.1" step="any" id="p-weight" data-pf="weight" value="${weightOf(t)}" ${ed && !lk ? "" : "disabled"} title="Used when this task is part of a deliverable. Default 1 = equal share.">`)}
+          ${fld("Part of deliverable", `<select id="p-parent" data-pf="parent" ${ed && !lk && !kids.length ? "" : "disabled"}>${parentOpts}</select>`)}
+          ${fld("Depends on (unit)", `<select id="p-depu" data-pf="depUnit" ${dis}><option value="">–</option>${others.map(x => `<option value="${esc(x.id)}" ${sel(x.id === t.depUnit)}>${esc(x.name)}</option>`).join("")}</select>`)}
+          ${fld("Dependency", `<input type="text" id="p-dep" data-pf="dep" value="${esc(t.dep || "")}" ${dis}>`)}
+        </div>
+        ${fld("Note", `<textarea class="grow" rows="3" id="p-notes" data-pf="notes" ${dis}>${esc(t.notes || "")}</textarea>`)}
+        <h3 class="p-h">Tasks under this deliverable ${roll ? `<span class="small muted">· ${roll.pct}% from ${roll.total} task${roll.total === 1 ? "" : "s"}, ${roll.done} done (weighted)</span>` : ""}</h3>
+        ${kids.length ? `<div class="scroll"><table><thead><tr><th>Ref</th><th>Task</th><th>Owner</th><th>Status</th><th>Done</th><th>Weight</th></tr></thead><tbody>${kidRows}</tbody></table></div>` : `<div class="small muted">${t.parent ? "This task is part of a deliverable." : "None. This task is a deliverable on its own."}</div>`}
+        ${canSub ? `<div><button class="btn" id="pnAddKid" type="button">＋ Add a task under this</button></div>` : ""}
+        <h3 class="p-h">Evidence</h3>
+        ${ev || '<div class="small muted">No files attached.</div>'}
+        ${ed ? `<div><label class="btn small ev-add">📎 Attach<input type="file" multiple accept="${EVIDENCE.accept}" id="pnFile" hidden></label></div>` : ""}
+      </div>
+      <div class="panel-foot toolbar">${editable ? `<button class="btn primary" id="pnSave" ${state.dirty ? "" : "disabled"}>Save plan</button>` : ""}<button class="btn" id="pnClose2">Close</button>${editable && state.dirty ? '<span class="small" style="color:var(--accent)"><b>Unsaved changes</b></span>' : ""}</div>
+    </div></div>`;
+    root.querySelectorAll("textarea.grow").forEach(grow);
+    if (keep) { const el = document.getElementById(keep.id); if (el && el.focus) { el.focus(); try { if (keep.s != null) el.setSelectionRange(keep.s, keep.e); } catch (x) {} } }
+  }
+  const panelRoot = $("#panelRoot");
+  if (panelRoot) {
+    const pOn = () => panelTask();
+    panelRoot.addEventListener("input", e => {
+      const el = e.target, pk = pOn(); if (!pk || !pk.editable) return;
+      const u = state.panel.u;
+      if (el.dataset.pk) { const k = pk.tasks.find(x => x.id === el.dataset.pk); if (k) { applyField(u, k, "weight", el); markDirty(); const b = $("#pnSave"); if (b) b.disabled = false; } return; }
+      if (!el.dataset.pf) return;
+      if (el.classList.contains("grow")) grow(el);
+      const again = applyField(u, pk.t, el.dataset.pf, el);
+      markDirty(); const b = $("#pnSave"); if (b) b.disabled = false;
+      if (again) render();
+    });
+    panelRoot.addEventListener("click", async e => {
+      if (e.target.id === "pnOverlay" || e.target.id === "pnClose" || e.target.id === "pnClose2") { closePanel(); return; }
+      const b = e.target.closest("button"); if (!b) return;
+      const pk = pOn(); if (!pk) return; const u = state.panel.u, t = pk.t;
+      if (b.id === "pnSave") { await saveDraft(); renderPanel(); return; }
+      if (b.id === "pnEdit") { const id = t.id; state.panel = null; renderPanel(); openUnit(u); state.pendingPanel = { u, id }; return; }
+      if (b.id === "pnAddKid") { const nt = makeTask(u, { parent: t.ref, dept: t.dept || "", owner: t.owner || "", due: t.due || "", priority: t.priority || "Medium", category: t.category || "" }); state.panel = { u, id: nt.id }; render(); setTimeout(() => { const el = document.getElementById("p-title"); el && el.focus(); }); return; }
+      const k = Number(b.dataset.pev ?? b.dataset.pdl ?? b.dataset.pevdel), file = (t.ev || [])[k];
+      if (file && b.dataset.pev !== undefined) { viewEvidence(file); return; }
+      if (file && b.dataset.pdl !== undefined) { downloadEvidence(file); return; }
+      if (file && b.dataset.pevdel !== undefined) { t.ev = t.ev.filter((_, j) => j !== k); state.dirtyUnits.add(u); markDirty(); render(); return; }
+    });
+    panelRoot.addEventListener("change", e => {
+      if (e.target.id === "pnFile" && e.target.files && e.target.files.length) { const pk = pOn(); if (pk) { const i = pk.tasks.indexOf(pk.t); addEvidence(`${state.panel.u}|${i}`, e.target.files).then(() => renderPanel()); } e.target.value = ""; }
+    });
+  }
+  document.addEventListener("keydown", e => { if (e.key === "Escape" && state.panel && !$("#viewRoot").innerHTML) closePanel(); });
+  function downloadEvidence(e){
+    api.evidenceUrl(e.path, e.name).then(url => { const a = document.createElement("a"); a.href = url; a.target = "_blank"; a.rel = "noopener"; if (api.mode === "local") a.download = e.name; document.body.appendChild(a); a.click(); a.remove(); }).catch(() => toast("Could not open the file"));
+  }
+  function viewEvidence(e){
+    openViewer($("#viewRoot"), { name: e.name, size: fmtSize(e.size || 0), getBlob: () => api.evidenceBlob(e.path), onDownload: () => downloadEvidence(e) });
+  }
   async function openEvidence(spec){
     const [u, i, k] = spec.split("|"), e = ((planFor(u) || {}).tasks || [])[Number(i)]?.ev?.[Number(k)];
-    if (!e) return;
-    try { const url = await api.evidenceUrl(e.path, e.name); const a = document.createElement("a"); a.href = url; a.target = "_blank"; a.rel = "noopener"; if (api.mode === "local") a.download = e.name; document.body.appendChild(a); a.click(); a.remove(); }
-    catch (x) { toast("Could not open the file: " + (x.message || "not found")); }
+    if (e) viewEvidence(e);
   }
   async function addEvidence(spec, files){
     const [u, i] = spec.split("|"), task = planFor(u).tasks[Number(i)];
@@ -1835,6 +1982,7 @@ applyPlugin(jsPDF); window.jspdf = { jsPDF }; window.XLSX = XLSX;
     me = profile; myId = profile.name; api.setProfile && api.setProfile(profile);
     api.onSignedOut(() => location.reload());
     $("#whoBtn").onclick = showMenu;
+    state.level = store.get("wp-level") || ((isAppr() || me.role === "executive") ? "deliverables" : "tasks");
     if (!state.editUnit || state.editUnit === ALL) { const mu = myUnit(); if (mu) { state.editUnit = mu; store.set("wp-unit", mu); } }
     if (!isAppr() && state.editUnit && !myUnit() && me.role !== "executive" && me.role !== "leader") state.editUnit = null;
     subscribeRequests(); X.subscribe();

@@ -6,7 +6,7 @@
 // task, needs approval. Status, %, notes, owner, dependencies and evidence stay open.
 export const LOCKED = ["title", "kind", "dept", "outcome", "due", "priority"];
 // Fields compared when working out what changed (lu / lb are "last updated" stamps, not content).
-export const TASK_FIELDS = ["title", "kind", "dept", "outcome", "owner", "due", "priority", "prevStatus", "prevPct", "status", "pct", "completedAt", "depUnit", "dep", "notes", "ev", "carried", "carriedCount", "blockedSince", "category", "target", "measure", "actual", "lower"];
+export const TASK_FIELDS = ["title", "kind", "dept", "outcome", "owner", "due", "priority", "prevStatus", "prevPct", "status", "pct", "completedAt", "depUnit", "dep", "notes", "ev", "carried", "carriedCount", "blockedSince", "category", "target", "measure", "actual", "lower", "ref", "parent", "weight"];
 export const DEFAULT_APPROVERS = ["Surafel", "Surafel Hailu", "Ataklti", "Ataklti Nega"];
 
 const pad = (n) => String(n).padStart(2, "0");
@@ -71,6 +71,7 @@ const same = (f, a, b) => {
   if (f === "ev") return JSON.stringify(a || []) === JSON.stringify(b || []);
   if (f === "pct" || f === "prevPct" || f === "carriedCount") return (a ?? null) === (b ?? null) || (a === "" && b == null) || (b === "" && a == null);
   if (f === "carried" || f === "lower") return !!a === !!b;
+  if (f === "weight") return Number(a || 1) === Number(b || 1);
   if (f === "target" || f === "actual") return (a === "" || a == null ? "" : Number(a)) === (b === "" || b == null ? "" : Number(b));
   return String(a ?? "") === String(b ?? "");
 };

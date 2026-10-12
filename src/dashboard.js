@@ -46,6 +46,7 @@ export function renderDashboard(c) {
   const filters = `<div class="toolbar dash-filters" role="group" aria-label="Dashboard filters">
     <label class="small muted" for="dType">Show</label><select id="dType"><option value="">All units</option><option ${c.filter.type === "Corporate function" ? "selected" : ""}>Corporate function</option><option ${c.filter.type === "Business unit" ? "selected" : ""}>Business unit</option></select>
     <label class="small muted" for="dRange">Trend</label><select id="dRange">${[8, 12].map((n) => `<option value="${n}" ${c.filter.range === n ? "selected" : ""}>Last ${n} weeks</option>`).join("")}</select>
+    <label class="small muted" for="dLevel">Count</label><select id="dLevel"><option value="deliverables" ${c.filter.level === "deliverables" ? "selected" : ""}>Deliverables</option><option value="tasks" ${c.filter.level === "tasks" ? "selected" : ""}>All tasks</option></select>
     <label class="small muted" for="dCat">Category</label><select id="dCat"><option value="">All</option>${["Operational", "Revenue"].map((k) => `<option ${c.filter.category === k ? "selected" : ""}>${k}</option>`).join("")}</select>
     <span class="small muted">Week of ${esc(weekLabel(c.week))} · use the arrows above to change week</span>
     ${c.downloads ? `<button class="btn" id="pdfBtn">Performance report (PDF)</button>` : ""}</div>`;

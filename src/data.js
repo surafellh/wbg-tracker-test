@@ -38,6 +38,30 @@ const fail = (error) => {
 
 export function configError() { return ""; }
 
+// Task reference numbers (WE-0001). The database hands them out; local test mode does the same from here.
+const PREFIX_STOP = new Set(["PLC", "AND", "OF", "THE", "FOR"]);
+export function unitPrefixes(units) {
+  const base = (u) => String(u.name || "").toUpperCase().split(/[^A-Z0-9]+/).filter((w) => w && !PREFIX_STOP.has(w)).map((w) => w[0]).join("").slice(0, 3) || "U";
+  const sorted = [...units].sort((a, b) => (a.id < b.id ? -1 : 1)), out = {};
+  sorted.forEach((u) => { const b = base(u), rank = sorted.filter((x) => x.id < u.id && base(x) === b).length; out[u.id] = b + (rank ? rank + 1 : ""); });
+  return out;
+}
+const titleKey = (t) => String(t.title || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+// number every task that has none; the same title in a unit keeps one number from week to week
+function assignRefs(plans, units, counters) {
+  const pre = unitPrefixes(units), maps = {}; let changed = false;
+  [...plans].sort((a, b) => (a.week + a.id < b.week + b.id ? -1 : 1)).forEach((p) => {
+    const m = maps[p.unit] = maps[p.unit] || {};
+    (p.tasks || []).forEach((t) => {
+      const k = titleKey(t);
+      if (t.ref) { if (!m[k]) m[k] = t.ref; const n = /-(\d+)$/.exec(t.ref); if (n) counters[p.unit] = Math.max(counters[p.unit] || 0, Number(n[1])); return; }
+      if (!m[k]) { counters[p.unit] = (counters[p.unit] || 0) + 1; m[k] = `${pre[p.unit] || "T"}-${String(counters[p.unit]).padStart(4, "0")}`; }
+      t.ref = m[k]; changed = true;
+    });
+  });
+  return changed;
+}
+
 export function createData() {
   return isSupabaseConfigured() ? createSupabaseData() : createLocalData();
 }
@@ -168,6 +192,7 @@ function createSupabaseData() {
     async hasPassword() { const { data } = await sb.auth.getUser(); return !!(data && data.user && data.user.user_metadata && data.user.user_metadata.has_password); },
     async setPassword(password) { const { error } = await sb.auth.updateUser({ password, data: { has_password: true } }); return error ? { error: error.message } : { ok: true }; },
     adminResetPassword: (id) => rpc("wbg_admin_reset_password", { p_user: id }),
+    allocRefs: (auth, unit, n) => rpc("wbg_alloc_refs", { p_unit: unit, p_n: n }),
     onSignedOut(fn) { sb.auth.onAuthStateChange((ev) => { if (ev === "SIGNED_OUT") fn(); }); },
     async publicUnits() { const { data, error } = await sb.rpc("wbg_public_units"); if (error) fail(error); return data || []; },
     async requestAccess(r) { const { data, error } = await sb.rpc("wbg_request_access", { p_email: r.email, p_name: r.name, p_unit: r.unit || "", p_contact: r.contact || "", p_note: r.note || "" }); if (error) return { error: error.message }; return data; },
@@ -202,6 +227,7 @@ function createSupabaseData() {
       if (error) fail({ code: "upload_failed", message: error.message });
       return { path };
     },
+    async evidenceBlob(path) { const { data, error } = await sb.storage.from("evidence").download(path); if (error) fail(error); return data; },
     async evidenceUrl(path, name) {
       const { data, error } = await sb.storage.from("evidence").createSignedUrl(path, 3600, { download: name || true });
       if (error) fail({ code: "not_found", message: error.message });
@@ -320,6 +346,10 @@ function createLocalData() {
     return items;
   }
 
+  { // number tasks that have no reference yet (seed data and older local data)
+    const plans = getStore("plans"), counters = read("wbg_local_refs") || {};
+    if (assignRefs(plans, getStore("units"), counters)) { setStore("plans", plans); write("wbg_local_refs", counters); }
+  }
   const isAppr = (a) => isAdmin(a);
   const unitOk = (a, unit) => unitMember(a, unit);
   const leadOk = (a, unit) => unitLead(a, unit);
@@ -469,6 +499,11 @@ function createLocalData() {
     async signInPassword(email, password) { const e = (email || "").trim().toLowerCase(), p = people().find((x) => x.email === e); if (!p || !p.pw || p.pw !== password) return { error: "Invalid login credentials" }; write("wbg_local_session", p.id); return { profile: meOut(p) }; },
     async hasPassword() { const p = prof(); return !!(p && p.pw); },
     async setPassword(password) { const l = people(), p = l.find((x) => x.id === curId()); if (!p) return { error: "not_signed_in" }; p.pw = password; setPeople(l); return { ok: true }; },
+    allocRefs(auth, unit, n) {
+      const c = read("wbg_local_refs") || {}, pre = unitPrefixes(getStore("units"));
+      const start = (c[unit] || 0) + 1; c[unit] = (c[unit] || 0) + n; write("wbg_local_refs", c);
+      return ok({ prefix: pre[unit] || "T", start });
+    },
     async adminResetPassword(id) { if (!isAppr(A())) return err("not_allowed"); const l = people(), p = l.find((x) => x.id === id); if (!p) return err("not_found"); delete p.pw; setPeople(l); addActivity(A().name, p.unit || "", "", { action: "user", summary: `Reset the password of ${p.email}` }); return ok(); },
     async verifyCode(email, code) { const e = (email || "").trim().toLowerCase(); let p = people().find((x) => x.email === e); if (!p) { const inv = invites().find((i) => i.email === e); p = { id: e, email: e, name: inv ? inv.name : "", role: inv ? inv.role : "staff", title: inv ? inv.title : "", unit: inv ? inv.unit : null, departments: inv ? inv.departments : [], status: "active", setupDone: false, invited: !!inv }; setPeople([...people(), p]); } write("wbg_local_session", p.id); return { profile: meOut(p) }; },
     async signOut() { try { localStorage.removeItem("wbg_local_session"); } catch (x) {} },
@@ -515,12 +550,13 @@ function createLocalData() {
     async adminBackups() { if (!isAppr(A())) return err("not_allowed"); return ok({ days: [] }); },
     async adminGetBackup() { return err("not_found"); },
     async uploadEvidence(file, path) { await idbPut(path, file); return { path }; },
+    async evidenceBlob(path) { const b = await idbGet(path); if (!b) fail({ code: "not_found", message: "File not found in this browser" }); return b; },
     async evidenceUrl(path) { const b = await idbGet(path); if (!b) fail({ code: "not_found", message: "File not found in this browser" }); return URL.createObjectURL(b); },
     async readAll(table) { const c = Object.entries(COLLECTIONS).find(([, v]) => v.table === table); return c ? getStore(c[0]) : []; },
   };
   // every change runs as the signed-in person, never as what the page says
   for (const k of Object.keys(api)) {
-    if (typeof api[k] !== "function" || /^(session|me|setProfile|setRemember|signInPassword|hasPassword|setPassword|localPeople|localSignIn|checkEmail|sendCode|verifyCode|signOut|onSignedOut|publicUnits|requestAccess|completeSignup|admin\w+|uploadEvidence|evidenceUrl|readAll)$/.test(k)) continue;
+    if (typeof api[k] !== "function" || /^(session|me|setProfile|setRemember|signInPassword|hasPassword|setPassword|localPeople|localSignIn|checkEmail|sendCode|verifyCode|signOut|onSignedOut|publicUnits|requestAccess|completeSignup|admin\w+|uploadEvidence|evidenceUrl|evidenceBlob|readAll)$/.test(k)) continue;
     const f = api[k]; api[k] = (_ignored, ...rest) => f(A(), ...rest);
   }
 

@@ -186,3 +186,15 @@ Test mode (no Supabase keys): the sign-in page offers a list of test people, inc
 - Run `supabase/upgrade-7-passwords.sql` after upgrade-5 (adds "Reset password" for Group Strategy in the People tab).
 - Supabase: Authentication > Sign In / Providers > Email > set Minimum password length to 10.
 - The Confirm sign up and Magic Link email templates must both contain `{{ .Token }}` (new people get the first, returning people the second).
+
+## Stage 3a: deliverables, reference numbers, task panel, evidence preview
+**Database step (once, in the Supabase SQL Editor, BEFORE using the new site):** run `supabase/upgrade-8-task-refs.sql`. It gives every existing task a stable reference (for example `WE-0001`; the same task keeps the same reference across weeks) and adds a safe counter so new tasks are numbered without clashes. It is safe to run twice.
+
+What is new
+- **Reference numbers** on every task (chip in the table, searchable in All tasks).
+- **Deliverables:** a task can be placed under another task ("Part of deliverable" in the task panel, or "Add a task under this"). The deliverable's progress is the weighted average of its tasks (weight 1 by default, change it in the panel). One level only. Existing tasks each stay a deliverable on their own, so nothing changes until you group them.
+- **Count level:** Dashboard and All tasks have a "Deliverables / All tasks" switch. Group Strategy and executives start on Deliverables, everyone else on All tasks.
+- **Task panel:** click `Open` on a row (or the reference chip in All tasks). All fields, tasks under it, evidence, Save plan. In All tasks it is read-only, with a button to edit it in this week's update.
+- **Evidence preview:** View opens PDF and images directly, Excel as tables, Word as formatted text, PowerPoint as slide text only (.docx, .xlsx, .pptx), text and CSV as text. Download is always there.
+- **Due colours:** overdue in red, due within 3 days in amber.
+- Not in 3a (coming in 3b): discussion and @mentions, bell opening the task, feedback inside the panel, completed-by-week chart, print.
