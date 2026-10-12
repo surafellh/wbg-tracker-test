@@ -546,21 +546,24 @@ applyPlugin(jsPDF); window.jspdf = { jsPDF }; window.XLSX = XLSX;
   const SUB_LABEL = { update: "Progress update", plan: "Next plan", approvals: "Approvals", support: "Business support", fb: "Feedback", tasks: "Weekly report", monthly: "Monthly report" };
   const PAGE_TITLE = { dashboard: ["Dashboards", "How every unit and function is doing this week."], update: ["Plans", "Update progress on this week's tasks."], plan: ["Plans", "Plan the tasks for next week."], approvals: ["Plans", "Changes waiting for approval."], support: ["Delivery", "Support requested from group functions."], fb: ["Delivery", "Feedback and corrective actions."], tasks: ["Reports", "Every task, filtered and downloadable."], monthly: ["Reports", "Consolidated by Ethiopian calendar month."], follow: ["Follow-up", ""], activity: ["Activity log", "Who changed what, and when."], units: ["Settings · Units", "Group Strategy only."], people: ["Settings · People", "Group Strategy only."] };
   const groupOf = t => Object.keys(GROUPS).find(g => GROUPS[g].includes(t)) || "";
+  const SM = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+  const weekShort = w => { const a = parse(w), b = parse(weekEndOf(w)); return a.getMonth() === b.getMonth() ? `${SM[a.getMonth()]} ${a.getDate()} – ${b.getDate()}` : `${SM[a.getMonth()]} ${a.getDate()} – ${SM[b.getMonth()]} ${b.getDate()}`; };
   function renderHero(){
-    $("#weekLabel").textContent = weekLabel(state.week);
+    $("#weekLabel").textContent = weekShort(state.week);
     const units = state.units.length;
     const submitted = state.units.filter(u => (state.plans[u.id]?.tasks||[]).length).length;
     const all = Object.values(state.plans).flatMap(p => realTasks(p));
     const done = all.filter(t => t.status==="Done").length;
-    $("#heroChips").innerHTML = state.plansLoaded && units ? `
+    $("#heroChips").innerHTML = false ? `
       <span class="hero-chip"><b>${submitted}/${units}</b> units submitted</span>
       <span class="hero-chip"><b>${all.length}</b> tasks planned</span>
       <span class="hero-chip"><b>${done}</b> done</span>` : "";
     const hp = $("#heroProg");
-    if (hp) { const pool = Object.values(state.plans).flatMap(p => realTasks(p)); hp.hidden = !(state.plansLoaded && pool.length) || state.tab === "monthly";
+    if (hp) { const pool = Object.values(state.plans).flatMap(p => realTasks(p)); hp.hidden = true;
       if (!hp.hidden) hp.innerHTML = progressBar(`Overall progress of the week's plan`, avgOf(pool), `${done} of ${all.length} tasks done · every task counts, no status or % counts as 0`, true); }
     const mo = state.tab === "monthly";
     const pt = PAGE_TITLE[state.tab] || ["Weekly Activity Tracking", ""]; $("#heroTitle").textContent = pt[0]; $("#heroSub").textContent = pt[1];
+    document.body.dataset.tab = state.tab;
     if (mo) { const r = ethMonthRange(state.eth); $("#weekLabel").textContent = ethName(state.eth); $("#weekSub").textContent = `${fmt(r.start)} – ${fmt(r.end)} ${parse(r.end).getFullYear()}`; }
     else $("#weekSub").textContent = (state.week === thisMonday() ? "This week · " : state.week === nextMonday() ? "Next week · " : "") + ethWeekLabel(state.week);
     $("#thisWeek").textContent = mo ? "This month" : "This week";
@@ -1009,7 +1012,7 @@ applyPlugin(jsPDF); window.jspdf = { jsPDF }; window.XLSX = XLSX;
     let html = bannerMsg ? `<div class="banner warn">${esc(bannerMsg)}</div>` : "";
     if (!db) html += `<div class="banner warn">Not connected to the database, so plans cannot be loaded or saved.</div>`;
     if (!state.unitsLoaded || !state.plansLoaded) html += `<div class="panel"><div class="empty"><b>Loading weekly plans…</b>Fetching plans for ${esc(weekLabel(state.week))}.</div></div>`;
-    else if (state.tab==="dashboard") html += renderDash() + renderOverview(true) + renderOvTasks();
+    else if (state.tab==="dashboard") html += renderDash();
         else if (state.tab==="update") html += planBanner() + renderUpdate();
     else if (state.tab==="plan") html += planBanner() + renderUpdate() + renderImport();
     else if (state.tab==="tasks") html += renderTasks();
@@ -1062,7 +1065,7 @@ applyPlugin(jsPDF); window.jspdf = { jsPDF }; window.XLSX = XLSX;
     const w = ($("#main").clientWidth || 1000);
     return renderDashboard({ weeks: state.dashData.weeks, byWeek: by, byWeekAll: byAll, units: sortedUnits(), week: state.week, today: todayIso, filter: { ...state.dash, level: state.level },
       alerts: alerts.filter(a => (!state.dash.type || unitOf(a.unit).type === state.dash.type) && (!state.dash.units.length || state.dash.units.includes(a.unit))), pending: pendingFor().length, downloads,
-      width: w > 900 ? Math.floor((w - 16) * 2 / 3) - 34 : w - 34, unitName, h: { esc, fmt, weekLabel, toEth, ethMonth: w => ethName(toEth(w)) } });
+      width: w > 900 ? Math.floor((w - 16) * 2 / 3) - 34 : w - 34, unitName, h: { esc, fmt, weekLabel, toEth, ethMonth: w => ethName(toEth(w)), ethWeek: w => ethWeekLabel(w) } });
   }
 
   // ---------- events ----------
@@ -1086,6 +1089,7 @@ applyPlugin(jsPDF); window.jspdf = { jsPDF }; window.XLSX = XLSX;
     if (!t) return;
     if (t.dataset.tgl) { const k = t.dataset.tgl; state.expanded.has(k) ? state.expanded.delete(k) : state.expanded.add(k); render(); return; }
     if (t.matches("tr[data-open-unit], .hbar-row[data-open-unit]") || (t.dataset.openUnit && t.matches("button"))) { openUnit(t.dataset.openUnit); return; }
+    if (t.dataset.dtbl) { state.dash.tbl = t.dataset.dtbl; render(); return; }
     if (t.dataset.dper) { state.dash.period = t.dataset.dper; state.dash.range = t.dataset.dper === "quarter" ? 13 : 8; render(); ensureDash(); return; }
     if (t.id === "dPopBtn") { state.dash.pop = !state.dash.pop; render(); return; }
     if (t.dataset.dgrp) { const g = t.dataset.dgrp; state.dash.units = g === "all" ? [] : state.units.filter(u => (u.type || "") === g).map(u => u.id); render(); return; }
@@ -1299,10 +1303,10 @@ applyPlugin(jsPDF); window.jspdf = { jsPDF }; window.XLSX = XLSX;
       const sel = state.week, selEnd = weekEndOf(sel);
       pop.innerHTML = `<div class="cal-head"><button data-mo="-1" aria-label="Previous month">&lsaquo;</button><b>${MN[mo]} ${y}</b><button data-mo="1" aria-label="Next month">&rsaquo;</button></div>
         <div class="cal-grid"><span>Sa</span><span>Su</span><span>Mo</span><span>Tu</span><span>We</span><span>Th</span><span>Fr</span>${cells.map(d => { if (!d) return "<i></i>"; const s = iso(new Date(y, mo, d)), inSel = s >= sel && s <= selEnd; return `<button data-d="${s}" class="${inSel ? "in" : ""}${s === todayIso ? " today" : ""}">${d}</button>`; }).join("")}</div>
-        <div class="cal-foot small muted">${esc(ethWeekLabel(state.week))}</div>`;
+        <div class="cal-foot small muted">${esc(ethWeekLabel(state.week))} <button class="lnk" data-today="1">Today</button></div>`;
     };
     draw();
-    pop.onclick = e => { e.stopPropagation(); const b = e.target.closest("button"); if (!b) return; if (b.dataset.mo) { cur = new Date(cur.getFullYear(), cur.getMonth() + +b.dataset.mo, 1); draw(); } else if (b.dataset.d) { closeCal(); setWeek(weekStartOf(b.dataset.d)); } };
+    pop.onclick = e => { e.stopPropagation(); const b = e.target.closest("button"); if (!b) return; if (b.dataset.mo) { cur = new Date(cur.getFullYear(), cur.getMonth() + +b.dataset.mo, 1); draw(); } else if (b.dataset.d) { closeCal(); setWeek(weekStartOf(b.dataset.d)); } else if (b.dataset.today) { closeCal(); $("#thisWeek").click(); } };
   }
   $("#weekBtn").onclick = openCal;
 

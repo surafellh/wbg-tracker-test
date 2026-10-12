@@ -26,7 +26,7 @@ img{max-width:100%}
 body{background:var(--bg);color:var(--ink);font-family:var(--f-body);font-size:14px;line-height:1.45}
 button,input,select,textarea{font:inherit;color:inherit}
 .num{font-family:var(--f-mono);font-variant-numeric:tabular-nums}
-.wrap{max-width:1240px;margin:0 auto;padding-inline:16px}
+.wrap{max-width:1560px;margin:0 auto;padding-inline:20px}
 header.hero{background:var(--hero);color:var(--hero-ink);padding-block:22px 18px}
 .hero-row{display:flex;flex-wrap:wrap;gap:16px;align-items:flex-end;justify-content:space-between}
 .eyebrow{font-family:var(--f-mono);font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--hero-accent);font-weight:600}
@@ -445,3 +445,48 @@ main{padding-block:16px 48px}
 .dpop-top{display:flex;flex-wrap:wrap;gap:4px 12px;padding:2px 6px 8px;border-bottom:1px solid var(--line);margin-bottom:4px}
 .dpop-g{font-size:10.5px;text-transform:uppercase;letter-spacing:.07em;color:var(--muted);font-weight:600;padding:8px 6px 2px}
 .dash-note{margin-left:auto}
+
+/* ---------- Dashboard as in the mockup ---------- */
+body[data-tab="dashboard"] .pagehead{display:none}
+body[data-tab="dashboard"] main{padding-top:20px}
+.topbar .brand .hero-chip{background:var(--hero-tint);border-color:var(--hero-edge);color:var(--hero-muted);font-size:10.5px;padding:2px 8px}
+#thisWeek{display:none}
+.weeknav{background:transparent;border:0;padding:0;gap:2px}
+.weeknav button{color:var(--hero-ink)}
+.weeknav button.label{background:var(--surface);border-radius:10px;padding:0 12px;height:34px;box-shadow:0 1px 2px rgba(60,50,10,.12)}
+.weeknav .label b{font-size:13px;font-family:var(--f-body);font-weight:600}
+.dh{display:flex;justify-content:space-between;align-items:flex-end;gap:12px;flex-wrap:wrap;margin-bottom:16px}
+.dh h1{font-size:22px;margin:0}
+.dh p{margin:2px 0 0;color:var(--muted)}
+.dh .dash-bar{margin:0}
+.kpis{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px;margin-bottom:14px}
+.kpi{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:14px 16px;box-shadow:0 1px 2px rgba(60,50,10,.05)}
+.kpi .k{color:var(--muted);font-size:12.5px}
+.kpi .v{font-size:26px;font-weight:600;margin:4px 0 8px;line-height:1.1}
+.kpi .v small{font-size:12.5px;color:var(--muted);font-weight:500}
+.kbar{height:7px;background:var(--track);border-radius:9px;overflow:hidden}
+.kbar i{display:block;height:100%;background:var(--bar);border-radius:9px}
+.kpill{display:inline-block;margin-top:8px;background:var(--brand-soft);color:var(--brand);font-size:11.5px;font-weight:600;padding:2px 9px;border-radius:999px}
+.dgrid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:14px;margin-bottom:14px}
+.dgrid-b{grid-template-columns:minmax(0,3fr) minmax(0,2fr);align-items:start}
+.dstack{display:grid;gap:14px}
+.pad{padding:12px 16px 16px}
+.bul{padding:6px 16px 14px;max-height:330px;overflow:auto;display:grid;gap:2px}
+.bul-row{display:grid;grid-template-columns:minmax(110px,170px) minmax(0,1fr) 92px;gap:10px;align-items:center;background:transparent;border:0;border-radius:8px;padding:6px 6px;cursor:pointer;text-align:left}
+.bul-row:hover{background:var(--brand-soft)}
+.bul-name{font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.bul-track{height:9px;background:var(--track);border-radius:9px;overflow:hidden}
+.bul-track i{display:block;height:100%;background:var(--bar);border-radius:9px}
+.bul-val{font-size:12px;color:var(--muted);text-align:right}
+.pl-plan{fill:var(--track)}.pl-done{fill:var(--bar)}.pl-done.cur{fill:var(--brand)}
+.dtbl td,.dtbl th{padding:9px 14px}
+.dtbl td b{font-weight:600}
+.ba{list-style:none;margin:0;padding:4px 16px 12px;display:grid}
+.ba li{display:flex;gap:10px;align-items:flex-start;padding:9px 0;border-bottom:1px solid var(--line)}
+.ba li:last-child{border-bottom:0}
+.ba-t{font-weight:500}
+details.more{margin-top:6px}
+details.more>summary{cursor:pointer;color:var(--muted);font-weight:600;padding:8px 2px}
+.dpop-sel{display:grid;gap:6px;padding:4px 6px 6px}
+@media (max-width:1000px){.kpis{grid-template-columns:repeat(2,minmax(0,1fr))}.dgrid,.dgrid-b{grid-template-columns:minmax(0,1fr)}}
+@media (max-width:520px){.bul-row{grid-template-columns:minmax(80px,110px) minmax(0,1fr) 78px}.dh h1{font-size:19px}}

@@ -55,51 +55,65 @@ export function renderDashboard(c) {
   const grp = (t, lbl) => { const us = c.units.filter((u) => (u.type || "") === t); return us.length ? `<div class="dpop-g">${lbl}</div>${us.map((u) => `<label><input type="checkbox" data-dunit="${esc(u.id)}" ${sel.includes(u.id) ? "checked" : ""}>${esc(u.name)}</label>`).join("")}` : ""; };
   const types = [...new Set(c.units.map((u) => u.type || ""))];
   const filters = `<div class="dash-bar" role="group" aria-label="Dashboard filters">
-    <div class="seg" role="tablist">${[["week", "Weekly"], ["month", "Monthly"], ["quarter", "Quarterly"]].map(([k, l]) => `<button role="tab" data-dper="${k}" aria-selected="${per0 === k}">${l}</button>`).join("")}</div>
     <div class="dpop-wrap"><button class="btn" id="dPopBtn" aria-expanded="${!!c.filter.pop}">${selLbl} <span aria-hidden="true">▾</span></button>
-      ${c.filter.pop ? `<div class="dpop" id="dPop"><div class="dpop-top"><button class="lnk" data-dgrp="all">All</button><button class="lnk" data-dgrp="Business unit">All business units</button><button class="lnk" data-dgrp="Corporate function">All functions</button></div>${types.map((t) => grp(t, esc(t || "Other"))).join("")}</div>` : ""}</div>
-    <select id="dCat" aria-label="Category"><option value="">All categories</option>${["Operational", "Revenue"].map((k) => `<option ${c.filter.category === k ? "selected" : ""}>${k}</option>`).join("")}</select>
-    <select id="dLevel" aria-label="Count"><option value="deliverables" ${c.filter.level === "deliverables" ? "selected" : ""}>Count deliverables</option><option value="tasks" ${c.filter.level === "tasks" ? "selected" : ""}>Count all tasks</option></select>
-    <span class="small muted dash-note">${per0 === "week" ? esc(weekLabel(c.week)) : per0 === "month" ? esc(c.h.ethMonth(c.week)) : "13 weeks to " + esc(fmt(c.week))}</span>
-    ${c.downloads ? `<button class="btn" id="pdfBtn">Performance report (PDF)</button>` : ""}</div>`;
+      ${c.filter.pop ? `<div class="dpop" id="dPop"><div class="dpop-top"><button class="lnk" data-dgrp="all">All</button><button class="lnk" data-dgrp="Business unit">All business units</button><button class="lnk" data-dgrp="Corporate function">All functions</button></div>${types.map((t) => grp(t, esc(t || "Other"))).join("")}
+        <div class="dpop-g">Show</div><div class="dpop-sel"><select id="dCat" aria-label="Category"><option value="">All categories</option>${["Operational", "Revenue"].map((k) => `<option ${c.filter.category === k ? "selected" : ""}>${k}</option>`).join("")}</select>
+        <select id="dLevel" aria-label="Count"><option value="deliverables" ${c.filter.level === "deliverables" ? "selected" : ""}>Count deliverables</option><option value="tasks" ${c.filter.level === "tasks" ? "selected" : ""}>Count all tasks</option></select></div></div>` : ""}</div>
+    <div class="seg" role="tablist">${[["week", "Weekly"], ["month", "Monthly"], ["quarter", "Quarterly"]].map(([k, l]) => `<button role="tab" data-dper="${k}" aria-selected="${per0 === k}">${l}</button>`).join("")}</div>
+    ${c.downloads ? `<button class="btn" id="pdfBtn" title="Performance report (PDF)">PDF</button>` : ""}</div>`;
 
-  const tile = (v, k, sub, cls = "") => `<div class="stat ${cls}"><div class="v">${v}</div><div class="k">${k}</div>${sub ? `<div class="small muted" style="margin-top:4px">${sub}</div>` : ""}</div>`;
-  const hero = `<div class="dash-hero panel">
-      <div class="k small muted">Tasks done ${perLabel} · ${units.length === c.units.length ? "all units" : units.length + (units.length === 1 ? " unit" : " units")}</div>
-      <div class="hero-fig">${cur.donePct === null ? "–" : cur.donePct + "%"}</div>
-      <div class="small">${cur.done} of ${cur.total} tasks${delta === null ? "" : ` · <span class="delta ${delta >= 0 ? "up" : "down"}">${delta >= 0 ? "▲" : "▼"} ${Math.abs(delta)} pts</span> vs last week`}</div>
-    </div>`;
-  const tiles = `<div class="stats dash-tiles">
-      ${tile(cur.avg === null ? "–" : cur.avg + "%", "average % complete")}
-      ${tile(`${cur.highDone} of ${cur.high}`, "High-priority tasks done", "", "")}
-      ${tile(cur.dated ? Math.round((cur.onTime / cur.dated) * 100) + "%" : "–", "finished on or before the due date", cur.dated ? `${cur.onTime} of ${cur.dated} with dates` : "Shows once completion dates are recorded")}
-      ${tile(`<span style="color:var(--bad)">${cur.blk + cur.overdue}</span>`, "blocked, delayed or overdue")}
-      ${tile(`${cur.reporting} of ${units.length}`, "units with a plan")}
-      ${tile(String(c.pending), "changes waiting for approval", c.pending ? `<button class="lnk" data-goto="approvals" style="padding:0">Review</button>` : "")}
-    </div>`;
+  const pct = (n, t) => (t ? Math.round((n / t) * 100) : 0);
+  const kpi = (k, v, of, p, pill) => `<div class="kpi"><div class="k">${k}</div><div class="v num">${v}${of ? ` <small>of ${of}</small>` : ""}</div><div class="kbar"><i style="width:${Math.min(100, p || 0)}%"></i></div>${pill ? `<span class="kpill">${pill}</span>` : ""}</div>`;
+  const kpis = `<div class="kpis">
+    ${kpi("Tasks done", cur.done, cur.total, cur.donePct, cur.donePct === null ? "No tasks" : `${cur.donePct}% done${delta === null ? "" : ` · ${delta >= 0 ? "▲" : "▼"} ${Math.abs(delta)} pts`}`)}
+    ${kpi("Average % complete", cur.avg === null ? "–" : cur.avg + "%", "", cur.avg || 0, "Every task counts")}
+    ${kpi("Units with a plan", cur.reporting, units.length, pct(cur.reporting, units.length), `${pct(cur.reporting, units.length)}% submitted`)}
+    ${kpi("Blocked or overdue", `<span style="color:${cur.blk + cur.overdue ? "var(--bad)" : "inherit"}">${cur.blk + cur.overdue}</span>`, "", pct(cur.blk + cur.overdue, cur.total), `${cur.blk} blocked · ${cur.overdue} overdue`)}
+  </div>`;
 
-  const catSplit = (() => {
-    const all = c.byWeekAll || c.byWeek, wk = all[c.week] || {}, tasks = units.flatMap((u) => real(wk[u.id]));
-    const rows = ["Operational", "Revenue", ""].map((k) => { const ts = tasks.filter((t) => (t.category || "") === k); return { k: k || "Not categorised", n: ts.length, avg: avg(ts.map(pctOf)), done: ts.filter((t) => t.status === "Done").length }; }).filter((r) => r.n);
-    if (!rows.length) return "";
-    return `<div class="panel" style="margin-top:16px"><div class="panel-head"><h2>Operational and revenue work</h2><span class="small muted">${esc(weekLabel(c.week))}</span></div><div class="stats" style="padding:12px 16px">${rows.map((r) => tile(r.avg === null ? "–" : r.avg + "%", `${esc(r.k)} · average % complete`, `${r.done} of ${r.n} tasks done`)).join("")}</div></div>`;
+  const bullets = (() => {
+    const rows = [...cur.per].sort((x, y) => (y.m.avg ?? -1) - (x.m.avg ?? -1) || x.u.name.localeCompare(y.u.name));
+    return `<div class="bul">${rows.map(({ u, m }) => `<button class="bul-row" data-open-unit="${esc(u.id)}"><span class="bul-name">${esc(u.name)}</span><span class="bul-track"><i style="width:${m.avg === null ? 0 : Math.max(m.avg, 2)}%"></i></span><span class="bul-val num">${m.total ? `${m.avg ?? 0}% · ${m.done}/${m.total}` : "No plan"}</span></button>`).join("")}</div>`;
   })();
+
+  const planned = (() => {
+    const rows = series.slice(-8), max = Math.max(5, ...rows.map((r) => r.total)), W = 520, H = 250, L = 30, T = 18, B = 28, iw = W - L - 8, ih = H - T - B, bw = Math.min(34, (iw / rows.length) * 0.62);
+    const cx = (i) => L + (i + 0.5) * (iw / rows.length), y = (v) => T + ih - (v / max) * ih;
+    const ticks = [0, Math.round(max / 2), max].filter((v, i, a) => a.indexOf(v) === i);
+    const g = ticks.map((v) => `<line x1="${L}" x2="${W - 8}" y1="${y(v)}" y2="${y(v)}" class="gridline"/><text x="${L - 6}" y="${y(v) + 4}" text-anchor="end" class="axis">${v}</text>`).join("");
+    const bars = rows.map((r, i) => `<g data-tip="${esc(`<b>Week of ${fmt(r.w)}</b><br>Done: ${r.done} of ${r.total} planned`)}"><rect x="${cx(i) - bw / 2}" y="${y(r.total)}" width="${bw}" height="${Math.max(0, ih - (y(r.total) - T))}" rx="4" class="pl-plan"/><rect x="${cx(i) - bw / 2}" y="${y(r.done)}" width="${bw}" height="${Math.max(0, ih - (y(r.done) - T))}" rx="4" class="pl-done${r.w === c.week ? " cur" : ""}"/></g><text x="${cx(i)}" y="${H - 8}" text-anchor="middle" class="axis${r.w === c.week ? " cur" : ""}">${esc(fmt(r.w))}</text>${r.w === c.week && r.total ? `<text x="${cx(i)}" y="${y(r.total) - 5}" text-anchor="middle" class="endlbl">${r.done}/${r.total}</text>` : ""}`).join("");
+    return `<svg class="chart" viewBox="0 0 ${W} ${H}" style="width:100%;height:auto" role="img" aria-label="Tasks done against planned, last 8 weeks">${g}${bars}</svg><div class="legend"><span><i class="key-sq" style="background:var(--track)"></i>Planned</span><span><i class="key-sq" style="background:var(--bar)"></i>Done</span></div>`;
+  })();
+
+  const tblType = c.filter.tbl || (types.includes("Business unit") ? "Business unit" : types[0] || "");
+  const tbl = (() => {
+    const rows = cur.per.filter(({ u }) => (u.type || "") === tblType);
+    return `<div class="seg" role="tablist" style="margin:12px 16px 4px">${types.map((t) => `<button role="tab" data-dtbl="${esc(t)}" aria-selected="${t === tblType}">${esc(t === "Business unit" ? "Business units" : t === "Corporate function" ? "Functions" : t || "Other")}</button>`).join("")}</div>
+    <div class="scroll"><table class="dtbl"><thead><tr><th>Unit</th><th>Plan complete</th><th>Done</th><th>Blocked / overdue</th><th>Last update</th></tr></thead><tbody>${rows.map(({ u, m }) => {
+      const p = (c.byWeek[c.week] || {})[u.id], bo = m.blk + m.overdue;
+      return `<tr class="clickable" data-open-unit="${esc(u.id)}" tabindex="0"><td><b>${esc(u.name)}</b></td><td>${m.total ? `<span class="prog"><span class="bar"><i style="width:${m.avg ?? 0}%"></i></span><span class="num small">${m.avg ?? 0}%</span></span>` : '<span class="pill s-bad">No plan</span>'}</td><td class="num">${m.done}/${m.total}</td><td class="num" style="color:${bo ? "var(--bad)" : "inherit"}">${bo}</td><td class="small muted">${p && p.updatedAt ? esc(fmt(p.updatedAt.slice(0, 10))) : "–"}</td></tr>`;
+    }).join("") || `<tr><td colspan="5" class="muted" style="padding:16px">Nothing in this group.</td></tr>`}</tbody></table></div>`;
+  })();
+
   const asksPanel = (() => {
-    const rows = [];
-    units.forEach((u) => { for (let i = winWeeks.length - 1; i >= 0; i--) { const p = (c.byWeek[winWeeks[i]] || {})[u.id]; if (p && (p.blockers || p.asks)) { rows.push({ u, w: winWeeks[i], b: p.blockers, a: p.asks }); break; } } });
-    return `<div class="panel" style="margin-top:16px"><div class="panel-head"><h2>Blockers and asks</h2><span class="small muted">Latest entered by each unit${per0 === "week" ? "" : " in this period"}</span></div>${rows.length ? `<div class="asks">${rows.map((r) => `<div class="ask"><div class="who"><button class="lnk" data-open-unit="${esc(r.u.id)}">${esc(r.u.name)}</button> · ${esc(weekLabel(r.w))}</div>${r.b ? `<p><b>Blocker:</b> ${esc(r.b)}</p>` : ""}${r.a ? `<p><b>Ask:</b> ${esc(r.a)}</p>` : ""}</div>`).join("")}</div>` : `<div class="empty" style="padding:20px 16px"><b>No blockers or asks</b>Units add them when they update their plan.</div>`}</div>`;
+    const items = [];
+    units.forEach((u) => { for (let i = winWeeks.length - 1; i >= 0; i--) { const p = (c.byWeek[winWeeks[i]] || {})[u.id]; if (p && (p.blockers || p.asks)) { if (p.blockers) items.push({ k: "Blocker", t: p.blockers, u }); if (p.asks) items.push({ k: "Ask", t: p.asks, u }); break; } } });
+    return `<div class="panel"><div class="panel-head"><h2>Blockers and asks</h2><span class="small muted">Latest from each unit</span></div>${items.length ? `<ul class="ba">${items.slice(0, 8).map((x) => `<li><span class="pill ${x.k === "Blocker" ? "s-bad" : "s-prog"}">${x.k}</span><div><div class="ba-t">${esc(x.t.length > 160 ? x.t.slice(0, 157) + "…" : x.t)}</div><button class="lnk unit-name small muted" data-open-unit="${esc(x.u.id)}">${esc(x.u.name)}</button></div></li>`).join("")}</ul>${items.length > 8 ? `<div class="small muted" style="padding:0 16px 12px">+${items.length - 8} more</div>` : ""}` : `<div class="empty" style="padding:20px 16px"><b>None right now</b></div>`}</div>`;
   })();
-  return `${filters}<div class="dash-top">${hero}${tiles}</div>${catSplit}${asksPanel}
-    <div class="grid2" style="margin-top:16px">
-      <div class="panel"><div class="panel-head"><h2>Weekly trend</h2><span class="small muted">% of tasks done and average % complete, per week</span></div>${trendChart(series, c)}</div>
-      <div class="panel"><div class="panel-head"><h2>Escalations</h2><span class="small muted">Found automatically</span></div>${escalations(c)}</div>
-    </div>
-    <div class="panel" style="margin-top:16px"><div class="panel-head"><h2>Completed by week</h2><span class="small muted">Tasks finished in each week (by completion date)</span></div>${completedChart(units, c)}</div>
-    <div class="grid2 even" style="margin-top:16px">
-      <div class="panel"><div class="panel-head"><h2>Units by average % complete</h2><span class="small muted">${esc(weekLabel(c.week))}</span></div>${rankChart(cur.per, c)}</div>
-      <div class="panel"><div class="panel-head"><h2>Status mix by unit</h2><span class="small muted">Share of each unit's tasks</span></div>${statusChart(cur.per, c)}</div>
-    </div>
-    <div class="panel" style="margin-top:16px"><div class="panel-head"><h2>Average % complete by unit and week</h2><span class="small muted">Stronger colour = further along. – = no plan that week</span></div>${heatmap(units, c, asOf)}</div>`;
+
+  const title = !nSel ? "Wagwago Business Group" : nSel === 1 ? esc(c.unitName(sel[0])) : nSel + " units selected";
+  const sub = per0 === "week" ? `Week of ${esc(weekLabel(c.week))} · ${esc(c.h.ethWeek(c.week))}` : per0 === "month" ? esc(c.h.ethMonth(c.week)) : `13 weeks to ${esc(fmt(c.week))}`;
+  return `<div class="dh"><div><h1>${title}</h1><p>${sub}</p></div>${filters}</div>
+    ${kpis}
+    <div class="dgrid"><div class="panel"><div class="panel-head"><h2>Completion by unit</h2><span class="small muted">Average % complete · tasks done</span></div>${bullets}</div>
+      <div class="panel"><div class="panel-head"><h2>Tasks done against planned</h2><span class="small muted">Last 8 weeks</span></div><div class="pad">${planned}</div></div></div>
+    <div class="dgrid dgrid-b"><div class="panel"><div class="panel-head" style="border:0;padding-bottom:0"><h2>Units</h2><span class="small muted">Click a row to open its plan</span></div>${tbl}</div>
+      <div class="dstack"><div class="panel"><div class="panel-head"><h2>Needs attention</h2><span class="small muted">Found automatically</span></div>${escalations(c)}</div>${asksPanel}</div></div>
+    <details class="more"><summary>More charts</summary>
+      <div class="grid2" style="margin-top:12px"><div class="panel"><div class="panel-head"><h2>Weekly trend</h2><span class="small muted">% done and average % complete</span></div>${trendChart(series, c)}</div>
+      <div class="panel"><div class="panel-head"><h2>Completed by week</h2><span class="small muted">By completion date</span></div>${completedChart(units, c)}</div></div>
+      <div class="grid2 even" style="margin-top:12px"><div class="panel"><div class="panel-head"><h2>Status mix by unit</h2></div>${statusChart(cur.per, c)}</div>
+      <div class="panel"><div class="panel-head"><h2>Average % complete by unit and week</h2></div>${heatmap(units, c, asOf)}</div></div></details>`;
 }
 
 function trendChart(series, c) {
@@ -190,10 +204,10 @@ function heatmap(units, c, asOf) {
 
 function escalations(c) {
   const { esc } = c.h;
-  const list = c.alerts.filter((a) => a.level !== "info" || a.kind === "waiting").slice(0, 6);
+  const list = c.alerts.filter((a) => a.level !== "info" || a.kind === "waiting").slice(0, 4);
   if (!list.length) return `<div class="empty" style="padding:24px 16px"><b>Nothing to escalate</b>No overdue, long-blocked or missing plans this week.</div>`;
   return `<ul class="esc-list">${list.map((a) => `<li class="esc ${a.level}"><span class="pill ${a.level === "bad" ? "s-bad" : a.level === "warn" ? "s-not" : "s-none"}">${a.level === "bad" ? "Act now" : a.level === "warn" ? "Watch" : "Note"}</span>
     <div><button class="lnk unit-name" data-open-unit="${esc(a.unit)}">${esc(c.unitName(a.unit))}</button><div class="small">${esc(a.text)}</div>
     ${a.tasks.length ? `<div class="small muted">${a.tasks.slice(0, 2).map((t) => esc(t.title.length > 80 ? t.title.slice(0, 77) + "…" : t.title)).join(" · ")}${a.tasks.length > 2 ? ` · +${a.tasks.length - 2} more` : ""}</div>` : ""}</div></li>`).join("")}</ul>
-    ${c.alerts.length > list.length ? `<div style="padding:0 16px 12px"><button class="lnk" data-goto="follow" style="padding:0">${c.alerts.length - list.length} more in Follow-up</button></div>` : ""}`;
+    ${c.alerts.length > list.length ? `<div class="small muted" style="padding:0 16px 12px">+${c.alerts.length - list.length} more</div>` : ""}`;
 }
