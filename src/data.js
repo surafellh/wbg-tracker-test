@@ -5,11 +5,11 @@
 import { createClient } from "@supabase/supabase-js";
 import { SEED_UNITS, SEED_PLANS, SEED_ACTIVITY } from "./seedData.js";
 import { SEED_SUPPORT } from "./seedSupport.js";
-import { addisWeekStart, addisToday, checkUnitSave, isApproverName, DEFAULT_APPROVERS } from "./rules.js";
+import { addisWeekStart, addisToday } from "./rules.js";
+import { isAdmin, fullRead, unitRead, unitMember, unitLead, canUndo, canFeedback, canEditDepartments, visiblePlan, mergeSave, mergeScope, deptOk } from "./access.js";
 
 const URL_ = import.meta.env.VITE_SUPABASE_URL;
 const KEY_ = import.meta.env.VITE_SUPABASE_ANON_KEY;
-const LOCAL_APPROVER_CODE = import.meta.env.VITE_LOCAL_APPROVER_CODE || "approve";
 
 const isSupabaseConfigured = () => !!(URL_ && KEY_ && !URL_.includes("YOUR-PROJECT-REF") && !KEY_.includes("YOUR-ANON-PUBLIC-KEY"));
 
@@ -56,7 +56,8 @@ function planJson(p) {
 }
 
 function createSupabaseData() {
-  const sb = createClient(URL_, KEY_, { auth: { persistSession: false }, realtime: { params: { eventsPerSecond: 5 } } });
+  const sb = createClient(URL_, KEY_, { auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: false }, realtime: { params: { eventsPerSecond: 5 } } });
+  let roleNow = "";   // employees read plans through a function that hides other departments
   const live = new Map();
   const bump = (table) => (live.get(table) || new Set()).forEach((f) => f());
   const bumpAll = () => ["plans", "units", "activity", "change_requests", "row_history", "support_requests", "feedback", "corrective_actions"].forEach(bump);
@@ -80,6 +81,14 @@ function createSupabaseData() {
     if (!cfg) throw new Error(`Unknown collection: ${colName}`);
     const col = (f) => (f === "id" ? "id" : cfg.map[f] || f);
     const run = async () => {
+      if (colName === "plans" && roleNow === "staff") {
+        let from = null, to = null;
+        for (const [f, op, v] of filters) if (f === "week") { if (op === "==") from = to = v; else if (op === ">=" || op === ">") from = v; else if (op === "<=" || op === "<") to = v; }
+        const { data, error } = await sb.rpc("wbg_read_plans", { p_from: from, p_to: to });
+        if (error) fail(error);
+        const docs = (data || []).map((r) => snapDoc(cfg, r));
+        return { docs, size: docs.length, empty: !docs.length };
+      }
       let q = sb.from(cfg.table).select("*");
       for (const [f, op, v] of filters) q = q[OPS[op]](col(f), v);
       if (ord) q = q.order(col(ord[0]), { ascending: ord[1] !== "desc" });
@@ -103,7 +112,8 @@ function createSupabaseData() {
         const ch = sb.channel(`wbg-${cfg.table}-${Math.random().toString(36).slice(2)}`)
           .on("postgres_changes", { event: "*", schema: "public", table: cfg.table }, refetch)
           .subscribe();
-        return () => { stopped = true; clearTimeout(timer); live.get(cfg.table).delete(refetch); sb.removeChannel(ch); };
+        const poll = colName === "plans" && roleNow === "staff" ? setInterval(refetch, 20000) : null;
+        return () => { stopped = true; clearTimeout(timer); if (poll) clearInterval(poll); live.get(cfg.table).delete(refetch); sb.removeChannel(ch); };
       },
     };
   }
@@ -122,14 +132,34 @@ function createSupabaseData() {
   }
 
   const rpc = async (fn, args) => {
-    const { data, error } = await sb.rpc(fn, args);
+    const { data, error } = await sb.rpc(fn, args || {});
     if (error) fail(error);
     bumpAll();
     return data || { error: "no_response" };
   };
   const api = {
     mode: "supabase",
-    login: (auth) => rpc("wbg_login", { p_auth: auth }),
+    // ----- sign-in (Supabase Auth, one-time code sent to the email) -----
+    async session() { const { data } = await sb.auth.getSession(); return data.session ? this.me() : null; },
+    async me() { const { data, error } = await sb.rpc("wbg_me"); if (error) fail(error); roleNow = (data && data.status === "active" && data.setupDone) ? data.role : ""; return data; },
+    setProfile(p) { roleNow = p && p.status === "active" && p.setupDone ? p.role : ""; },
+    async checkEmail(email) { const { data, error } = await sb.rpc("wbg_check_email", { p_email: email }); if (error) return { allowed: false, error: error.message }; return data; },
+    async sendCode(email) { const { error } = await sb.auth.signInWithOtp({ email, options: { shouldCreateUser: true } }); return error ? { error: error.message, status: error.status } : { ok: true }; },
+    async verifyCode(email, token) { const { error } = await sb.auth.verifyOtp({ email, token, type: "email" }); if (error) return { error: error.message }; return { profile: await this.me() }; },
+    async signOut() { roleNow = ""; await sb.auth.signOut(); },
+    onSignedOut(fn) { sb.auth.onAuthStateChange((ev) => { if (ev === "SIGNED_OUT") fn(); }); },
+    async publicUnits() { const { data, error } = await sb.rpc("wbg_public_units"); if (error) fail(error); return data || []; },
+    async requestAccess(r) { const { data, error } = await sb.rpc("wbg_request_access", { p_email: r.email, p_name: r.name, p_unit: r.unit || "", p_contact: r.contact || "", p_note: r.note || "" }); if (error) return { error: error.message }; return data; },
+    async completeSignup(name, unit, departments) { const { data, error } = await sb.rpc("wbg_complete_signup", { p_name: name, p_unit: unit || "", p_departments: departments || [] }); if (error) return { error: error.message }; if (data && data.error) return data; roleNow = data.status === "active" && data.setupDone ? data.role : ""; return { profile: data }; },
+    // ----- people (Group Strategy only) -----
+    adminUsers: () => rpc("wbg_admin_users"),
+    adminSaveUser: (id, data) => rpc("wbg_admin_save_user", { p_user: id, p_data: data }),
+    adminInvite: (data) => rpc("wbg_admin_invite", { p_data: data }),
+    adminDeleteInvite: (email) => rpc("wbg_admin_delete_invite", { p_email: email }),
+    adminDecideAccess: (id, approve, data) => rpc("wbg_admin_decide_access", { p_id: id, p_approve: approve, p_data: data || {} }),
+    adminSetDomains: (domains) => rpc("wbg_admin_set_domains", { p_domains: domains }),
+    adminBackups: () => rpc("wbg_admin_backups"),
+    adminGetBackup: (day) => rpc("wbg_admin_get_backup", { p_day: day }),
     savePlan: (auth, plan, base, force, activity) => rpc("wbg_save_plan", { p_auth: auth, p_plan: planJson(plan), p_base: base || null, p_force: !!force, p_activity: activity || null }),
     requestChange: (auth, req) => rpc("wbg_request_change", { p_auth: auth, p_req: req }),
     decideRequest: (auth, id, approve, note, plan) => rpc("wbg_decide_request", { p_auth: auth, p_id: id, p_approve: approve, p_note: note || "", p_plan: plan ? planJson(plan) : null }),
@@ -137,9 +167,6 @@ function createSupabaseData() {
     restoreVersion: (auth, hid) => rpc("wbg_restore_version", { p_auth: auth, p_history_id: Number(hid) }),
     undoLast: (auth, planId) => rpc("wbg_undo_last_save", { p_auth: auth, p_plan_id: planId }),
     saveUnit: (auth, op, data, summary) => rpc("wbg_save_unit", { p_auth: auth, p_op: op, p_data: data, p_summary: summary || "" }),
-    setUnitPin: (auth, unit, pin) => rpc("wbg_set_unit_pin", { p_auth: auth, p_unit: unit, p_pin: pin || "" }),
-    pinStatus: (auth) => rpc("wbg_pin_status", { p_auth: auth }),
-    changeApproverCode: (auth, code) => rpc("wbg_change_approver_code", { p_auth: auth, p_new: code }),
     log: (auth, entry) => rpc("wbg_log", { p_auth: auth, p_entry: entry }),
     restoreBackup: (auth, backup) => rpc("wbg_restore_backup", { p_auth: auth, p_backup: backup }),
     saveSupport: (auth, row) => rpc("wbg_save_support", { p_auth: auth, p_row: row }),
@@ -149,10 +176,6 @@ function createSupabaseData() {
     ackFeedback: (auth, id) => rpc("wbg_ack_feedback", { p_auth: auth, p_id: id }),
     saveAction: (auth, row) => rpc("wbg_save_action", { p_auth: auth, p_row: row }),
     deleteAction: (auth, id) => rpc("wbg_delete_action", { p_auth: auth, p_id: id }),
-    async approverNames() {
-      const { data } = await sb.from("app_config").select("value").eq("key", "approver_names").maybeSingle();
-      return (data && Array.isArray(data.value)) ? data.value : DEFAULT_APPROVERS;
-    },
     async uploadEvidence(file, path) {
       const { error } = await sb.storage.from("evidence").upload(path, file, { contentType: fileType(file), upsert: false });
       if (error) fail({ code: "upload_failed", message: error.message });
@@ -179,6 +202,7 @@ function createSupabaseData() {
 // ---------------------------------------------------------------------------
 function createLocalData() {
   const KEYS = { units: "wbg_local_units", plans: "wbg_local_plans", activity: "wbg_local_activity", requests: "wbg_local_requests", history: "wbg_local_history", support: "wbg_local_support", feedback: "wbg_local_feedback", actions: "wbg_local_actions" };
+  const DOMAINS = ["wagwagoelectric.com", "geezinstitute.com", "wanzalogistics.com", "niyatconsultancy.com", "niyatconsultnacy.com", "trucksload.net"];
   const SEEDS = { units: SEED_UNITS, plans: SEED_PLANS, activity: SEED_ACTIVITY, requests: [], history: [], support: SEED_SUPPORT, feedback: [], actions: [] };
   const listeners = new Map();
   const getStore = (c) => {
@@ -196,7 +220,7 @@ function createLocalData() {
 
   function query(c, filters = [], ord = null, lim = null) {
     const run = async () => {
-      let items = getStore(c);
+      let items = readFilter(c, getStore(c));
       for (const [f, op, v] of filters) items = items.filter((it) => { const x = it[f]; return op === "==" ? x === v : op === "!=" ? x !== v : op === ">" ? x > v : op === ">=" ? x >= v : op === "<" ? x < v : op === "<=" ? x <= v : true; });
       if (ord) { const [f, dir] = ord; items.sort((a, b) => { const A = a[f] ?? "", B = b[f] ?? ""; return A < B ? (dir === "desc" ? 1 : -1) : A > B ? (dir === "desc" ? -1 : 1) : 0; }); }
       if (lim) items = items.slice(0, lim);
@@ -239,10 +263,45 @@ function createLocalData() {
   const del = (c, id) => { const items = getStore(c), i = items.findIndex((x) => x.id === id); if (i < 0) return; if (c === "plans" || c === "units") keepHistory(c, items[i], "DELETE"); items.splice(i, 1); setStore(c, items); };
   const addActivity = (by, unit, week, e) => { const a = getStore("activity"); a.push({ id: e.id || Date.now().toString(36) + Math.random().toString(36).slice(2, 8), ts: new Date().toISOString(), by: by || "", unit: unit || "", week: week || "", action: e.action || "save", summary: e.summary || "", details: e.details || [] }); setStore("activity", a); };
 
-  const pins = () => read("wbg_local_pins") || {};
-  const approverCode = () => read("wbg_local_approver_code") || LOCAL_APPROVER_CODE;
-  const isAppr = (auth) => !!auth && !!auth.code && isApproverName(auth.name) && auth.code === approverCode();
-  const unitOk = (auth, unit) => !!auth && auth.unit === unit && !!auth.pin && !!(auth.name || "").trim() && pins()[unit] === auth.pin;
+  // ----- people in test mode: pick who you are; the same rules as the database apply -----
+  const PEOPLE0 = [
+    { id: "surafel.h@wagwagoelectric.com", name: "Surafel Hailu", role: "super_admin", title: "Group Strategy", unit: "group-strategy-office", departments: [] },
+    { id: "ceo@wagwagoelectric.com", name: "CEO (test)", role: "executive", title: "CEO", unit: null, departments: [] },
+    { id: "dceo@wagwagoelectric.com", name: "DCEO (test)", role: "executive", title: "DCEO", unit: null, departments: [] },
+    { id: "gm@wagwagoelectric.com", name: "Wagwago GM (test)", role: "leader", title: "GM", unit: "wagwago-electric", departments: [] },
+    { id: "planning@wagwagoelectric.com", name: "Tsedenya (Wagwago planning)", role: "planning", title: "Planning", unit: "wagwago-electric", departments: ["Planning"] },
+    { id: "hr.manager@wagwagoelectric.com", name: "Eden (Wagwago HR manager)", role: "manager", title: "Manager", unit: "wagwago-electric", departments: ["HR"] },
+    { id: "design@wagwagoelectric.com", name: "Alem (Wagwago Design)", role: "staff", title: "", unit: "wagwago-electric", departments: ["Design and Engineering"] },
+    { id: "planning@trucksload.net", name: "Trucksload planning (test)", role: "planning", title: "Planning", unit: "trucksload", departments: ["Planning"] },
+    { id: "chro@wagwagoelectric.com", name: "Group HR chief (test)", role: "leader", title: "Chief", unit: "hrm", departments: [] },
+  ].map((p) => ({ email: p.id, status: "active", setupDone: true, invited: true, ...p }));
+  const NEWBIE = { id: "new.person@wagwagoelectric.com", email: "new.person@wagwagoelectric.com", name: "", role: "staff", title: "", unit: null, departments: [], status: "active", setupDone: false, invited: false };
+  const people = () => { let p = read("wbg_local_people"); if (!p) { p = [...PEOPLE0, NEWBIE]; write("wbg_local_people", p); } return p; };
+  const setPeople = (p) => write("wbg_local_people", p);
+  const invites = () => read("wbg_local_invites") || [];
+  const accessReqs = () => read("wbg_local_access") || [];
+  const domains = () => read("wbg_local_domains") || DOMAINS;
+  const curId = () => read("wbg_local_session");
+  const prof = () => people().find((x) => x.id === curId()) || null;
+  // the caller as the database sees them
+  const A = () => { const p = prof(); return p && p.status === "active" && p.setupDone ? { name: p.name, role: p.role, title: p.title, unit: p.unit, departments: p.departments || [] } : {}; };
+  const meOut = (p) => (p ? { status: p.status, setupDone: p.setupDone, invited: p.invited, id: p.id, email: p.email, name: p.name, role: p.role, title: p.title, unit: p.unit, departments: p.departments || [] } : null);
+  // what each collection shows this person (same as the row level security policies)
+  function readFilter(c, items) {
+    const a = A(); if (!a.role) return [];
+    if (c === "units") return items;
+    const U = (u) => unitRead(a, u);
+    if (c === "plans") return items.filter((p) => U(p.unit) || (a.role === "staff" && a.unit === p.unit)).map((p) => visiblePlan(a, p));
+    if (c === "activity") return items.filter((x) => (x.unit ? U(x.unit) : fullRead(a)));
+    if (c === "requests" || c === "feedback" || c === "actions") return items.filter((x) => U(x.unit));
+    if (c === "support") return items.filter((x) => U(x.function));
+    if (c === "history") return items.filter((x) => U(x.tbl === "plans" ? x.old.unit_id : x.rowId));
+    return items;
+  }
+
+  const isAppr = (a) => isAdmin(a);
+  const unitOk = (a, unit) => unitMember(a, unit);
+  const leadOk = (a, unit) => unitLead(a, unit);
   const ok = (x) => Promise.resolve({ ok: true, ...(x || {}) });
   const err = (e, x) => Promise.resolve({ error: e, ...(x || {}) });
   const planId = (w, u) => `${w}_${u}`;
@@ -254,19 +313,15 @@ function createLocalData() {
 
   const api = {
     mode: "local",
-    login(auth) {
-      const unit = auth.unit || "";
-      return ok({ unitOk: unitOk(auth, unit), approver: isAppr(auth), approverName: isApproverName(auth.name), lockedOut: false, hasPin: !!pins()[unit] });
-    },
     savePlan(auth, plan, base, force, activity) {
-      const appr = isAppr(auth);
-      if (!appr && !unitOk(auth, plan.unit)) return err("not_allowed");
+      if (!auth.role) return err("not_allowed");
       const old = getStore("plans").find((x) => x.id === planId(plan.week, plan.unit));
       if (old && base && !force && old.updatedAt !== base) return err("conflict", { updatedAt: old.updatedAt, updatedBy: old.updatedBy });
-      if (!appr) { const r = checkUnitSave(old, plan, addisWeekStart(), addisToday()); if (r) return err("needs_approval", { reason: r }); }
-      const at = savePlanRaw(auth, plan);
+      const r = mergeSave(auth, plan.unit, old, plan, { monday: addisWeekStart(), today: addisToday() });
+      if (r.error) return err(r.error, r.reason ? { reason: r.reason } : {});
+      const at = savePlanRaw(auth, { ...plan, tasks: r.tasks, wins: r.wins, blockers: r.blockers, asks: r.asks });
       if (activity) addActivity(auth.name, plan.unit, plan.week, activity);
-      return ok({ updatedAt: at });
+      return ok({ updatedAt: at, ignored: r.ignored });
     },
     requestChange(auth, req) {
       if (!unitOk(auth, req.unit) && !isAppr(auth)) return err("not_allowed");
@@ -294,15 +349,26 @@ function createLocalData() {
       setStore("requests", r); return ok();
     },
     restoreVersion(auth, hidv) {
-      if (!isAppr(auth)) return err("not_allowed");
+      if (!canUndo(auth)) return err("not_allowed");
       const h = getStore("history").find((x) => x.id === String(hidv)); if (!h) return err("not_found");
-      if (h.tbl === "plans") { const p = planFromRow(h.old); savePlanRaw(auth, p, "Restored copy from " + h.at.slice(0, 16).replace("T", " ")); addActivity(auth.name, p.unit, p.week, { action: "restore", summary: "Restored the plan to the copy saved before " + h.at.slice(0, 16).replace("T", " ") + " UTC" }); }
-      else { const o = h.old; put("units", { id: o.id, name: o.name, type: o.type, order: o.sort_order, departments: o.departments || [], people: o.people || [] }); addActivity(auth.name, o.id, "", { action: "restore", summary: `Restored unit "${o.name}"` }); }
+      const when = h.at.slice(0, 16).replace("T", " ");
+      if (h.tbl === "plans") {
+        const p = planFromRow(h.old);
+        if (!isAppr(auth) && (auth.unit !== p.unit || p.week < addisWeekStart())) return err("not_allowed");
+        let tasks = p.tasks;
+        if (auth.role === "manager") { const cur = getStore("plans").find((x) => x.id === p.id); tasks = mergeScope(auth, p.unit, cur && cur.tasks, p.tasks); }
+        savePlanRaw(auth, { ...p, tasks }, "Restored copy from " + when);
+        addActivity(auth.name, p.unit, p.week, { action: "restore", summary: "Restored the plan to the copy saved before " + when + " UTC" + (auth.role === "manager" ? " (own departments only)" : "") });
+      } else {
+        if (!isAppr(auth)) return err("not_allowed");
+        const o = h.old; put("units", { id: o.id, name: o.name, type: o.type, order: o.sort_order, departments: o.departments || [], people: o.people || [] }); addActivity(auth.name, o.id, "", { action: "restore", summary: `Restored unit "${o.name}"` });
+      }
       return ok();
     },
     undoLast(auth, id) {
+      if (!canUndo(auth)) return err("not_allowed");
       const p = getStore("plans").find((x) => x.id === id); if (!p) return err("not_found");
-      if (!unitOk(auth, p.unit) && !isAppr(auth)) return err("not_allowed");
+      if (!isAppr(auth) && auth.unit !== p.unit) return err("not_allowed");
       if (p.updatedBy !== (auth.name || "").trim() || Date.now() - Date.parse(p.updatedAt) > 30 * 60e3) return err("too_late");
       const h = getStore("history").find((x) => x.tbl === "plans" && x.rowId === id && x.op !== "SNAPSHOT"); if (!h) return err("not_found");
       savePlanRaw(auth, { ...planFromRow(h.old), unit: p.unit, week: p.week }, "Undo");
@@ -311,7 +377,7 @@ function createLocalData() {
     },
     saveUnit(auth, op, data, summary) {
       const appr = isAppr(auth), units = getStore("units"), u = units.find((x) => x.id === data.id);
-      if (op === "lists") { if (!appr && !unitOk(auth, data.id)) return err("not_allowed"); if (!u) return err("not_found"); put("units", { ...u, ...(data.departments ? { departments: data.departments } : {}), ...(data.people ? { people: data.people } : {}) }); }
+      if (op === "lists") { if (!appr && !leadOk(auth, data.id)) return err("not_allowed"); if (data.departments && !canEditDepartments(auth, data.id)) return err("not_allowed"); if (!u) return err("not_found"); put("units", { ...u, ...(data.departments ? { departments: data.departments } : {}), ...(data.people ? { people: data.people } : {}) }); }
       else if (!appr) return err("not_allowed");
       else if (op === "add") { if (!u) put("units", { id: data.id, name: data.name, type: data.type || "Business unit", order: data.order || 99, departments: [], people: [] }); }
       else if (op === "update") { if (u) put("units", { ...u, ...(data.name ? { name: data.name } : {}), ...(data.type ? { type: data.type } : {}) }); }
@@ -319,15 +385,6 @@ function createLocalData() {
       addActivity(auth.name, data.id, "", { action: op === "lists" ? "lists" : "unit", summary: summary || op + " unit" });
       return ok();
     },
-    setUnitPin(auth, unit, pin) {
-      if (!isAppr(auth)) return err("not_allowed");
-      if (pin && pin.length < 4) return err("pin_too_short");
-      const p = pins(); if (pin) p[unit] = pin; else delete p[unit]; write("wbg_local_pins", p);
-      addActivity(auth.name, unit, "", { action: "unit", summary: pin ? "Set a new unit PIN" : "Removed the unit PIN" });
-      return ok();
-    },
-    pinStatus(auth) { if (!isAppr(auth)) return err("not_allowed"); return ok({ units: Object.fromEntries(Object.keys(pins()).map((k) => [k, true])) }); },
-    changeApproverCode(auth, code) { if (!isAppr(auth)) return err("not_allowed"); if ((code || "").length < 6) return err("code_too_short"); write("wbg_local_approver_code", code); return ok(); },
     log(auth, e) { if (!isAppr(auth) && !unitOk(auth, e.unit)) return err("not_allowed"); addActivity(auth.name, e.unit, e.week, e); return ok(); },
     restoreBackup(auth, b) {
       if (!isAppr(auth)) return err("not_allowed");
@@ -338,7 +395,7 @@ function createLocalData() {
     },
     saveSupport(auth, row) {
       const fn = row.function || ""; if (!fn) return err("bad_request");
-      if (!isAppr(auth) && !unitOk(auth, fn)) return err("not_allowed");
+      if (!isAppr(auth) && !leadOk(auth, fn)) return err("not_allowed");
       const items = getStore("support"), old = row.id ? items.find((x) => x.id === row.id) : null, name = (auth.name || "").trim(), now = new Date().toISOString();
       if (old && old.function !== fn && !isAppr(auth)) return err("not_allowed");
       const n = items.reduce((m, x) => Math.max(m, parseInt(String(x.ref || "").replace(/\D/g, ""), 10) || 0), 0) + 1;
@@ -351,23 +408,23 @@ function createLocalData() {
     },
     deleteSupport(auth, id) { if (!isAppr(auth)) return err("not_allowed"); const o = getStore("support").find((x) => x.id === id); if (!o) return err("not_found"); del("support", id); addActivity(auth.name, o.function, "", { action: "support", summary: "Deleted support request " + o.ref }); return ok(); },
     saveFeedback(auth, row) {
-      if (!isAppr(auth)) return err("not_allowed");
-      const from = row.from || "Group Strategy";
+      if (!canFeedback(auth)) return err("not_allowed");
+      const from = auth.role === "executive" ? auth.title : (row.from || "Group Strategy");
       if (!row.unit || !(row.body || "").trim() || !["CEO", "DCEO", "Group Strategy"].includes(from)) return err("bad_request");
       const old = row.id ? getStore("feedback").find((x) => x.id === row.id) : null;
       put("feedback", { ackBy: "", ackAt: "", ...(old || {}), id: old ? old.id : (row.id || Date.now().toString(36) + Math.random().toString(36).slice(2, 8)), unit: row.unit, week: row.week || "", from, body: row.body, by: old ? old.by : (auth.name || "").trim(), createdAt: old ? old.createdAt : new Date().toISOString() });
       addActivity(auth.name, row.unit, row.week || "", { action: "feedback", summary: "Feedback from " + from });
       return ok();
     },
-    deleteFeedback(auth, id) { if (!isAppr(auth)) return err("not_allowed"); del("feedback", id); return ok(); },
+    deleteFeedback(auth, id) { const f = getStore("feedback").find((x) => x.id === id); if (!f) return err("not_found"); if (!(isAppr(auth) || (auth.role === "executive" && f.by === auth.name))) return err("not_allowed"); del("feedback", id); return ok(); },
     ackFeedback(auth, id) {
       const f = getStore("feedback").find((x) => x.id === id); if (!f) return err("not_found");
-      if (!isAppr(auth) && !unitOk(auth, f.unit)) return err("not_allowed");
+      if (!isAppr(auth) && !leadOk(auth, f.unit)) return err("not_allowed");
       put("feedback", { ...f, ackBy: (auth.name || "").trim(), ackAt: new Date().toISOString() }); return ok();
     },
     saveAction(auth, row) {
       const unit = row.unit || ""; if (!unit) return err("bad_request");
-      const appr = isAppr(auth); if (!appr && !unitOk(auth, unit)) return err("not_allowed");
+      const appr = isAppr(auth); if (!appr && !leadOk(auth, unit)) return err("not_allowed");
       const status = row.status || "Open"; if (!["Open", "In progress", "Done", "Closed"].includes(status)) return err("bad_request");
       if (status === "Closed" && !appr) return err("not_allowed");
       const old = row.id ? getStore("actions").find((x) => x.id === row.id) : null; if (old && old.unit !== unit) return err("not_allowed");
@@ -379,11 +436,67 @@ function createLocalData() {
       return ok({ id: rec.id });
     },
     deleteAction(auth, id) { if (!isAppr(auth)) return err("not_allowed"); del("actions", id); return ok(); },
-    approverNames: async () => DEFAULT_APPROVERS,
+    // ----- sign-in (test mode: pick a person) -----
+    async session() { const p = prof(); return p ? meOut(p) : null; },
+    async me() { return meOut(prof()); },
+    setProfile() {},
+    localPeople: () => people().map(meOut),
+    localSignIn(id) { const p = people().find((x) => x.id === id); if (!p) return null; write("wbg_local_session", id); return meOut(p); },
+    async checkEmail(email) { const e = (email || "").trim().toLowerCase(), d = e.split("@")[1] || ""; return { allowed: /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(e) && (domains().includes(d) || invites().some((i) => i.email === e) || people().some((p) => p.email === e)) }; },
+    async sendCode() { return { ok: true }; },
+    async verifyCode(email, code) { const e = (email || "").trim().toLowerCase(); let p = people().find((x) => x.email === e); if (!p) { const inv = invites().find((i) => i.email === e); p = { id: e, email: e, name: inv ? inv.name : "", role: inv ? inv.role : "staff", title: inv ? inv.title : "", unit: inv ? inv.unit : null, departments: inv ? inv.departments : [], status: "active", setupDone: false, invited: !!inv }; setPeople([...people(), p]); } write("wbg_local_session", p.id); return { profile: meOut(p) }; },
+    async signOut() { try { localStorage.removeItem("wbg_local_session"); } catch (x) {} },
+    onSignedOut() {},
+    async publicUnits() { return getStore("units").map((u) => ({ id: u.id, name: u.name, type: u.type, departments: u.departments || [] })); },
+    async requestAccess(r) { if (!r.email || (r.name || "").trim().length < 3) return { error: "bad_request" }; if ((r.contact || "").trim().length < 5) return { error: "contact_needed" }; const l = accessReqs(); l.push({ id: Date.now().toString(36), email: r.email.trim().toLowerCase(), name: r.name.trim(), unit: r.unit || "", contact: r.contact, note: r.note || "", status: "pending", createdAt: new Date().toISOString() }); write("wbg_local_access", l); return { ok: true }; },
+    async completeSignup(name, unit, departments) {
+      const list = people(), p = list.find((x) => x.id === curId()); if (!p || p.status !== "active") return { error: "not_allowed" };
+      if ((name || "").trim().length < 3) return { error: "name_needed" };
+      if (!p.invited) { if (p.setupDone) return { error: "not_allowed" }; const u = getStore("units").find((x) => x.id === unit); if (!u) return { error: "unit_needed" }; if (!(departments || []).length && (u.departments || []).length) return { error: "department_needed" }; p.unit = unit; p.departments = departments || []; }
+      p.name = name.trim(); p.setupDone = true; setPeople(list);
+      addActivity(p.name, p.unit || "", "", { action: "user", summary: `Signed up: ${p.name} (${p.email})` });
+      return { profile: meOut(p) };
+    },
+    // ----- people (Group Strategy only) -----
+    async adminUsers() { if (!isAppr(A())) return err("not_allowed"); return ok({ users: people().map((p) => ({ ...meOut(p), createdAt: "", lastSeen: "" })), invites: invites(), requests: accessReqs().filter((r) => r.status === "pending"), domains: domains() }); },
+    async adminSaveUser(id, d) {
+      const a = A(); if (!isAppr(a)) return err("not_allowed");
+      const list = people(), p = list.find((x) => x.id === id); if (!p) return err("not_found");
+      const role = d.role || p.role, status = d.status || p.status;
+      if (id === curId() && (role !== "super_admin" || status !== "active")) return err("cannot_change_self");
+      if (role === "executive" && !["CEO", "DCEO"].includes(d.title ?? p.title)) return err("title_needed");
+      if (["leader", "planning", "manager", "staff"].includes(role) && !getStore("units").some((u) => u.id === (d.unit ?? p.unit))) return err("unit_needed");
+      if (["manager", "staff"].includes(role) && !(d.departments ?? p.departments).length) return err("department_needed");
+      const before = `${p.role} · ${p.unit || "-"} · ${p.status}`;
+      Object.assign(p, { name: d.name ? d.name.trim() : p.name, role, title: d.title ?? p.title, unit: "unit" in d ? (d.unit || null) : p.unit, departments: d.departments ?? p.departments, status });
+      setPeople(list); addActivity(a.name, p.unit || "", "", { action: "user", summary: `${status === "disabled" ? "Disabled " : "Updated "}${p.email} (${role})`, details: ["Before: " + before, `After: ${role} · ${p.unit || "-"} · ${status}`] }); return ok();
+    },
+    async adminInvite(d) {
+      const a = A(); if (!isAppr(a)) return err("not_allowed");
+      const e = (d.email || "").trim().toLowerCase(); if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(e)) return err("bad_email");
+      if (people().some((p) => p.email === e)) return err("already_registered");
+      const l = invites().filter((i) => i.email !== e); l.push({ email: e, name: d.name || "", role: d.role, title: d.title || "", unit: d.unit || null, departments: d.departments || [], invitedBy: a.name, createdAt: new Date().toISOString() }); write("wbg_local_invites", l);
+      addActivity(a.name, d.unit || "", "", { action: "user", summary: `Invited ${e} as ${d.role}` }); return ok();
+    },
+    async adminDeleteInvite(email) { if (!isAppr(A())) return err("not_allowed"); write("wbg_local_invites", invites().filter((i) => i.email !== email)); return ok(); },
+    async adminDecideAccess(id, approve, d) {
+      const a = A(); if (!isAppr(a)) return err("not_allowed");
+      const l = accessReqs(), r = l.find((x) => x.id === id && x.status === "pending"); if (!r) return err("not_found");
+      if (approve) { const x = await this.adminInvite({ ...d, email: r.email, name: r.name }); if (x.error) return x; }
+      r.status = approve ? "approved" : "rejected"; write("wbg_local_access", l); return ok();
+    },
+    async adminSetDomains(list) { if (!isAppr(A())) return err("not_allowed"); write("wbg_local_domains", list.map((x) => String(x).trim().toLowerCase()).filter(Boolean)); return ok(); },
+    async adminBackups() { if (!isAppr(A())) return err("not_allowed"); return ok({ days: [] }); },
+    async adminGetBackup() { return err("not_found"); },
     async uploadEvidence(file, path) { await idbPut(path, file); return { path }; },
     async evidenceUrl(path) { const b = await idbGet(path); if (!b) fail({ code: "not_found", message: "File not found in this browser" }); return URL.createObjectURL(b); },
     async readAll(table) { const c = Object.entries(COLLECTIONS).find(([, v]) => v.table === table); return c ? getStore(c[0]) : []; },
   };
+  // every change runs as the signed-in person, never as what the page says
+  for (const k of Object.keys(api)) {
+    if (typeof api[k] !== "function" || /^(session|me|setProfile|localPeople|localSignIn|checkEmail|sendCode|verifyCode|signOut|onSignedOut|publicUnits|requestAccess|completeSignup|admin\w+|uploadEvidence|evidenceUrl|readAll)$/.test(k)) continue;
+    const f = api[k]; api[k] = (_ignored, ...rest) => f(A(), ...rest);
+  }
 
   const db = { doc: docRef, collection: (c) => query(c) };
   return { db, api, downloads: getDownloads(), mode: "local" };
@@ -395,19 +508,6 @@ function idb() {
 }
 async function idbPut(k, v) { const d = await idb(); return new Promise((res, rej) => { const t = d.transaction("files", "readwrite"); t.objectStore("files").put(v, k); t.oncomplete = res; t.onerror = () => rej(t.error); }); }
 async function idbGet(k) { const d = await idb(); return new Promise((res, rej) => { const r = d.transaction("files").objectStore("files").get(k); r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); }); }
-
-// Who is using the app: name + unit PIN and/or approver code, kept in this browser.
-export function getSession() {
-  const K = "wbg-session";
-  const read = () => { try { return JSON.parse(localStorage.getItem(K) || "null") || {}; } catch (e) { return {}; } };
-  let s = read();
-  if (!s.name) { try { const n = localStorage.getItem("wbg-name"); if (n) s.name = n; } catch (e) {} }
-  return {
-    get: () => s,
-    set(next) { s = { ...next }; try { localStorage.setItem(K, JSON.stringify(s)); if (s.name) localStorage.setItem("wbg-name", s.name); } catch (e) {} },
-    clear() { s = { name: s.name }; try { localStorage.setItem(K, JSON.stringify(s)); } catch (e) {} },
-  };
-}
 
 function getDownloads() {
   return {

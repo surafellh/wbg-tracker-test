@@ -145,6 +145,38 @@ supabase/upgrade-1-safe.sql      v2 tables and functions (safe with the old site
 supabase/upgrade-2-lockdown.sql  v2 lockdown (run after the new site is live)
 supabase/upgrade-3-reminders.sql optional Telegram reminders and weekly snapshot
 supabase/upgrade-4-v3-stage1.sql v3: Saturday weeks, Business support, Feedback, Corrective actions
+supabase/upgrade-5-stage2-login.sql company-email sign-in, roles, row level security
+supabase/upgrade-6-daily-backup.sql nightly backup
 supabase/seed.sql, seed-support.sql starting data
 .env.example
 ```
+
+## Stage 2: company-email sign-in, roles, audit, data quality
+
+**What changes.** Unit PINs and the approver code are gone. People sign in with their company email and a one-time code. Roles are managed in the new **People** tab (Group Strategy only).
+
+| Role | Sees | Changes |
+|---|---|---|
+| Group Strategy (super admin) | everything | everything, People, Units, restore |
+| CEO / DCEO (executive) | everything | feedback only |
+| Chief / director / GM (leader) | everything | their own unit's plan; undo/restore for their unit |
+| Planning | their own unit | their own unit's plan, departments; undo/restore |
+| Manager | their own unit | their own departments; undo/restore for those |
+| Employee (staff) | own department tasks only | own department tasks; no undo |
+
+Allowed email domains (editable in People): wagwagoelectric.com, geezinstitute.com, wanzalogistics.com, niyatconsultnacy.com, niyatconsultancy.com, trucksload.net. **Check the Niyat spelling and delete the wrong one.** Anyone on an allowed domain may sign themselves up as Staff in the unit they choose; others need an invite or an approved access request.
+
+**Also new**
+- Daily database backup at 00:00 Addis time (upgrade-6; People tab lists the days and downloads one).
+- Excel template with dropdowns (unit, department per unit, type, category, priority, status), number and date checks; import review shows "Did you mean…" for wrong unit or department names. Departments are never created by import.
+- Category (Operational / Revenue) per task, filter on All tasks and Dashboard, split on the Dashboard.
+- Target, unit and Actual per task: % complete is calculated; "lower is better" for costs and delays.
+
+**Upgrade steps (test project first)**
+1. Supabase: Authentication > Providers > Email on. Authentication > Email Templates > Magic Link: put `{{ .Token }}` in the body so the email shows the code.
+2. Authentication > SMTP: set up your own mail sender (the built-in one allows only a few emails an hour).
+3. SQL Editor: run `upgrade-5-stage2-login.sql`, then `upgrade-6-daily-backup.sql` (enable the pg_cron extension first: Database > Extensions).
+4. Push to a new branch, let Vercel build a preview, sign in as surafel.h@wagwagoelectric.com (first Group Strategy admin).
+5. **After upgrade-5 the old site can no longer save.** Do this on the test project only until you are ready to go live.
+
+Test mode (no Supabase keys): the sign-in page offers a list of test people, including a first-time newcomer.

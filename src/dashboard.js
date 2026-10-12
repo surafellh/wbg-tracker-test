@@ -46,6 +46,7 @@ export function renderDashboard(c) {
   const filters = `<div class="toolbar dash-filters" role="group" aria-label="Dashboard filters">
     <label class="small muted" for="dType">Show</label><select id="dType"><option value="">All units</option><option ${c.filter.type === "Corporate function" ? "selected" : ""}>Corporate function</option><option ${c.filter.type === "Business unit" ? "selected" : ""}>Business unit</option></select>
     <label class="small muted" for="dRange">Trend</label><select id="dRange">${[8, 12].map((n) => `<option value="${n}" ${c.filter.range === n ? "selected" : ""}>Last ${n} weeks</option>`).join("")}</select>
+    <label class="small muted" for="dCat">Category</label><select id="dCat"><option value="">All</option>${["Operational", "Revenue"].map((k) => `<option ${c.filter.category === k ? "selected" : ""}>${k}</option>`).join("")}</select>
     <span class="small muted">Week of ${esc(weekLabel(c.week))} · use the arrows above to change week</span>
     ${c.downloads ? `<button class="btn" id="pdfBtn">Performance report (PDF)</button>` : ""}</div>`;
 
@@ -64,7 +65,13 @@ export function renderDashboard(c) {
       ${tile(String(c.pending), "changes waiting for approval", c.pending ? `<button class="lnk" data-goto="approvals" style="padding:0">Review</button>` : "")}
     </div>`;
 
-  return `${filters}<div class="dash-top">${hero}${tiles}</div>
+  const catSplit = (() => {
+    const all = c.byWeekAll || c.byWeek, wk = all[c.week] || {}, tasks = units.flatMap((u) => real(wk[u.id]));
+    const rows = ["Operational", "Revenue", ""].map((k) => { const ts = tasks.filter((t) => (t.category || "") === k); return { k: k || "Not categorised", n: ts.length, avg: avg(ts.map(pctOf)), done: ts.filter((t) => t.status === "Done").length }; }).filter((r) => r.n);
+    if (!rows.length) return "";
+    return `<div class="panel" style="margin-top:16px"><div class="panel-head"><h2>Operational and revenue work</h2><span class="small muted">${esc(weekLabel(c.week))}</span></div><div class="stats" style="padding:12px 16px">${rows.map((r) => tile(r.avg === null ? "–" : r.avg + "%", `${esc(r.k)} · average % complete`, `${r.done} of ${r.n} tasks done`)).join("")}</div></div>`;
+  })();
+  return `${filters}<div class="dash-top">${hero}${tiles}</div>${catSplit}
     <div class="grid2" style="margin-top:16px">
       <div class="panel"><div class="panel-head"><h2>Weekly trend</h2><span class="small muted">% of tasks done and average % complete, per week</span></div>${trendChart(series, c)}</div>
       <div class="panel"><div class="panel-head"><h2>Escalations</h2><span class="small muted">Found automatically</span></div>${escalations(c)}</div>
