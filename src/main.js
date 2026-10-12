@@ -764,21 +764,18 @@ applyPlugin(jsPDF); window.jspdf = { jsPDF }; window.XLSX = XLSX;
   const RATE = p => p >= 95 ? ["Outstanding", "s-done"] : p >= 90 ? ["Very high", "s-done"] : p >= 80 ? ["High", "s-done"] : p >= 75 ? ["Satisfactory", "s-prog"] : p >= 50 ? ["Needs improvement", "s-not"] : ["Low", "s-bad"];
   function weekScore(tasks){
     const n = tasks.length; if (!n) return null;
-    const end = weekEndOf(state.week), pctOf = t => t.status === "Done" ? 100 : (typeof t.pct === "number" ? t.pct : 0);
-    const comp = Math.round(tasks.reduce((a, t) => a + pctOf(t), 0) / n);
-    const due = tasks.filter(t => t.due && t.due <= end), onTime = due.length ? Math.round(100 * due.filter(t => t.status === "Done" && (!t.completedAt || t.completedAt <= t.due)).length / due.length) : null;
-    const fin = tasks.filter(t => t.category === "Revenue" && hasTgt(t) && Number(t.target) > 0), T = fin.reduce((a, t) => a + Number(t.target), 0), fv = fin.length ? Math.round(100 * Math.min(1, fin.reduce((a, t) => a + (Number(t.actual) || 0), 0) / T)) : null;
-    const clear = Math.round(100 * (1 - tasks.filter(t => t.status === "Blocked" || t.status === "Delayed").length / n));
-    const crit = [["Task completion", 40, comp, "Average % complete of every task this week"], ["On-time delivery", 25, onTime, "Tasks due this week that are done by their due date"], ["Revenue against target", 20, fv, "Actual against target on financial lines"], ["Nothing blocked", 15, clear, "Share of tasks that are not blocked or delayed"]];
-    const avail = crit.filter(c => c[2] !== null), W = avail.reduce((a, c) => a + c[1], 0), got = avail.reduce((a, c) => a + c[1] * c[2] / 100, 0);
-    return { total: Math.round(100 * got / W), crit };
+    const pctOf = t => t.status === "Done" ? 100 : (typeof t.pct === "number" ? t.pct : 0);
+    const c = { done: 0, prog: 0, blk: 0, ns: 0 };
+    tasks.forEach(t => { if (t.status === "Done") c.done++; else if (t.status === "In progress") c.prog++; else if (t.status === "Blocked" || t.status === "Delayed") c.blk++; else c.ns++; });
+    return { total: Math.round(tasks.reduce((a, t) => a + pctOf(t), 0) / n), n, c };
   }
   function scoreCard(tasks){
     const sc = weekScore(tasks); if (!sc) return "";
-    const r = RATE(sc.total);
-    return `<section class="panel score-card"><div class="sc-main"><div class="sc-h"><b>Week score</b><span class="pill s-not" title="Calculated from this tracker. The official rating is set at quarter end.">Indicative</span></div>
-      <div class="sc-n"><span class="num">${sc.total}%</span><span class="pill ${r[1]}">${r[0]}</span></div><div class="small muted">Shown to the unit and Group Strategy. The official rating is set at quarter end.</div></div>
-      <div class="sc-bars">${sc.crit.map(c => `<div class="crit" title="${esc(c[3])}"><span>${esc(c[0])}</span><div class="bar"><i style="width:${c[2] === null ? 0 : c[2]}%"></i></div><span class="num small">${c[2] === null ? "n/a" : (Math.round(c[1] * c[2] / 10) / 10) + " / " + c[1]}</span></div>`).join("")}</div></section>`;
+    const r = RATE(sc.total), c = sc.c, seg = (k, col, l) => c[k] ? `<i style="width:${c[k] / sc.n * 100}%;background:${col}" title="${l}: ${c[k]}"></i>` : "";
+    return `<section class="panel score-card"><div class="sc-main"><div class="sc-h"><b>Week score</b><span class="pill s-not" title="Based on task completion only. The official rating is set at quarter end.">Indicative</span></div>
+      <div class="sc-n"><span class="num">${sc.total}%</span><span class="pill ${r[1]}">${r[0]}</span></div><div class="small muted">Task completion: the average % complete of every task this week. The official rating is set at quarter end.</div></div>
+      <div class="sc-bars"><div class="stk">${seg("done", "var(--good)", "Done")}${seg("prog", "var(--bar)", "In progress")}${seg("blk", "var(--bad)", "Blocked or delayed")}${seg("ns", "var(--track)", "Not started")}</div>
+      <div class="leg"><span><i class="sw" style="background:var(--good)"></i>Done ${c.done}</span><span><i class="sw" style="background:var(--bar)"></i>In progress ${c.prog}</span><span><i class="sw" style="background:var(--bad)"></i>Blocked or delayed ${c.blk}</span><span><i class="sw" style="background:var(--track)"></i>Not started ${c.ns}</span></div></div></section>`;
   }
   const editHeadOld = () => `<thead><tr>${th("edit","title","Task")}${th("edit","due","Due")}${th("edit","dept","Department")}${th("edit","priority","Priority")}${th("edit","status","Status")}${th("edit","pct","Progress")}<th class="c-act"></th></tr></thead>`;
   const editHead = () => {
@@ -988,9 +985,10 @@ applyPlugin(jsPDF); window.jspdf = { jsPDF }; window.XLSX = XLSX;
   }
   function weekBan(){
     const w = state.week, planTab = state.tab === "plan", next = w === nextMonday(), tm = thisMonday();
-    const pill = planTab ? (next ? '<span class="pill out">PLAN FOR NEXT WEEK</span>' : '<span class="pill s-not">NOT NEXT WEEK</span>') : '<span class="pill tag-actual">ACTUAL</span>';
+    const sb = planTab && state.editUnit && !isAll() ? subPill(subOf(state.editUnit, "week", w)) : "";
+    const pill = planTab ? (next ? '<span class="pill out">PLAN FOR NEXT WEEK</span>' : '<span class="pill s-not">NOT NEXT WEEK</span>') + sb : '<span class="pill tag-actual">ACTUAL</span>';
     const rel = w === tm ? "This week" : w < tm ? "Past week" : next ? "Next week" : "Later week";
-    const hint = planTab ? (next ? "Add next week's tasks by hand, bring forward unfinished work, or import an Excel plan at the bottom." : `This is not next week. <button class="lnk" id="goNext">Go to next week (${esc(weekLabel(nextMonday()))})</button>`)
+    const hint = planTab ? (next ? "Add next week's tasks by hand, bring forward unfinished work, or fill in the Excel template and upload it. Press Submit for approval when the plan is ready." : `This is not next week. <button class="lnk" id="goNext">Go to next week (${esc(weekLabel(nextMonday()))})</button>`)
       : "Update status and % as the week goes on. Tasks for the coming week go under Next plan.";
     return `<div class="weekban">${pill}<span class="wk-big">${esc(weekLabel(w))}</span><span class="eth">${esc(ethWeekLabel(w))}</span><span class="small muted">${rel}</span></div><div class="small muted plan-hint">${hint}</div>`;
   }
@@ -1001,6 +999,7 @@ applyPlugin(jsPDF); window.jspdf = { jsPDF }; window.XLSX = XLSX;
     const single = hasDraft() && !isAll(), ed = single && canEdit(state.editUnit);
     const past = state.week < thisMonday();
     const lead = single ? X.banner(state.editUnit) + remindersPanel(state.editUnit) : "";
+    const d0 = state.draft;
     const pick = `<div class="toolbar"><label for="unitPick" class="small muted">Unit</label><select id="unitPick"><option value="">Choose your function or unit…</option>${opts}</select></div>`;
     const menu = [];
     if (single) {
@@ -1008,7 +1007,10 @@ applyPlugin(jsPDF); window.jspdf = { jsPDF }; window.XLSX = XLSX;
       if (mayUndo()) menu.push(`<button type="button" id="histBtn" title="Every saved version of this plan">${ico(IC.clock)}History</button>`);
       if (downloads) menu.push(`<button type="button" id="unitPdfBtn">${ico(IC.down)}Plan (PDF)</button>`, `<button type="button" id="unitXlsxBtn">${ico(IC.down)}Plan (Excel)</button>`);
     } else if (isAll() && downloads) menu.push(`<button type="button" id="pdfBtn">${ico(IC.down)}Performance report (PDF)</button>`, `<button type="button" id="xlsxAllBtn">${ico(IC.down)}All plans (Excel)</button>`);
-    const acts = `<div class="toolbar plan-acts">${single && ed && canLead(state.editUnit) ? `<button class="btn" type="button" id="carryBtn">${ico(IC.fwd)}Bring forward</button>` : ""}${moreMenu(menu)}${single && ed ? `<button class="btn primary" type="button" id="addTask">${ico(IC.plus)}Add task</button>` : ""}</div>`;
+    const planM = state.tab === "plan", sub = planM && single ? subOf(state.editUnit, "week", state.week) : null, subbed = sub && sub.status === "pending";
+    const planTop = planM && single ? `<button class="btn" type="button" id="tplTop">${ico(IC.down)}Download template</button>${ed ? `<label class="btn" title="Fill the template, then upload it here">${ico(IC.fwd)}Upload Excel<input type="file" id="impFileTop" accept=".xlsx,.xls,.csv" hidden></label>` : ""}` : "";
+    const submitBtn = planM && single && ed ? `<button class="btn primary" type="button" id="submitPlan" ${state.dirty || !d0 || !d0.tasks.length || subbed ? "disabled" : ""} title="${state.dirty ? "Save the plan first" : subbed ? "Already waiting for approval" : "Send next week's plan to Group Strategy"}">${sub && sub.status !== "withdrawn" && sub.status !== "pending" ? "Submit again" : "Submit for approval"}</button>` : "";
+    const acts = `<div class="toolbar plan-acts">${planTop}${single && ed && canLead(state.editUnit) ? `<button class="btn" type="button" id="carryBtn">${ico(IC.fwd)}Bring forward</button>` : ""}${moreMenu(menu)}${single && ed ? `<button class="btn${planM ? "" : " primary"}" type="button" id="addTask">${ico(IC.plus)}Add task</button>` : ""}${submitBtn}</div>`;
     const topRow = `<div class="plan-top"><div class="plan-wk">${weekBan()}</div>${acts}</div>`;
     const lvlSeg = `<div class="seg" role="tablist" aria-label="List level"><button type="button" role="tab" data-lvl="tasks" aria-selected="${pf().lvl !== "deliv"}">All tasks</button><button type="button" role="tab" data-lvl="deliv" aria-selected="${pf().lvl === "deliv"}">By deliverable</button></div>`;
     const planMode = state.tab === "plan", fin = !planMode && pf().kind === "fin";
@@ -1071,6 +1073,7 @@ applyPlugin(jsPDF); window.jspdf = { jsPDF }; window.XLSX = XLSX;
   // ---------- approvals (Group Strategy) ----------
   function patchRows(r){
     return (r.patch || []).map(o => {
+      if (o.op === "submit") return `<tr><td><span class="pill s-prog">Plan submitted</span></td><td colspan="3">${o.kind === "month" ? `Monthly plan with ${o.n} row${o.n === 1 ? "" : "s"}` : `${o.n} task${o.n === 1 ? "" : "s"} for the week`}. Approving accepts the plan as it stands. <button class="btn small" data-review-sub="${esc(r.id)}">Open the plan</button></td></tr>`;
       if (o.op === "add") return `<tr><td><span class="pill s-done">Add</span></td><td colspan="3">${esc(o.task.title)}</td></tr>`;
       if (o.op === "remove") return `<tr><td><span class="pill s-bad">Remove</span></td><td colspan="3">${esc(o.task.title)}</td></tr>`;
       if (o.op === "text") return `<tr><td><span class="pill s-none">${esc(({ wins: "Key results", blockers: "Blockers", asks: "Asks" })[o.f])}</span></td><td></td><td class="small muted">${esc(o.from || "–")}</td><td class="small">${esc(o.to || "–")}</td></tr>`;
@@ -1228,15 +1231,44 @@ applyPlugin(jsPDF); window.jspdf = { jsPDF }; window.XLSX = XLSX;
       width: w > 900 ? Math.floor((w - 16) * 2 / 3) - 34 : w - 34, unitName, h: { esc, fmt, weekLabel, toEth, ethMonth: w => ethName(toEth(w)), ethWeek: w => ethWeekLabel(w) } });
   }
 
-  // ---------- Monthly plan: enter the month once, split it over its weeks ----------
-  const MP_NAMES = ["January","February","March","April","May","June","July","August","September","October","November","December"];
-  const mpMonth = i => ({ i, y: 2026 + (i < 6 ? 0 : 1), m: (6 + i) % 12 });
-  function mpWeeks(i){
-    const { y, m } = mpMonth(i), out = []; const d = new Date(Date.UTC(y, m, 1));
-    while (d.getUTCDay() !== 6) d.setUTCDate(d.getUTCDate() + 1);
-    while (d.getUTCMonth() === m) { const iso = d.toISOString().slice(0, 10); if (iso >= WEEK_CUTOVER) out.push(iso); d.setUTCDate(d.getUTCDate() + 7); }
+  // ---------- plan submissions (a request to Group Strategy with a "submit" marker) ----------
+  const subOf = (u, kind, key) => state.requests.filter(r => r.unit === u && (r.patch || []).some(o => o.op === "submit" && o.kind === kind && o.key === key)).sort((a, b) => (a.createdAt || "") < (b.createdAt || "") ? 1 : -1)[0] || null;
+  const subPill = r => !r || r.status === "withdrawn" ? '<span class="pill s-none">Draft, not submitted</span>' : r.status === "pending" ? '<span class="pill s-not">Waiting for approval</span>' : r.status === "approved" ? '<span class="pill s-done">Approved</span>' : `<span class="pill s-bad" title="${esc(r.note || "")}">Sent back${r.note ? ": " + esc(r.note.length > 40 ? r.note.slice(0, 38) + "…" : r.note) : ""}</span>`;
+  async function sendSubmit(u, week, kind, key, n, summary){
+    try { const r = await api.requestChange(auth(), { id: newId(), unit: u, week, summary, details: [summary], patch: [{ op: "submit", kind, key, n }] }); toast(r.error ? errText(r) : "Submitted. Group Strategy will review it"); }
+    catch (e) { toast(errText(e)); }
+  }
+  async function submitWeek(){
+    const u = state.editUnit, w = state.week;
+    if (!u || isAll() || !canEdit(u)) { toast("Sign in with this unit's PIN first"); return; }
+    if (state.dirty) { toast("Save the plan first, then submit it"); return; }
+    const n = (((state.plans[u] || {}).tasks) || []).length; if (!n) { toast("Add and save tasks before submitting"); return; }
+    await sendSubmit(u, w, "week", w, n, `Plan for ${weekLabel(w)} submitted for approval (${n} task${n === 1 ? "" : "s"})`);
+  }
+  function reviewSubmission(id){
+    const r = state.requests.find(x => x.id === id); if (!r) return; const o = (r.patch || []).find(x => x.op === "submit"); if (!o) return;
+    if (state.dirty) { toast("Save or discard your open changes first"); return; }
+    state.editUnit = r.unit; store.set("wp-unit", r.unit);
+    if (o.kind === "month") { const [y, m] = o.key.split("-").map(Number); state.mp.Y = y; state.mp.m = m; state.mp.key = ""; state.tab = "mplan"; render(); return; }
+    state.week = r.week; state.draft = null; state.allDrafts = null; state.tab = "plan"; subscribePlans(); render(); openUnit(r.unit, true);
+  }
+
+  // ---------- Monthly plan: enter the month once, split it over its weeks (Ethiopian months) ----------
+  const mpYear = () => { const e = toEth(todayIso); return e.m >= 11 ? e.y + 1 : e.y; };
+  const ethShort = w => { const A = toEth(w), B = toEth(weekEndOf(w)), n = x => ETH_M[x.m - 1].slice(0, 3); return A.m === B.m ? `${n(A)} ${A.d}–${B.d}` : `${n(A)} ${A.d} – ${n(B)} ${B.d}`; };
+  // A Saturday-to-Friday week belongs to the Ethiopian month that holds at least 4 of its 7 days.
+  function mpWeeksOf(Y, m){
+    const { start, end } = ethMonthRange({ y: Y, m }); if (!start) return [];
+    let d = parse(start); while (d.getDay() !== 6) d.setDate(d.getDate() - 1);
+    const out = [];
+    for (let k = 0; k < 7; k++) {
+      const w = iso(d); if (w > end) break;
+      if (w >= WEEK_CUTOVER) { let c = 0; for (let j = 0; j < 7; j++) { const e = toEth(addDays(w, j)); if (e.y === Y && e.m === m) c++; } if (c >= 4) out.push(w); }
+      d.setDate(d.getDate() + 7);
+    }
     return out;
   }
+  const MP_SPLIT = [["even", "Evenly"], ["front", "More early"], ["back", "More late"], ["custom", "Custom"]];
   function splitN(T, n, mode){
     if (!n) return [];
     const wts = mode === "front" ? Array.from({ length: n }, (_, i) => n - i) : mode === "back" ? Array.from({ length: n }, (_, i) => i + 1) : Array(n).fill(1);
@@ -1245,12 +1277,18 @@ applyPlugin(jsPDF); window.jspdf = { jsPDF }; window.XLSX = XLSX;
     for (let k = 0; k < r; k++) out[ord[k % n][1]]++;
     return out;
   }
-  state.mp = { i: null, rows: [], key: "", loading: false, busy: false, dirty: false };
-  const mpCur = () => { if (state.mp.i === null) { const t = parse(todayIso); const i = ((t.getMonth() - 6 + 12) % 12); state.mp.i = Math.max(3, i); } return state.mp.i; };
+  state.mp = { Y: null, m: null, rows: [], key: "", loading: false, busy: false, dirty: false, ask: null };
+  function mpCur(){
+    const mp = state.mp; if (!mp.Y) mp.Y = mpYear();
+    if (!mp.m) { const nxt = toEth(nextMonday()); mp.m = nxt.y === mp.Y ? nxt.m : toEth(todayIso).m; let g = 0; while (!mpWeeksOf(mp.Y, mp.m).length && g++ < 12) mp.m = mp.m % 12 + 1; }
+    return mp.m;
+  }
+  const mpWeeks = () => mpWeeksOf(state.mp.Y || mpYear(), mpCur());
+  const mpTag = () => `${state.mp.Y}-${mpCur()}`;
   async function loadMp(){
     const mp = state.mp, u = state.editUnit; if (!db || !u || isAll()) return;
-    const i = mpCur(), key = `${u}|${i}`; if (mp.key === key) return; mp.key = key; mp.loading = true; mp.rows = []; mp.dirty = false; render();
-    const weeks = mpWeeks(i), tag = `${mpMonth(i).y}-${mpMonth(i).m}`;
+    mpCur(); const key = `${u}|${mpTag()}`; if (mp.key === key) return; mp.key = key; mp.loading = true; mp.rows = []; mp.dirty = false; render();
+    const weeks = mpWeeks(), tag = mpTag();
     try {
       const plans = await Promise.all(weeks.map(w => db.doc(`plans/${planId(w, u)}`).get().then(sn => sn.exists ? sn.data() : null)));
       if (mp.key !== key) return;
@@ -1260,26 +1298,32 @@ applyPlugin(jsPDF); window.jspdf = { jsPDF }; window.XLSX = XLSX;
         let r = map.get(t.mpId); if (!r) { r = { id: t.mpId, category: t.category === "Revenue" ? "Revenue" : "Operational", title: t.title || "", dept: t.dept || "", vals: Array(weeks.length).fill(0), total: 0, split: "custom", saved: true }; map.set(t.mpId, r); }
         r.vals[wi] = Number(t.target) || 0;
       }));
-      map.forEach(r => { r.total = r.vals.reduce((a, b) => a + b, 0); r.split = ["even", "front", "back"].find(m => splitN(r.total, weeks.length, m).join() === r.vals.join()) || "custom"; });
+      map.forEach(r => { r.total = r.vals.reduce((a, b) => a + b, 0); r.split = MP_SPLIT.slice(0, 3).map(x => x[0]).find(m => splitN(r.total, weeks.length, m).join() === r.vals.join()) || "custom"; });
       mp.rows = [...map.values()];
     } catch (e) { mp.rows = []; }
     mp.loading = false; render();
   }
+  // run an action that would throw away rows not yet created, after asking
+  function mpGuard(label, fn){ const mp = state.mp; if (!mp.dirty) { fn(); return; } mp.ask = { label, fn }; render(); }
   function renderMplan(){
     if (!state.units.length) return `<div class="panel"><div class="empty"><b>No units yet</b></div></div>`;
-    const mp = state.mp, i = mpCur(), weeks = mpWeeks(i), u = state.editUnit, ed = !!u && !isAll() && canEdit(u);
+    const mp = state.mp, m = mpCur(), Y = mp.Y, weeks = mpWeeks(), u = state.editUnit, ed = !!u && !isAll() && canEdit(u);
+    const rng = ethMonthRange({ y: Y, m });
     const opts = sortedUnits().map(x => `<option value="${esc(x.id)}" ${x.id === u ? "selected" : ""}>${esc(x.name)}${x.id === myUnit() ? " (yours)" : ""}</option>`).join("");
     const pick = `<div class="toolbar"><label for="unitPick" class="small muted">Unit</label><select id="unitPick"><option value="">Choose your function or unit…</option>${opts}</select></div>`;
-    const months = `<div class="seg mp-months" role="tablist">${Array.from({ length: 12 }, (_, k) => { const c = mpMonth(k), off = !mpWeeks(k).length; return `<button type="button" role="tab" data-mpm="${k}" aria-selected="${k === i}" ${off ? 'disabled title="Before the Saturday-week change on 10 Oct 2026"' : ""}>${MONTHS[c.m]}</button>`; }).join("")}</div>`;
-    const top = `<div class="plan-top"><div class="plan-wk"><div class="weekban"><span class="pill out">MONTHLY PLAN</span><span class="wk-big">${MP_NAMES[mpMonth(i).m]} ${mpMonth(i).y}</span><span class="small muted">${weeks.length} week${weeks.length === 1 ? "" : "s"}</span></div>
-      <div class="small muted plan-hint">Enter the month once and choose how it is split over its weeks. Each week's amount lands in that week's plan as the target, so people only fill in the actual. You can change any week by hand.</div></div>
-      <div class="toolbar plan-acts">${ed ? `<button class="btn" type="button" id="mpAdd">${ico(IC.plus)}Add row</button><button class="btn primary" type="button" id="mpCreate" ${mp.busy || !mp.rows.length ? "disabled" : ""}>${mp.busy ? "Creating…" : "Create weekly plans"}</button>` : ""}</div></div>`;
+    const months = `<div class="seg mp-months" role="tablist">${Array.from({ length: 12 }, (_, k) => { const mm = k + 1, off = !mpWeeksOf(Y, mm).length, r2 = ethMonthRange({ y: Y, m: mm }); return `<button type="button" role="tab" data-mpm="${mm}" aria-selected="${mm === m}" ${off ? 'disabled title="No Saturday weeks yet: weeks before 10 Oct 2026 use the old Monday weeks"' : `title="${esc(fmt(r2.start))} – ${esc(fmt(r2.end))}"`}>${ETH_M[mm - 1]}</button>`; }).join("")}</div>`;
+    const sub = subOf(u, "month", mpTag()), subbed = sub && sub.status === "pending";
+    const saved = mp.rows.filter(r => r.saved).length;
+    const acts = ed ? `<button class="btn" type="button" id="mpTpl">${ico(IC.down)}Download template</button><label class="btn" title="Fill the template, then upload it here">${ico(IC.fwd)}Upload Excel<input type="file" id="mpFile" accept=".xlsx,.xls,.csv" hidden></label><button class="btn" type="button" id="mpAdd">${ico(IC.plus)}Add row</button><button class="btn" type="button" id="mpCancel" ${mp.dirty ? "" : "hidden"}>Cancel</button><button class="btn${mp.dirty ? " primary" : ""}" type="button" id="mpCreate" ${mp.busy || !mp.rows.length ? "disabled" : ""}>${mp.busy ? "Creating…" : "Create weekly plans"}</button><button class="btn${mp.dirty ? "" : " primary"}" type="button" id="mpSubmit" ${mp.dirty || !saved || subbed || mp.busy ? "disabled" : ""} title="${mp.dirty ? "Create the weekly plans first" : !saved ? "Nothing created yet" : subbed ? "Already waiting for approval" : "Send this month to Group Strategy"}">${sub && sub.status !== "withdrawn" && sub.status !== "pending" ? "Submit again" : "Submit for approval"}</button>` : "";
+    const top = `<div class="plan-top"><div class="plan-wk"><div class="weekban"><span class="pill out">MONTHLY PLAN</span><span class="wk-big">${ETH_M[m - 1]} ${Y} EC</span><span class="eth">${esc(fmt(rng.start))} – ${esc(fmt(rng.end))}</span>${u && !isAll() ? subPill(sub) : ""}</div>
+      <div class="small muted plan-hint">${weeks.length ? `${weeks.length} week${weeks.length === 1 ? "" : "s"} (${esc(fmt(weeks[0]))} – ${esc(fmt(weekEndOf(weeks[weeks.length - 1])))}), Saturday to Friday. A week belongs to the Ethiopian month that holds most of its days.` : ""} Enter the month once and choose how it splits over the weeks. Each week's amount lands in that week's plan as the target, so people only fill in the actual.</div></div>
+      <div class="toolbar plan-acts">${acts}</div></div>`;
     const bar = `<div class="plan-bar">${pick}${months}</div>`;
+    const ask = mp.ask ? `<div class="banner warn" style="margin:12px 16px 0"><b>You have rows that are not created yet.</b> ${esc(mp.ask.label)} will throw them away. <button class="btn danger small" id="mpAskYes" style="margin-left:6px">Discard and continue</button> <button class="btn small" id="mpAskNo">Keep editing</button></div>` : "";
     if (!u || isAll()) return `${top}<div class="panel">${bar}<div class="empty"><b>Choose your unit</b>Pick the function or business unit whose month you want to plan.</div></div>`;
-    if (!weeks.length) return `${top}<div class="panel">${bar}<div class="empty"><b>No Saturday weeks in this month</b>Weekly plans before 10 Oct 2026 use the old Monday weeks. Start from October.</div></div>`;
-    const depts = (unitOf(u).departments || []);
-    const dis = ed ? "" : "disabled";
-    const head = weeks.map(w => `<th class="num">${esc(weekShort(w))}</th>`).join("");
+    if (!weeks.length) return `${top}<div class="panel">${bar}<div class="empty"><b>No Saturday weeks in ${ETH_M[m - 1]} yet</b>Weekly plans before 10 Oct 2026 use the old Monday weeks. Start from Tikimt.</div></div>`;
+    const depts = (unitOf(u).departments || []), dis = ed ? "" : "disabled";
+    const head = weeks.map(w => `<th class="num">${esc(weekShort(w))}<div class="eth-s">${esc(ethShort(w))}</div></th>`).join("");
     const rows = mp.rows.map(r => {
       const sum = r.vals.reduce((a, b) => a + (Number(b) || 0), 0), ok = sum === Number(r.total || 0);
       return `<tr data-mpr="${esc(r.id)}">
@@ -1287,15 +1331,15 @@ applyPlugin(jsPDF); window.jspdf = { jsPDF }; window.XLSX = XLSX;
         <td class="c-task" data-l="Task or product"><input type="text" data-mpf="title" value="${esc(r.title)}" placeholder="Task or product" aria-label="Task or product" ${dis}></td>
         <td data-l="Department"><select data-mpf="dept" aria-label="Department" ${dis}><option value="">–</option>${depts.map(d => `<option ${sel(d === r.dept)}>${esc(d)}</option>`).join("")}</select></td>
         <td data-l="Month target"><input type="number" step="any" class="mp-n" data-mpf="total" value="${r.total || ""}" aria-label="Month target" ${dis}></td>
-        <td data-l="Split"><select data-mpf="split" aria-label="Split" ${dis}>${[["even", "Evenly"], ["front", "More early"], ["back", "More late"], ["custom", "Custom"]].map(o => `<option value="${o[0]}" ${sel(o[0] === r.split)}>${o[1]}</option>`).join("")}</select></td>
+        <td data-l="Split"><select data-mpf="split" aria-label="Split" ${dis}>${MP_SPLIT.map(o => `<option value="${o[0]}" ${sel(o[0] === r.split)}>${o[1]}</option>`).join("")}</select></td>
         ${r.vals.map((v, k) => `<td data-l="${esc(weekShort(weeks[k]))}"><input type="number" step="any" class="mp-n" data-mpw="${k}" value="${v}" aria-label="Week ${k + 1}" ${dis}></td>`).join("")}
         <td data-l="Check"><span class="pill mp-chk ${ok ? "s-done" : "s-not"}">${ok ? "Adds up" : (sum > Number(r.total || 0) ? "Over by " : "Short by ") + Math.abs(sum - Number(r.total || 0))}</span></td>
         <td class="c-act">${!r.saved && ed ? `<button class="icon-btn ib bad" type="button" data-mprm="${esc(r.id)}" aria-label="Remove row" title="Remove row">${ico(IC.trash)}</button>` : ""}</td></tr>`;
     }).join("");
     const body = mp.loading ? `<div class="empty"><b>Loading the month…</b></div>` : mp.rows.length ? `<div class="scroll"><table class="mp-table"><thead><tr><th>Category</th><th>Task or product</th><th>Department</th><th>Month target</th><th>Split</th>${head}<th>Check</th><th class="c-act"></th></tr></thead><tbody>${rows}</tbody></table></div>`
-      : `<div class="empty"><b>Nothing planned for ${MP_NAMES[mpMonth(i).m]} yet</b>${ed ? "Add a row for each task or product, set the month target and how it splits." : "Nobody has planned this month yet."}${ed ? `<br><button class="btn primary" type="button" id="mpAdd2">${ico(IC.plus)}Add row</button>` : ""}</div>`;
+      : `<div class="empty"><b>Nothing planned for ${ETH_M[m - 1]} yet</b>${ed ? "Add a row for each task or product, or download the template, fill it in and upload it." : "Nobody has planned this month yet."}${ed ? `<br><button class="btn primary" type="button" id="mpAdd2">${ico(IC.plus)}Add row</button>` : ""}</div>`;
     const note = !ed ? `<div class="banner warn" style="margin:12px 16px 0"><b>View only.</b> Sign in with this unit's PIN to plan its month.</div>` : "";
-    return `${top}<div class="panel">${bar}${note}${body}${mp.dirty ? `<div class="save-bar"><span class="small"><b style="color:var(--accent)">Not created yet.</b> Press Create weekly plans to put these into the weeks.</span></div>` : ""}</div>`;
+    return `${top}<div class="panel">${bar}${note}${ask}${body}<div class="save-bar" id="mpBar" ${mp.dirty ? "" : "hidden"}><span class="small"><b style="color:var(--accent)">Not created yet.</b> Press Create weekly plans to put these into the weeks, or Cancel to drop them.</span><div class="toolbar"><button class="btn" type="button" id="mpCancel2">Cancel</button><button class="btn primary" type="button" id="mpCreate2" ${mp.busy ? "disabled" : ""}>Create weekly plans</button></div></div></div>`;
   }
   function mpRowOf(el){ const tr = el.closest("tr[data-mpr]"); return tr ? { tr, r: state.mp.rows.find(x => x.id === tr.dataset.mpr) } : {}; }
   function mpCheck(tr, r){
@@ -1304,7 +1348,8 @@ applyPlugin(jsPDF); window.jspdf = { jsPDF }; window.XLSX = XLSX;
   }
   function mpInput(el){
     const { tr, r } = mpRowOf(el); if (!r) return false;
-    const f = el.dataset.mpf, w = el.dataset.mpw; state.mp.dirty = true;
+    const f = el.dataset.mpf, w = el.dataset.mpw;
+    if (!state.mp.dirty) { state.mp.dirty = true; ["mpCancel", "mpBar"].forEach(i => { const e = document.getElementById(i); if (e) e.hidden = false; }); const c = document.getElementById("mpCreate"), sb = document.getElementById("mpSubmit"); if (c) c.classList.add("primary"); if (sb) { sb.classList.remove("primary"); sb.disabled = true; } }
     if (w !== undefined) { r.vals[Number(w)] = el.value === "" ? 0 : Number(el.value); r.split = "custom"; tr.querySelector('[data-mpf="split"]').value = "custom"; mpCheck(tr, r); return true; }
     if (f === "total" || f === "split") {
       if (f === "total") r.total = el.value === "" ? 0 : Number(el.value); else r.split = el.value;
@@ -1314,7 +1359,7 @@ applyPlugin(jsPDF); window.jspdf = { jsPDF }; window.XLSX = XLSX;
     r[f] = el.value; return true;
   }
   async function mpCreate(){
-    const mp = state.mp, u = state.editUnit, i = mpCur(), weeks = mpWeeks(i), { y, m } = mpMonth(i), tag = `${y}-${m}`;
+    const mp = state.mp, u = state.editUnit, weeks = mpWeeks(), tag = mpTag();
     if (!u || !canEdit(u)) { toast("Sign in with this unit's PIN first"); return; }
     if (state.dirty) { toast("Save or discard your open plan changes first"); return; }
     const rows = mp.rows.filter(r => (r.title || "").trim());
@@ -1333,7 +1378,7 @@ applyPlugin(jsPDF); window.jspdf = { jsPDF }; window.XLSX = XLSX;
           else if (v > 0) { plan.tasks.push({ id: uid(), mpId: r.id, mpMonth: tag, title: r.title.trim(), outcome: "", category: r.category, target: v, measure: r.category === "Revenue" ? "ETB" : "", actual: "", dept: r.dept || "", owner: "", due: weekEndOf(w), priority: "Medium", status: "Not started", pct: 0, notes: "", kind: "Task", depUnit: "", dep: "", ev: [] }); touched = true; made++; }
         });
         if (!touched) continue;
-        const res = await persistPlan(u, w, latest, plan, { latest, source: "Monthly plan", action: "import", prefix: `Monthly plan ${MP_NAMES[m]}: ` });
+        const res = await persistPlan(u, w, latest, plan, { latest, source: "Monthly plan", action: "import", prefix: `Monthly plan ${ETH_M[mpCur() - 1]}: ` });
         if (res.error) throw Object.assign(new Error(res.error), { code: res.error });
         req += res.requested || 0;
       }
@@ -1341,6 +1386,74 @@ applyPlugin(jsPDF); window.jspdf = { jsPDF }; window.XLSX = XLSX;
       mp.key = ""; mp.dirty = false;
     } catch (e) { toast("Stopped part-way: " + errText(e) + " Check the weeks and press Create again."); }
     mp.busy = false; loadDraft(); render();
+  }
+  async function mpSubmit(){
+    const mp = state.mp, u = state.editUnit; if (!u || !canEdit(u)) { toast("Sign in with this unit's PIN first"); return; }
+    if (mp.dirty) { toast("Create the weekly plans first"); return; }
+    const n = mp.rows.filter(r => r.saved).length; if (!n) { toast("Nothing created yet"); return; }
+    const weeks = mpWeeks(), label = `${ETH_M[mpCur() - 1]} ${mp.Y} EC`;
+    await sendSubmit(u, weeks[0], "month", mpTag(), n, `Monthly plan ${label} submitted for approval (${n} row${n === 1 ? "" : "s"})`);
+  }
+  const normT = x => String(x || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+  async function mpTemplate(){
+    const u = state.editUnit; if (!u || isAll()) { toast("Choose a unit first"); return; }
+    let ExcelJS; try { ExcelJS = (await import("exceljs")).default; } catch (e) { toast("The Excel tool did not load. Reload the page and try again."); return; }
+    const mp = state.mp, m = mpCur(), Y = mp.Y, weeks = mpWeeks(), unit = unitOf(u), depts = unit.departments || [];
+    if (!weeks.length) { toast("This month has no Saturday weeks yet"); return; }
+    const wb = new ExcelJS.Workbook(), ws = wb.addWorksheet("Monthly plan", { views: [{ state: "frozen", ySplit: 1, xSplit: 2 }] }), info = wb.addWorksheet("Info"), lists = wb.addWorksheet("Lists", { state: "veryHidden" });
+    const heads = ["Category", "Task or product", "Department", "Month target", "Split", ...weeks.map(w => `${weekShort(w)} (${ethShort(w)})`), "Check"];
+    ws.columns = heads.map((h, i) => ({ header: h, key: "c" + i, width: i === 1 ? 44 : i === 0 || i === 2 ? 18 : i === 4 ? 14 : 18 }));
+    const hr = ws.getRow(1); hr.font = { bold: true, color: { argb: "FF2A2208" } }; hr.alignment = { vertical: "middle", wrapText: true }; hr.height = 34;
+    hr.eachCell(c => { c.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFF5C518" } }; });
+    const splitLbl = k => (MP_SPLIT.find(x => x[0] === k) || MP_SPLIT[0])[1];
+    mp.rows.forEach(r => ws.addRow([r.category === "Revenue" ? "Financial" : "Operational", r.title, r.dept, r.total || "", splitLbl(r.split), ...r.vals]));
+    const LAST = Math.max(40, mp.rows.length + 25), W0 = 6, W1 = 5 + weeks.length, L1 = ws.getColumn(W0).letter, L2 = ws.getColumn(W1).letter;
+    ["Operational", "Financial"].forEach((x, i) => { lists.getCell(i + 1, 1).value = x; }); MP_SPLIT.forEach((x, i) => { lists.getCell(i + 1, 2).value = x[1]; }); (depts.length ? depts : [""]).forEach((d, i) => { lists.getCell(i + 1, 3).value = d; });
+    wb.definedNames.add("Lists!$A$1:$A$2", "L_Cat"); wb.definedNames.add("Lists!$B$1:$B$4", "L_Split"); wb.definedNames.add(`Lists!$C$1:$C$${Math.max(1, depts.length)}`, "L_Dept");
+    for (let r = 2; r <= LAST; r++) {
+      ws.getCell(r, 1).dataValidation = { type: "list", allowBlank: true, formulae: ["L_Cat"], showErrorMessage: true, error: "Pick Operational or Financial." };
+      ws.getCell(r, 3).dataValidation = { type: "list", allowBlank: true, formulae: ["L_Dept"], showErrorMessage: true, error: "Pick a department of this unit." };
+      ws.getCell(r, 5).dataValidation = { type: "list", allowBlank: true, formulae: ["L_Split"], showErrorMessage: true, error: "Pick Evenly, More early, More late or Custom." };
+      ws.getCell(r, W1 + 1).value = { formula: `IF(B${r}="","",IF(SUM(${L1}${r}:${L2}${r})=D${r},"Adds up","Check"))` };
+    }
+    [["Unit", u], ["Unit name", unit.name], ["Month", `${Y}-${m}`], ["Month name", `${ETH_M[m - 1]} ${Y} EC`], [], ["How to fill this in"],
+      ["1", "One row per task or product. Category is Operational or Financial (revenue)."],
+      ["2", "Month target is the total for the month. Split decides how it is shared over the weeks, and the week cells can be filled in by you instead."],
+      ["3", "If you leave the week cells empty, they are worked out from the month target and the split. If you fill them in, they must add up to the month target."],
+      ["4", "Do not change the header row or the Unit and Month cells on this sheet. Upload the file under Plans, Monthly plan, Upload Excel."],
+      ["5", "Uploading only fills the table on screen. Nothing reaches the weekly plans until you press Create weekly plans."]].forEach(r => info.addRow(r));
+    info.getColumn(1).width = 16; info.getColumn(2).width = 100; info.getRow(6).font = { bold: true };
+    const buf = await wb.xlsx.writeBuffer();
+    await save(`Monthly plan ${safeName(unit.name)} ${ETH_M[m - 1]} ${Y}.xlsx`, buf, "Template saved");
+  }
+  async function mpUpload(file){
+    const mp = state.mp, u = state.editUnit; if (!u || isAll()) { toast("Choose a unit first"); return; }
+    try {
+      const wb = XLSX.read(await file.arrayBuffer(), { type: "array" });
+      const info = wb.SheetNames.find(n => /^info$/i.test(n));
+      if (info) {
+        const ir = XLSX.utils.sheet_to_json(wb.Sheets[info], { header: 1, raw: true, defval: "" }), g = k => { const r = ir.find(x => String(x[0]).toLowerCase() === k); return r ? String(r[1]).trim() : ""; };
+        if ((g("unit") && g("unit") !== u) || (g("month") && g("month") !== mpTag())) { toast(`This file is for ${g("unit name") || g("unit")}, ${g("month name") || g("month")}. Open that unit and month first.`); return; }
+      }
+      const sn = wb.SheetNames.find(n => /monthly plan/i.test(n)) || wb.SheetNames[0];
+      const rows = XLSX.utils.sheet_to_json(wb.Sheets[sn], { header: 1, raw: true, defval: "" }), n = mpWeeks().length, depts = unitOf(u).departments || [];
+      const num = v => { if (v === "" || v == null) return null; const x = Number(String(v).replace(/,/g, "")); return isFinite(x) ? x : null; };
+      let added = 0, updated = 0, warn = 0;
+      for (let i = 1; i < rows.length; i++) {
+        const x = rows[i], title = String(x[1] || "").trim(); if (!title) continue;
+        const cat = /fin|rev/i.test(String(x[0])) ? "Revenue" : "Operational";
+        let dept = String(x[2] || "").trim(); const dm = depts.find(d => d.toLowerCase() === dept.toLowerCase()); if (dept && !dm) warn++; dept = dm || "";
+        const sp = String(x[4] || ""), splitIn = /early|front/i.test(sp) ? "front" : /late|back/i.test(sp) ? "back" : /custom/i.test(sp) ? "custom" : "even";
+        const wk = x.slice(5, 5 + n).map(num); let total = num(x[3]), vals, split;
+        if (wk.some(v => v !== null)) { vals = wk.map(v => v || 0); const sum = vals.reduce((a, b) => a + b, 0); if (total === null) total = sum; split = splitIn === "custom" ? "custom" : (splitN(total, n, splitIn).join() === vals.join() ? splitIn : "custom"); }
+        else { total = total || 0; split = splitIn === "custom" ? "even" : splitIn; vals = splitN(total, n, split); }
+        const ex = mp.rows.find(r => normT(r.title) === normT(title));
+        if (ex) { Object.assign(ex, { category: cat, dept: dept || ex.dept, total, split, vals }); updated++; }
+        else { mp.rows.push({ id: "mp_" + uid(), category: cat, title, dept, vals, total, split, saved: false }); added++; }
+      }
+      if (!added && !updated) { toast("No rows found. Use the template and keep its header row."); return; }
+      mp.dirty = true; toast(`Loaded ${added + updated} row${added + updated === 1 ? "" : "s"} from the file${warn ? ` · ${warn} unknown department${warn === 1 ? "" : "s"} left blank` : ""}. Check them, then press Create weekly plans.`); render();
+    } catch (e) { toast("Could not read that file. Use the template from this page."); }
   }
 
   // ---------- events ----------
@@ -1368,8 +1481,17 @@ applyPlugin(jsPDF); window.jspdf = { jsPDF }; window.XLSX = XLSX;
     if (t.id === "pfClear") { state.pf = { q: "", pri: "", st: "", dep: "", lvl: pf().lvl, kind: pf().kind }; render(); return; }
     if (t.dataset.lvl) { pf().lvl = t.dataset.lvl; render(); return; }
     if (t.dataset.kind) { pf().kind = t.dataset.kind; render(); return; }
-    if (t.dataset.mpm !== undefined) { if (state.mp.dirty) { toast("Create the weekly plans or reload first"); return; } state.mp.i = Number(t.dataset.mpm); state.mp.key = ""; render(); return; }
-    if (t.id === "mpAdd" || t.id === "mpAdd2") { const n = mpWeeks(mpCur()).length; state.mp.rows.push({ id: "mp_" + uid(), category: "Operational", title: "", dept: "", vals: Array(n).fill(0), total: 0, split: "even", saved: false }); state.mp.dirty = true; render(); const inp = document.querySelector("tr[data-mpr]:last-child [data-mpf=title]"); inp && inp.focus(); return; }
+    if (t.dataset.mpm !== undefined) { const mm = Number(t.dataset.mpm); mpGuard("Changing the month", () => { state.mp.m = mm; state.mp.key = ""; state.mp.dirty = false; render(); }); return; }
+    if (t.id === "mpCancel" || t.id === "mpCancel2") { state.mp.key = ""; state.mp.dirty = false; state.mp.ask = null; render(); toast("Cancelled. The rows you had not created were dropped"); return; }
+    if (t.id === "mpAskYes") { const a = state.mp.ask; state.mp.ask = null; state.mp.dirty = false; a && a.fn(); return; }
+    if (t.id === "mpAskNo") { state.mp.ask = null; render(); return; }
+    if (t.id === "mpCreate2") { mpCreate(); return; }
+    if (t.id === "mpSubmit") { mpSubmit(); return; }
+    if (t.id === "mpTpl") { mpTemplate(); return; }
+    if (t.id === "submitPlan") { submitWeek(); return; }
+    if (t.id === "tplTop") { state.impPrefill = true; downloadTemplate(); return; }
+    if (t.dataset.reviewSub) { reviewSubmission(t.dataset.reviewSub); return; }
+    if (t.id === "mpAdd" || t.id === "mpAdd2") { const n = mpWeeks().length; state.mp.rows.push({ id: "mp_" + uid(), category: "Operational", title: "", dept: "", vals: Array(n).fill(0), total: 0, split: "even", saved: false }); state.mp.dirty = true; render(); const inp = document.querySelector("tr[data-mpr]:last-child [data-mpf=title]"); inp && inp.focus(); return; }
     if (t.dataset.mprm) { state.mp.rows = state.mp.rows.filter(r => r.id !== t.dataset.mprm); render(); return; }
     if (t.id === "mpCreate") { mpCreate(); return; }
     if (t.dataset.tgl) { const k = t.dataset.tgl; state.expanded.has(k) ? state.expanded.delete(k) : state.expanded.add(k); render(); return; }
@@ -1482,6 +1604,7 @@ applyPlugin(jsPDF); window.jspdf = { jsPDF }; window.XLSX = XLSX;
     if (el.id === "inv-unit") { $("#inv-dept").innerHTML = DEPT_OPTS(el.value, []); return; }
     if (el.id==="unitPick") {
       if (state.dirty) { el.value = state.editUnit || ""; toast("Save or discard your changes first"); return; }
+      if (state.tab === "mplan" && state.mp.dirty) { const v = el.value; el.value = state.editUnit || ""; mpGuard("Changing the unit", () => { state.mp.key = ""; openUnit(v, true); }); return; }
       openUnit(el.value, true);
     } else if (el.id==="fUnit") { state.filter.unit = el.value; state.filter.dept = ""; render(); }
     else if (el.id==="fDept") { state.filter.dept = el.value; render(); }
@@ -1499,6 +1622,8 @@ applyPlugin(jsPDF); window.jspdf = { jsPDF }; window.XLSX = XLSX;
     else if (el.id==="impUnit") { state.impUnit = el.value; state.impDefaultUnit = el.value ? unitName(el.value) : ""; render(); }
     else if (el.id==="impPrefill") { state.impPrefill = el.checked; }
     else if (el.id==="impFile") { if (el.files && el.files[0]) readImportFile(el.files[0]); }
+    else if (el.id==="impFileTop") { const f = el.files && el.files[0]; el.value = ""; if (f) { state.impUnit = state.editUnit || state.impUnit; state.impDefaultUnit = state.editUnit ? unitName(state.editUnit) : ""; readImportFile(f).then(() => { const d = document.getElementById("impDet"); d && d.scrollIntoView({ behavior: "smooth", block: "start" }); }); } }
+    else if (el.id==="mpFile") { const f = el.files && el.files[0]; el.value = ""; if (f) mpUpload(f); }
     else if (el.id==="impMode") { state.imp.mode = el.value; state.imp.needConfirm = false; state.imp.confirmed = false; render(); }
     else if (el.id==="impDepts") { state.imp.newDepts = el.checked; }
     else if (el.id==="aUnit") { state.actFilter.unit = el.value; render(); }
@@ -1654,9 +1779,6 @@ applyPlugin(jsPDF); window.jspdf = { jsPDF }; window.XLSX = XLSX;
     const kidRows = kids.map(k => `<tr><td>${refChip(k, u) || '<span class="muted small">…</span>'}</td><td>${esc(k.title) || '<span class="muted">(no title)</span>'}</td><td class="small">${esc(k.owner || "")}</td><td><span class="pill ${statusClass(k.status)}">${esc(k.status || "No status")}</span></td><td><div class="prog"><div class="bar"><i style="width:${k.status === "Done" ? 100 : (k.pct || 0)}%"></i></div><span class="num">${k.status === "Done" ? 100 : (k.pct || 0)}%</span></div></td><td class="small">${ed && !lk ? `<input type="number" class="w-in" min="0.1" step="any" data-pk="${esc(k.id)}" value="${weightOf(k)}" aria-label="Weight of ${esc(k.ref || "task")}">` : weightOf(k)}</td></tr>`).join("");
     const ev = (t.ev || []).map((e, k) => `<div class="ev-line"><span>📎 ${esc(e.name)} <span class="small muted">${fmtSize(e.size || 0)}</span></span><span class="toolbar"><button class="btn small" type="button" data-pev="${k}">${canPreview(e.name) ? "View" : "Open"}</button><button class="btn small" type="button" data-pdl="${k}">Download</button>${ed ? `<button class="icon-btn" type="button" data-pevdel="${k}" aria-label="Remove ${esc(e.name)}">×</button>` : ""}</span></div>`).join("");
     const canSub = ed && t.ref && !t.parent;
-    const showTgt = hasTgt(t) || t.category === "Revenue";
-    const tgtF = fld("Target", `<input type="number" step="any" id="p-target" data-pf="target" value="${t.target ?? ""}" ${dis}>`) + fld("Target unit", `<input type="text" id="p-measure" data-pf="measure" value="${esc(t.measure || "")}" maxlength="20" placeholder="ETB, %, units" ${dis}>`);
-    const actF = fld("Actual so far", `<input type="number" step="any" id="p-actual" data-pf="actual" value="${t.actual ?? ""}" ${dis}>`);
     const locked = lk ? `<div class="small muted">🔒 Saved task: the title, outcome, type, department, due date and priority are fixed. Use <b>Request change</b> in the table to ask Group Strategy.</div>` : "";
     const pnState = state.panel, firstShow = !pnState.shown; pnState.shown = true;
     root.innerHTML = `<div class="scrim" id="pnOverlay"></div><aside class="side task-panel${firstShow ? " anim" : ""}" role="dialog" aria-modal="true" aria-label="Task ${esc(t.ref || "")}">
@@ -1668,20 +1790,26 @@ applyPlugin(jsPDF); window.jspdf = { jsPDF }; window.XLSX = XLSX;
         <div class="pgrid2">
           ${fld("Status", `<select id="p-st" data-pf="status" ${dis}><option value="">No status</option>${STATUSES.map(x => `<option ${sel(x === t.status)}>${x}</option>`).join("")}</select>`)}
           ${fld("% complete", `<input type="number" id="p-pct" data-pf="pct" min="0" max="100" step="5" value="${roll ? roll.pct : (t.pct ?? "")}" ${dis} ${auto ? "readonly" : ""}>`)}
+          ${fld("Department", `<select id="p-dept" data-pf="dept" ${ldis}>${deptOptions(u, t).replace(/<option value="__new__">[^<]*<\/option>/, "")}</select>`)}
+          ${fld("Priority", `<select id="p-pri" data-pf="priority" ${ldis}><option value="">Not set</option>${PRIORITIES.map(p => `<option ${sel(p === t.priority)}>${p}</option>`).join("")}</select>`)}
         </div>
-        ${showTgt ? `<div class="pgrid2">${tgtF}${actF}</div>` : ""}
+        <div class="pgrid3">
+          ${fld("Target", `<input type="number" step="any" id="p-target" data-pf="target" value="${t.target ?? ""}" ${dis}>`)}
+          ${fld("Actual", `<input type="number" step="any" id="p-actual" data-pf="actual" value="${t.actual ?? ""}" ${dis}>`)}
+          ${fld("Unit", `<input type="text" id="p-measure" data-pf="measure" value="${esc(t.measure || "")}" maxlength="20" placeholder="ETB, %" ${dis}>`)}
+        </div>
+        <div class="pf"><span class="small muted">Evidence</span>
+          ${ev || '<div class="small muted">No files attached.</div>'}
+          ${ed ? `<div><label class="btn small ev-add">📎 Attach<input type="file" multiple accept="${EVIDENCE.accept}" id="pnFile" hidden></label></div>` : ""}</div>
         ${fld("Note", `<textarea class="grow" rows="2" id="p-notes" data-pf="notes" placeholder="One line on where it stands" ${dis}>${esc(t.notes || "")}</textarea>`)}
-        <details class="more-d" data-pd="more" ${pnState.more ? "open" : ""}><summary>More details <span class="small muted">owner, due date, department, target, evidence</span></summary>
+        <details class="more-d" data-pd="more" ${pnState.more ? "open" : ""}><summary>More details <span class="small muted">outcome, owner, due date, type, links</span></summary>
           <div class="d-in">
             ${fld("Expected outcome", ed && !lk ? `<textarea class="grow" rows="2" id="p-outcome" data-pf="outcome">${esc(t.outcome || "")}</textarea>` : `<div class="p-val">${esc(t.outcome || "–")}</div>`)}
             <div class="pgrid2">
               ${fld("Owner", `<input type="text" id="p-owner" data-pf="owner" value="${esc(t.owner)}" ${dis}>`)}
               ${fld("Due", `<input type="date" id="p-due" data-pf="due" value="${esc(t.due)}" ${ldis}>`)}
-              ${fld("Department", `<select id="p-dept" data-pf="dept" ${ldis}>${deptOptions(u, t).replace(/<option value="__new__">[^<]*<\/option>/, "")}</select>`)}
-              ${fld("Priority", `<select id="p-pri" data-pf="priority" ${ldis}><option value="">Not set</option>${PRIORITIES.map(p => `<option ${sel(p === t.priority)}>${p}</option>`).join("")}</select>`)}
               ${fld("Type", `<select id="p-kind" data-pf="kind" ${ldis}>${KINDS.map(k => `<option ${sel(k === (t.kind || "Task"))}>${k}</option>`).join("")}</select>`)}
               ${fld("Category", `<select id="p-cat" data-pf="category" ${dis}><option value="">–</option>${CATEGORIES.map(k => `<option value="${k}" ${sel(k === t.category)}>${catLabel(k)}</option>`).join("")}</select>`)}
-              ${showTgt ? "" : tgtF + actF}
               ${fld("Part of deliverable", `<select id="p-parent" data-pf="parent" ${ed && !lk && !kids.length ? "" : "disabled"}>${parentOpts}</select>`)}
               ${fld("Weight in it", `<input type="number" min="0.1" step="any" id="p-weight" data-pf="weight" value="${weightOf(t)}" ${ed && !lk ? "" : "disabled"} title="Used when this task is part of a deliverable. Default 1 = equal share.">`)}
               ${fld("Depends on (unit)", `<select id="p-depu" data-pf="depUnit" ${dis}><option value="">–</option>${others.map(x => `<option value="${esc(x.id)}" ${sel(x.id === t.depUnit)}>${esc(x.name)}</option>`).join("")}</select>`)}
@@ -1690,9 +1818,6 @@ applyPlugin(jsPDF); window.jspdf = { jsPDF }; window.XLSX = XLSX;
             </div>
             ${kids.length ? `<h3 class="p-h">Tasks under this deliverable <span class="small muted">· ${roll ? roll.pct + "% from " + roll.total + " task" + (roll.total === 1 ? "" : "s") + ", " + roll.done + " done" : ""}</span></h3><div class="scroll"><table><thead><tr><th>Ref</th><th>Task</th><th>Owner</th><th>Status</th><th>Done</th><th>Weight</th></tr></thead><tbody>${kidRows}</tbody></table></div>` : ""}
             ${canSub ? `<div><button class="btn" id="pnAddKid" type="button">＋ Add a task under this</button></div>` : ""}
-            <h3 class="p-h">Evidence</h3>
-            ${ev || '<div class="small muted">No files attached.</div>'}
-            ${ed ? `<div><label class="btn small ev-add">📎 Attach<input type="file" multiple accept="${EVIDENCE.accept}" id="pnFile" hidden></label></div>` : ""}
           </div>
         </details>
         ${t.ref ? `<details class="more-d" data-pd="disc" ${pnState.disc ? "open" : ""}><summary>Discussion and feedback ${(pnState.comments && pnState.comments.length) ? `<span class="pill s-none">${pnState.comments.length}</span>` : ""}</summary><div class="d-in">${fbSection(u, t)}${threadSection(u, t)}</div></details>` : ""}

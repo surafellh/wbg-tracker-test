@@ -667,3 +667,10 @@ input.fin-in{width:110px;text-align:right}
 .edit-table td select{min-width:96px}
 .edit-table td.c-pri{min-width:112px}.edit-table td.c-dept{min-width:130px}
 .tg2 input[type=text]{width:64px}
+.pgrid3{display:grid;grid-template-columns:1fr 1fr 0.8fr;gap:10px}
+.eth-s{font-size:10px;font-weight:500;letter-spacing:0;text-transform:none;color:var(--muted);margin-top:1px}
+.score-card .stk{display:flex;height:12px;border-radius:7px;overflow:hidden;background:var(--track);margin-bottom:8px}
+.score-card .stk i{display:block;height:100%}
+.score-card .leg{display:flex;flex-wrap:wrap;gap:6px 16px;font-size:12.5px;color:var(--muted)}
+.score-card .leg .sw{display:inline-block;width:9px;height:9px;border-radius:3px;margin-right:6px}
+.save-bar[hidden],.btn[hidden]{display:none!important}
