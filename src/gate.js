@@ -20,16 +20,44 @@ export function startGate(api, current) {
 
     async function loadUnits() { if (!units) { try { units = await api.publicUnits(); } catch (e) { units = []; } } return units; }
 
+    const stayBox = (checked = true) => `<label class="gate-stay"><input type="checkbox" id="gStay" ${checked ? "checked" : ""}> Stay signed in on this device</label>`;
+    const stay = () => { const b = root.querySelector("#gStay"); return b ? b.checked : true; };
+    const personaBox = () => local ? `<div class="gate-local"><div class="small muted">Test mode: pick a person to sign in as, no email is sent.</div><select id="gPersona"><option value="">Choose a person…</option>${api.localPeople().map((p) => `<option value="${esc(p.id)}">${esc(p.name || p.email)} · ${esc(p.role)}</option>`).join("")}</select></div>` : "";
+    const wirePersona = () => { const ps = root.querySelector("#gPersona"); if (ps) ps.onchange = async () => { if (!ps.value) return; const p = api.localSignIn(ps.value); await after(p); }; };
+
+    // Main screen: email and password
     function screenEmail(prefill) {
-      const persona = local ? `<div class="gate-local"><div class="small muted">Test mode: pick a person to sign in as, no email is sent.</div><select id="gPersona"><option value="">Choose a person…</option>${api.localPeople().map((p) => `<option value="${esc(p.id)}">${esc(p.name || p.email)} · ${esc(p.role)}</option>`).join("")}</select></div>` : "";
-      shell(`<p class="muted">Sign in with your company email. We send a one-time code. No password.</p>
-        <form id="gForm"><label for="gEmail">Company email</label><input id="gEmail" type="email" autocomplete="email" placeholder="name@company.com" value="${esc(prefill || "")}" required>
-        <div class="gate-err small" role="alert"></div><button class="btn primary" type="submit">Send code</button></form>
-        <div class="small muted" style="margin-top:14px">No company email, or not on the list? <a href="#" id="gReq">Request access</a></div>${persona}`);
-      const inp = root.querySelector("#gEmail"); inp.focus();
+      shell(`<p class="muted">Sign in with your email and password.</p>
+        <form id="gForm"><label for="gEmail">Email</label><input id="gEmail" type="email" autocomplete="username" placeholder="name@company.com" value="${esc(prefill || "")}" required>
+        <label for="gPass">Password</label><input id="gPass" type="password" autocomplete="current-password" required>
+        ${stayBox()}
+        <div class="gate-err small" role="alert"></div><button class="btn primary" type="submit">Sign in</button></form>
+        <div class="small" style="margin-top:14px"><a href="#" id="gCode">First time, or forgot your password? Get a code by email</a></div>
+        <div class="small muted" style="margin-top:8px">No access yet? <a href="#" id="gReq">Request access</a></div>${personaBox()}`);
+      const inp = root.querySelector("#gEmail"); (prefill ? root.querySelector("#gPass") : inp).focus();
       root.querySelector("#gReq").onclick = (e) => { e.preventDefault(); screenRequest(inp.value); };
-      const ps = root.querySelector("#gPersona");
-      if (ps) ps.onchange = async () => { if (!ps.value) return; const p = api.localSignIn(ps.value); await after(p); };
+      root.querySelector("#gCode").onclick = (e) => { e.preventDefault(); screenCodeStart(inp.value); };
+      wirePersona();
+      root.querySelector("#gForm").onsubmit = async (e) => {
+        e.preventDefault(); const b = e.submitter; busy(b, true, "Signing in…"); err("");
+        email = inp.value.trim().toLowerCase();
+        let r; try { r = await api.signInPassword(email, root.querySelector("#gPass").value, stay()); } catch (x) { r = { error: "network" }; }
+        busy(b, false, "Sign in");
+        if (r.error === "network") return err("Could not reach the server. Check your connection.");
+        if (r.error) return err(/rate|too many/i.test(r.error) ? "Too many tries. Wait a few minutes and try again." : "That email or password is not right. If you have not set a password yet, get a code by email.");
+        await after(r.profile);
+      };
+    }
+
+    // Code route: first time, or forgot password
+    function screenCodeStart(prefill) {
+      shell(`<p class="muted">We send a one-time code to your email. After you enter it you choose a password for next time.</p>
+        <form id="gForm"><label for="gEmail">Email</label><input id="gEmail" type="email" autocomplete="email" placeholder="name@company.com" value="${esc(prefill || "")}" required>
+        <div class="gate-err small" role="alert"></div><button class="btn primary" type="submit">Send code</button></form>
+        <div class="small" style="margin-top:14px"><a href="#" id="gBack">Back to sign in</a> · <a href="#" id="gReq">Request access</a></div>`);
+      const inp = root.querySelector("#gEmail"); inp.focus();
+      root.querySelector("#gBack").onclick = (e) => { e.preventDefault(); screenEmail(inp.value); };
+      root.querySelector("#gReq").onclick = (e) => { e.preventDefault(); screenRequest(inp.value); };
       root.querySelector("#gForm").onsubmit = async (e) => {
         e.preventDefault(); email = inp.value.trim().toLowerCase(); const b = e.submitter; busy(b, true, "Checking…"); err("");
         let ck; try { ck = await api.checkEmail(email); } catch (x) { ck = { error: "network" }; }
@@ -45,16 +73,41 @@ export function startGate(api, current) {
     function screenCode() {
       shell(`<p>We sent a code to <b>${esc(email)}</b>. Enter it below. It can take a minute to arrive; check spam.</p>
         <form id="gForm"><label for="gCode">One-time code</label><input id="gCode" inputmode="numeric" autocomplete="one-time-code" maxlength="10" placeholder="Code" required>
-        <div class="gate-err small" role="alert"></div><button class="btn primary" type="submit">Sign in</button></form>
+        ${stayBox()}
+        <div class="gate-err small" role="alert"></div><button class="btn primary" type="submit">Continue</button></form>
         <div class="small" style="margin-top:14px"><a href="#" id="gResend">Send a new code</a> · <a href="#" id="gBack">Use a different email</a></div>${local ? '<div class="small muted" style="margin-top:8px">Test mode: any code works.</div>' : ""}`);
       const inp = root.querySelector("#gCode"); inp.focus();
-      root.querySelector("#gBack").onclick = (e) => { e.preventDefault(); screenEmail(); };
+      root.querySelector("#gBack").onclick = (e) => { e.preventDefault(); screenCodeStart(email); };
       root.querySelector("#gResend").onclick = async (e) => { e.preventDefault(); const r = await api.sendCode(email); err(r.error ? "Could not send: " + r.error : "A new code was sent."); };
       root.querySelector("#gForm").onsubmit = async (e) => {
         e.preventDefault(); const b = e.submitter; busy(b, true, "Checking…"); err("");
-        const r = await api.verifyCode(email, inp.value.trim()); busy(b, false, "Sign in");
+        api.setRemember(stay());
+        const r = await api.verifyCode(email, inp.value.trim()); busy(b, false, "Continue");
         if (r.error) return err("That code is not right or has expired. Check it or send a new one.");
+        // Always ask for a password after a code: either it is the first time, or the person forgot it
+        if (r.profile && r.profile.status === "active") return screenPassword(r.profile);
         await after(r.profile);
+      };
+    }
+
+    // Choose a password (after a code sign-in)
+    async function screenPassword(p) {
+      let has = false; try { has = await api.hasPassword(); } catch (x) {}
+      shell(`<p><b>${has ? "Choose a new password" : "Create your password"}</b></p><p class="small muted">Use it with your email next time, so you do not need a code. At least 10 characters; a short sentence is a good password.</p>
+        <form id="gForm"><label for="pw1">New password</label><input id="pw1" type="password" autocomplete="new-password" required minlength="10">
+        <label for="pw2">Repeat it</label><input id="pw2" type="password" autocomplete="new-password" required minlength="10">
+        <div class="gate-err small" role="alert"></div><button class="btn primary" type="submit">Save password</button></form>
+        <div class="small" style="margin-top:14px"><a href="#" id="gSkip">Skip for now</a> (you will use a code next time)</div>`);
+      root.querySelector("#pw1").focus();
+      root.querySelector("#gSkip").onclick = async (e) => { e.preventDefault(); await after(p); };
+      root.querySelector("#gForm").onsubmit = async (e) => {
+        e.preventDefault(); const a = root.querySelector("#pw1").value, c = root.querySelector("#pw2").value, b = e.submitter;
+        if (a.length < 10) return err("Use at least 10 characters.");
+        if (a !== c) return err("The two passwords are not the same.");
+        if (/^(.)\1+$/.test(a) || /^(1234567890|password12|qwertyuiop)/i.test(a)) return err("Choose something less guessable.");
+        busy(b, true, "Saving…"); const r = await api.setPassword(a); busy(b, false, "Save password");
+        if (r.error) return err(/same|different/i.test(r.error) ? "Choose a password you have not used before." : "Could not save the password: " + r.error);
+        await after(p);
       };
     }
 

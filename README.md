@@ -147,13 +147,14 @@ supabase/upgrade-3-reminders.sql optional Telegram reminders and weekly snapshot
 supabase/upgrade-4-v3-stage1.sql v3: Saturday weeks, Business support, Feedback, Corrective actions
 supabase/upgrade-5-stage2-login.sql company-email sign-in, roles, row level security
 supabase/upgrade-6-daily-backup.sql nightly backup
+supabase/upgrade-7-passwords.sql   password reset for Group Strategy
 supabase/seed.sql, seed-support.sql starting data
 .env.example
 ```
 
 ## Stage 2: company-email sign-in, roles, audit, data quality
 
-**What changes.** Unit PINs and the approver code are gone. People sign in with their company email and a one-time code. Roles are managed in the new **People** tab (Group Strategy only).
+**What changes.** Unit PINs and the approver code are gone. People sign in with email and password. The first time (or after a forgotten password) they get a one-time code by email and then choose a password. "Stay signed in on this device" keeps the sign-in after the browser closes. Roles are managed in the new **People** tab (Group Strategy only).
 
 | Role | Sees | Changes |
 |---|---|---|
@@ -180,3 +181,8 @@ Allowed email domains (editable in People): wagwagoelectric.com, geezinstitute.c
 5. **After upgrade-5 the old site can no longer save.** Do this on the test project only until you are ready to go live.
 
 Test mode (no Supabase keys): the sign-in page offers a list of test people, including a first-time newcomer.
+
+**Passwords (upgrade-7)**
+- Run `supabase/upgrade-7-passwords.sql` after upgrade-5 (adds "Reset password" for Group Strategy in the People tab).
+- Supabase: Authentication > Sign In / Providers > Email > set Minimum password length to 10.
+- The Confirm sign up and Magic Link email templates must both contain `{{ .Token }}` (new people get the first, returning people the second).

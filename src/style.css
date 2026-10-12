@@ -308,3 +308,5 @@ body.gated > *:not(#gateRoot):not(script){display:none!important}
 .tgt{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-top:6px}
 .tgt input[type=number]{width:84px}.tgt input[type=text]{width:130px}
 .tgt label{display:inline-flex;gap:4px;align-items:center}
+.gate-stay{display:flex;gap:8px;align-items:center;margin:12px 0 0;font-size:.85rem;color:var(--muted)}
+.gate .gate-stay input{width:auto}
