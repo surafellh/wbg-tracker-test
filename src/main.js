@@ -648,40 +648,77 @@ applyPlugin(jsPDF); window.jspdf = { jsPDF }; window.XLSX = XLSX;
   const sel = (on) => on ? "selected" : "";
   const hasTgt = t => t.target !== "" && t.target != null && isFinite(Number(t.target));
   const tgtHtml = (t, dis) => `<div class="tgt small muted"><label>Target <input type="number" step="any" id="t-tg-${t.id}" data-f="target" value="${t.target ?? ""}" placeholder="–" aria-label="Target" ${dis}></label><input type="text" id="t-ms-${t.id}" data-f="measure" value="${esc(t.measure || "")}" placeholder="unit (ETB, %, units)" aria-label="Target unit" maxlength="20" ${dis}><label><input type="checkbox" id="t-lw-${t.id}" data-f="lower" ${t.lower ? "checked" : ""} ${dis}> lower is better</label></div>`;
-  function taskRowHtml(u, t, i){
-    const key = `${u}|${i}`, ed = rowEd(u, t), lk = isLocked(u, t), dis = ed ? "" : "disabled", ldis = (!ed || lk) ? "disabled" : "";
+  // ---------- Plans page: icons, due-date wording, lean task rows ----------
+  const ico = d => `<svg class="ic" viewBox="0 0 24 24" aria-hidden="true">${d}</svg>`;
+  const IC = {
+    search: '<circle cx="11" cy="11" r="6.5"/><path d="M16 16l4.5 4.5"/>', plus: '<path d="M12 5v14M5 12h14"/>',
+    trash: '<path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13"/>', open: '<path d="M14 4h6v6M20 4l-9 9M10 6H5v13h13v-5"/>',
+    down: '<path d="M12 4v11M7 11l5 5 5-5M5 20h14"/>', clock: '<circle cx="12" cy="12" r="8"/><path d="M12 8v4l3 2"/>',
+    users: '<circle cx="9" cy="8" r="3"/><path d="M3 20c0-3.5 3-6 6-6s6 2.5 6 6M16 5a3 3 0 010 6M18 14c2 .8 3 3 3 6"/>',
+    fwd: '<path d="M4 12h14M13 6l6 6-6 6"/>', more: '<circle cx="5" cy="12" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="19" cy="12" r="1.5"/>',
+    lock: '<rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 018 0v3"/>', note: '<path d="M5 4h14v12l-4 4H5zM15 20v-4h4"/>',
+    clip: '<path d="M20 11l-8 8a5 5 0 01-7-7l9-9a3.5 3.5 0 015 5l-9 9a2 2 0 01-3-3l8-8"/>', pen: '<path d="M4 20l1-4L16 5l3 3L8 19zM14 7l3 3"/>',
+    link: '<path d="M10 14a4 4 0 005.7 0l3-3a4 4 0 00-5.7-5.7l-1 1M14 10a4 4 0 00-5.7 0l-3 3a4 4 0 005.7 5.7l1-1"/>', filter: '<path d="M3 5h18l-7 8v6l-4 2v-8z"/>',
+    save: '<path d="M5 4h11l3 3v13H5zM8 4v5h7V4M8 20v-6h8v6"/>'
+  };
+  const dueInfo = t => {
+    if (!t.due) return { txt: "No date", cls: "mut", sub: "" };
+    const n = Math.round((Date.parse(t.due) - Date.parse(todayIso)) / 864e5);
+    if (t.status === "Done") return { txt: fmt(t.due), cls: "mut", sub: "" };
+    if (n < 0) return { txt: `${-n} day${n === -1 ? "" : "s"} overdue`, cls: "late", sub: fmt(t.due) };
+    if (n === 0) return { txt: "Today", cls: "soon", sub: fmt(t.due) };
+    if (n === 1) return { txt: "Tomorrow", cls: "soon", sub: fmt(t.due) };
+    if (n <= 7) return { txt: `In ${n} days`, cls: n <= 2 ? "soon" : "", sub: fmt(t.due) };
+    return { txt: fmt(t.due), cls: "", sub: "" };
+  };
+  const priPill = p => p ? `<span class="pill ${p === "High" ? "s-bad" : p === "Medium" ? "s-not" : "s-none"}">${esc(p)}</span>` : '<span class="muted">–</span>';
+  function taskRowHtml(u, t, i, ind = 0){
+    const key = `${u}|${i}`, ed = rowEd(u, t), lk = isLocked(u, t), free = ed && (!savedTask(u, t) || state.unlock.has(t.id)), dis = ed ? "" : "disabled";
     const kidsL = t.ref ? ((planFor(u) || {}).tasks || []).filter(x => x.parent === t.ref) : [], roll = rollupOf(t, kidsL);
     const auto = (hasTgt(t) && calcPct(t) !== null) || !!roll, pend = pendingTask(u, t.id), carriedN = t.carriedCount || (t.carried ? 1 : 0);
-    const tags = [carriedN ? `<span class="tag" title="Brought forward from an earlier week">carried${carriedN > 1 ? ` ${carriedN} weeks` : ""}</span>` : "", pend ? '<span class="pill s-not">change waiting for approval</span>' : "", lk ? '<span class="tag lock" title="Saved task: the title, outcome, type, department, due date and priority are fixed. Use Request change to ask Group Strategy.">🔒 fixed</span>' : ""].join("");
-    const refLine = `<div class="task-ref">${t.ref ? `<span class="ref">${esc(t.ref)}</span>` : '<span class="muted small">numbering…</span>'}${t.parent ? ` <span class="tag" title="This task is part of a deliverable">↳ under ${esc(t.parent)}</span>` : ""}${roll ? ` <span class="tag" title="Deliverable made of ${roll.total} tasks; progress is calculated from them">${roll.done}/${roll.total} tasks</span>` : ""} <button class="lnk" type="button" data-open-task="${esc(u)}|${esc(t.id)}">Open</button></div>`;
-    const main0 = lk || !ed
-      ? `<div class="task-title" title="${esc(t.title)}">${t.priority === "High" ? '<span class="hi-dot" title="High priority"></span>' : ""}${esc(t.title) || '<span class="muted">(no title)</span>'}</div>${t.outcome ? `<div class="task-out"><b>Expected outcome:</b> ${esc(t.outcome)}</div>` : ""}`
-      : `<textarea class="grow title-in" rows="2" id="t-title-${t.id}" data-f="title" placeholder="Task or deliverable" aria-label="Task">${esc(t.title)}</textarea>
-         <textarea class="grow out-in" rows="2" id="t-outcome-${t.id}" data-f="outcome" placeholder="Expected outcome: what will exist or change when this is done" aria-label="Expected outcome">${esc(t.outcome || "")}</textarea>`;
-    const main = refLine + main0;
-    const side = !ed ? "" : `${lk ? `<button class="btn small" data-unlock="${esc(t.id)}" title="Edit the fixed fields. The change goes to Group Strategy for approval.">Request change</button>` : ""}
-      ${state.confirmDelete === t.id ? `<span class="confirm">${savedTask(u, t) && !isAppr() && state.week <= thisMonday() ? "Ask to remove?" : "Remove?"} <button class="btn danger" data-del-yes="${esc(key)}">Yes</button><button class="btn" data-del-no>No</button></span>` : `<button class="icon-btn" data-del="${t.id}" aria-label="Remove task" title="Remove task">×</button>`}`;
-    const others = sortedUnits().filter(x => x.id !== u);
-    const ev = (t.ev || []).map((e, k) => `<div class="ev"><button class="lnk ev-open" type="button" data-ev="${esc(u)}|${i}|${k}" title="${esc(e.name)} · ${fmtSize(e.size || 0)}">📎 ${esc(e.name.length > 18 ? e.name.slice(0, 15) + "…" : e.name)}</button>${ed ? `<button class="icon-btn" type="button" data-ev-del="${esc(u)}|${i}|${k}" aria-label="Remove ${esc(e.name)}">×</button>` : ""}</div>`).join("");
-    const depNote = (t.depUnit || t.dep) ? `<div class="small muted dep-note">Depends on ${esc(depText(t))}</div>` : "";
+    const nEv = (t.ev || []).length, di = dueInfo(t);
+    const pct = roll ? roll.pct : (t.status === "Done" ? 100 : (typeof t.pct === "number" ? t.pct : 0));
+    const sub = [
+      t.ref ? `<span class="ref">${esc(t.ref)}</span>` : '<span class="pill s-none">New</span>',
+      t.parent ? `<span class="pill s-none" title="Part of deliverable ${esc(t.parent)}">↳ ${esc(t.parent)}</span>` : "",
+      roll ? `<span class="pill s-prog" title="Deliverable made of ${roll.total} tasks; progress is calculated from them">${roll.done}/${roll.total} tasks</span>` : "",
+      t.kind === "KPI / OKR" ? '<span class="pill s-prog">KPI / OKR</span>' : "",
+      carriedN ? `<span class="pill s-not" title="Brought forward from an earlier week">Carried${carriedN > 1 ? " ×" + carriedN : ""}</span>` : "",
+      pend ? '<span class="pill s-not">Change waiting for approval</span>' : "",
+      t.owner ? `<span class="who" title="Owner">${esc(t.owner)}</span>` : "",
+      hasTgt(t) ? `<span class="pill s-none" title="Actual against target">${esc(String(t.actual ?? 0))} / ${esc(String(t.target))} ${esc(t.measure || "")}</span>` : "",
+      (t.depUnit || t.dep) ? `<span class="mi" title="Depends on ${esc(depText(t))}">${ico(IC.link)}</span>` : "",
+      t.notes ? `<span class="mi" title="${esc(t.notes)}">${ico(IC.note)}</span>` : "",
+      nEv ? `<span class="mi" title="${nEv} file${nEv === 1 ? "" : "s"} attached">${ico(IC.clip)}${nEv}</span>` : "",
+      lk ? `<span class="mi" title="Saved task: the title, outcome, type, department, due date and priority are fixed. Use the pencil to request a change.">${ico(IC.lock)}</span>` : ""
+    ].filter(Boolean).join("");
+    const main = free
+      ? `<textarea class="grow title-in" rows="1" id="t-title-${t.id}" data-f="title" placeholder="Task or deliverable" aria-label="Task">${esc(t.title)}</textarea>
+         <textarea class="grow out-in" rows="1" id="t-outcome-${t.id}" data-f="outcome" placeholder="Expected outcome: what will exist or change when this is done" aria-label="Expected outcome">${esc(t.outcome || "")}</textarea>`
+      : `<div class="tt" title="${esc(t.title)}">${t.priority === "High" ? '<span class="hi-dot" title="High priority"></span>' : ""}${esc(t.title) || '<span class="muted">(no title)</span>'}</div>${t.outcome ? `<div class="task-out" title="${esc(t.outcome)}">${esc(t.outcome)}</div>` : ""}`;
+    const dueC = free ? `<input type="date" id="t-due-${t.id}" data-f="due" value="${esc(t.due)}" aria-label="Due date">` : `<span class="due ${di.cls}">${esc(di.txt)}</span>${di.sub ? `<div class="small muted">${esc(di.sub)}</div>` : ""}`;
+    const deptC = free ? `<select id="t-dept-${t.id}" data-f="dept" aria-label="Department">${deptOptions(u, t)}</select>` : (esc(t.dept) || '<span class="muted">–</span>');
+    const priC = free ? `<select id="t-pri-${t.id}" data-f="priority" aria-label="Priority"><option value="" ${sel(!t.priority)}>Not set</option>${PRIORITIES.map(p => `<option ${sel(p === t.priority)}>${p}</option>`).join("")}</select>` : priPill(t.priority);
     const stExtra = t.status === "Blocked" && t.blockedSince ? `<div class="small muted">since ${esc(fmt(t.blockedSince))}</div>` : "";
-    const prevTxt = (t.prevStatus || typeof t.prevPct === "number") ? `<div class="small muted" title="Status at the end of last week">was: ${esc(t.prevStatus || "No status")}${typeof t.prevPct === "number" ? " " + t.prevPct + "%" : ""}</div>` : "";
-    const doneTxt = isAppr() ? (t.status === "Done" ? `<label class="small muted">Completed on <input type="date" id="t-cd-${t.id}" data-f="completedAt" value="${esc(t.completedAt || "")}" aria-label="Actual completion date"></label>` : "") : (t.completedAt ? `<div class="small muted" id="t-cd-${t.id}">Done ${esc(fmt(t.completedAt))}</div>` : "");
-    return `<tr class="task-row" data-u="${esc(u)}" data-i="${i}">
-      <td class="c-task"><div class="task-main">${main}${tgtHtml(t, dis)}${tags ? `<div class="task-tags">${tags}</div>` : ""}</div></td>
-      <td class="c-kind"><select id="t-kind-${t.id}" data-f="kind" aria-label="Type" ${ldis}>${KINDS.map(k => `<option ${sel(k === (t.kind || "Task"))}>${k}</option>`).join("")}</select><select id="t-cat-${t.id}" data-f="category" aria-label="Category" ${dis} style="margin-top:6px"><option value="" ${sel(!t.category)}>Category</option>${CATEGORIES.map(k => `<option ${sel(k === t.category)}>${k}</option>`).join("")}</select></td>
-      <td class="c-dept"><select id="t-dept-${t.id}" data-f="dept" aria-label="Department" ${ldis}>${deptOptions(u, t)}</select></td>
-      <td class="c-due"><input type="date" id="t-due-${t.id}" data-f="due" value="${esc(t.due)}" aria-label="Due date" ${ldis}></td>
-      <td class="c-pri"><select id="t-pri-${t.id}" data-f="priority" aria-label="Priority" ${ldis}><option value="" ${sel(!t.priority)}>Not set</option>${PRIORITIES.map(p => `<option ${sel(p === t.priority)}>${p}</option>`).join("")}</select></td>
-      <td class="c-status"><select id="t-st-${t.id}" data-f="status" aria-label="Status update" ${dis}><option value="" ${sel(!t.status)}>No status</option>${STATUSES.map(x => `<option ${sel(x === t.status)}>${x}</option>`).join("")}</select>${stExtra}${prevTxt}${doneTxt}</td>
-      <td class="c-pct"><input type="number" id="t-pct-${t.id}" data-f="pct" min="0" max="100" step="5" value="${roll ? roll.pct : (t.pct ?? "")}" placeholder="%" aria-label="Percent complete" ${dis} ${auto ? `readonly title="${roll ? "Calculated from its tasks (weighted)" : "Calculated from actual and target"}"` : ""}>${true ? `<input type="number" step="any" id="t-act-${t.id}" data-f="actual" value="${t.actual ?? ""}" placeholder="Actual" aria-label="Actual figure" title="Actual so far (target ${esc(t.target)} ${esc(t.measure || "")})" ${dis} style="margin-top:6px">` : ""}</td>
-      <td class="c-notes"><textarea class="grow" rows="3" id="t-notes-${t.id}" data-f="notes" placeholder="Note, next step or dependency" aria-label="Note" ${dis}>${esc(t.notes)}</textarea>${depNote}</td>
-      <td class="c-ev"><div class="ev-col">${ev || (ed ? "" : '<span class="muted small">none</span>')}${ed ? `<label class="btn small ev-add" title="Optional. Up to ${EVIDENCE.maxFiles} files at once, ${fmtSize(EVIDENCE.maxTotal)} in total">📎 Attach<input type="file" multiple accept="${EVIDENCE.accept}" data-ev-add="${esc(u)}|${i}" hidden></label>` : ""}</div></td>
-      <td class="c-owner"><input type="text" list="dl-owners-${esc(u)}" id="t-owner-${t.id}" data-f="owner" value="${esc(t.owner)}" placeholder="Name" aria-label="Owner name" ${dis}></td>
-      <td class="c-act"><div class="task-side">${side}</div></td>
+    const prevTip = (t.prevStatus || typeof t.prevPct === "number") ? ` title="Last week: ${esc(t.prevStatus || "No status")}${typeof t.prevPct === "number" ? " " + t.prevPct + "%" : ""}"` : "";
+    const doneTxt = isAppr() ? (t.status === "Done" ? `<label class="small muted">Done on <input type="date" id="t-cd-${t.id}" data-f="completedAt" value="${esc(t.completedAt || "")}" aria-label="Actual completion date"></label>` : "") : (t.completedAt ? `<div class="small muted" id="t-cd-${t.id}">Done ${esc(fmt(t.completedAt))}</div>` : "");
+    const stC = ed ? `<select class="st ${statusClass(t.status)}" id="t-st-${t.id}" data-f="status" aria-label="Status update"${prevTip}><option value="" ${sel(!t.status)}>No status</option>${STATUSES.map(x => `<option ${sel(x === t.status)}>${x}</option>`).join("")}</select>` : `<span class="pill ${statusClass(t.status)}"${prevTip}>${esc(t.status || "No status")}</span>`;
+    const pcC = ed ? `<div class="pc"><div class="bar"><i style="width:${Math.min(pct, 100)}%"></i></div><input type="number" id="t-pct-${t.id}" data-f="pct" min="0" max="100" step="5" value="${roll ? roll.pct : (t.pct ?? "")}" placeholder="0" aria-label="Percent complete" ${auto ? `readonly title="${roll ? "Calculated from its tasks (weighted)" : "Calculated from actual and target"}"` : ""}></div>`
+      : `<div class="pc"><div class="bar"><i style="width:${Math.min(pct, 100)}%"></i></div><span class="num small">${pct}%</span></div>`;
+    const act = `<button class="icon-btn ib" type="button" data-open-task="${esc(u)}|${esc(t.id)}" aria-label="Open details" title="Open details: notes, evidence, owner, discussion">${ico(IC.open)}</button>`
+      + (ed && lk ? `<button class="icon-btn ib" type="button" data-unlock="${esc(t.id)}" aria-label="Request change" title="Request change: the edit goes to Group Strategy for approval">${ico(IC.pen)}</button>` : "")
+      + (ed ? (state.confirmDelete === t.id ? `<span class="confirm">${savedTask(u, t) && !isAppr() && state.week <= thisMonday() ? "Ask to remove?" : "Remove?"} <button class="btn danger small" data-del-yes="${esc(key)}">Yes</button><button class="btn small" data-del-no>No</button></span>` : `<button class="icon-btn ib bad" type="button" data-del="${t.id}" aria-label="Remove task" title="Remove task">${ico(IC.trash)}</button>`) : "");
+    return `<tr class="task-row${ind ? " kid" : ""}" data-u="${esc(u)}" data-i="${i}" data-id="${esc(t.id)}">
+      <td class="c-task"><div class="task-main">${main}<div class="sub">${sub}</div></div></td>
+      <td class="c-due" data-l="Due">${dueC}</td>
+      <td class="c-dept" data-l="Department">${deptC}</td>
+      <td class="c-pri" data-l="Priority">${priC}</td>
+      <td class="c-status" data-l="Status">${stC}${stExtra}${doneTxt}</td>
+      <td class="c-pct" data-l="Progress">${pcC}</td>
+      <td class="c-act"><div class="task-side">${act}</div></td>
     </tr>`;
   }
-  const editHead = () => `<colgroup><col class="k-task"><col class="k-kind"><col class="k-dept"><col class="k-due"><col class="k-pri"><col class="k-status"><col class="k-pct"><col class="k-notes"><col class="k-ev"><col class="k-owner"><col class="k-act"></colgroup><thead><tr>${th("edit","title","Task")}${th("edit","kind","Type")}${th("edit","dept","Department")}${th("edit","due","Due")}${th("edit","priority","Priority")}${th("edit","status","Status update")}${th("edit","pct","%")}${th("edit","notes","Note")}${th("edit","ev","Evidence")}${th("edit","owner","Owner (name)")}<th></th></tr></thead>`;
+  const editHead = () => `<thead><tr>${th("edit","title","Task")}${th("edit","due","Due")}${th("edit","dept","Department")}${th("edit","priority","Priority")}${th("edit","status","Status")}${th("edit","pct","Progress")}<th class="c-act"></th></tr></thead>`;
 
   // ---------- helpers for task kinds ----------
   const KINDS = ["Task","KPI / OKR"];
@@ -861,36 +898,78 @@ applyPlugin(jsPDF); window.jspdf = { jsPDF }; window.XLSX = XLSX;
     return `<div class="banner warn" style="margin:12px 16px 0"><b>${list.length} change request${list.length === 1 ? "" : "s"} waiting for Group Strategy.</b> They are not part of the plan until approved.
       ${list.map(r => `<div class="req-mini"><span>${esc((r.details || [])[0] || r.summary)}${(r.details || []).length > 1 ? ` <span class="muted small">+${r.details.length - 1} more</span>` : ""} <span class="muted small">· ${esc(r.by)} · ${esc(fmt((r.createdAt || "").slice(0, 10)))}</span></span>${canEdit(u) ? `<button class="btn small" data-withdraw="${esc(r.id)}">Withdraw</button>` : ""}${isAppr() ? `<button class="btn small" data-goto="approvals">Review</button>` : ""}</div>`).join("")}</div>`;
   }
+  // ---------- Plans: week banner, filters, list ----------
+  const pf = () => state.pf || (state.pf = { q: "", pri: "", st: "", dep: "", lvl: "tasks" });
+  function visibleRows(tasks){
+    const f = pf(), q = f.q.trim().toLowerCase();
+    const ok = t => (!q || [t.title, t.ref, t.owner, t.dept, t.outcome].some(x => (x || "").toLowerCase().includes(q))) && (!f.pri || t.priority === f.pri) && (!f.st || (f.st === "none" ? !t.status : t.status === f.st)) && (!f.dep || t.dept === f.dep);
+    const base = sortOrder(tasks, "edit");
+    if (f.lvl !== "deliv") return base.filter(i => ok(tasks[i])).map(i => ({ i, ind: 0 }));
+    const refs = new Set(tasks.map(t => t.ref).filter(Boolean)), out = [];
+    base.filter(i => !tasks[i].parent || !refs.has(tasks[i].parent)).forEach(i => {
+      const t = tasks[i], kids = t.ref ? base.filter(j => tasks[j].parent === t.ref) : [], kidOk = kids.filter(j => ok(tasks[j]));
+      if (ok(t) || kidOk.length) { out.push({ i, ind: 0 }); (ok(t) ? kids : kidOk).forEach(j => out.push({ i: j, ind: 1 })); }
+    });
+    return out;
+  }
+  function planFilterBar(deptList, shown, total, extra){
+    const f = pf(), on = f.q || f.pri || f.st || f.dep;
+    const o = (k, label, arr) => `<select class="in sm${f[k] ? " on" : ""}" data-pfl="${k}" aria-label="${label}"><option value="">${label}: any</option>${arr.map(x => `<option value="${esc(x[0])}" ${f[k] === x[0] ? "selected" : ""}>${esc(x[1])}</option>`).join("")}</select>`;
+    return `<div class="plan-bar2"><div class="fbar"><div class="fsearch">${ico(IC.search)}<input type="text" id="pfQ" placeholder="Search tasks" value="${esc(f.q)}" aria-label="Search tasks"></div>
+      ${o("pri", "Priority", PRIORITIES.map(p => [p, p]))}${o("st", "Status", [...STATUSES.map(x => [x, x]), ["none", "No status"]])}${deptList.length ? o("dep", "Department", deptList.map(d => [d, d])) : ""}${on ? '<button class="lnk" type="button" id="pfClear">Clear</button>' : ""}</div>
+      <span class="small muted">${on ? `${shown} of ${total} tasks` : `${total} task${total === 1 ? "" : "s"}`}${extra || ""}</span></div>`;
+  }
+  function weekBan(){
+    const w = state.week, planTab = state.tab === "plan", next = w === nextMonday(), tm = thisMonday();
+    const pill = planTab ? (next ? '<span class="pill out">PLAN FOR NEXT WEEK</span>' : '<span class="pill s-not">NOT NEXT WEEK</span>') : '<span class="pill tag-actual">ACTUAL</span>';
+    const rel = w === tm ? "This week" : w < tm ? "Past week" : next ? "Next week" : "Later week";
+    const hint = planTab ? (next ? "Add next week's tasks by hand, bring forward unfinished work, or import an Excel plan at the bottom." : `This is not next week. <button class="lnk" id="goNext">Go to next week (${esc(weekLabel(nextMonday()))})</button>`)
+      : "Update status and % as the week goes on. Tasks for the coming week go under Next plan.";
+    return `<div class="weekban">${pill}<span class="wk-big">${esc(weekLabel(w))}</span><span class="eth">${esc(ethWeekLabel(w))}</span><span class="small muted">${rel}</span></div><div class="small muted plan-hint">${hint}</div>`;
+  }
+  const moreMenu = items => items.length ? `<details class="more"><summary class="btn" aria-label="More actions" title="More actions">${ico(IC.more)}</summary><div class="more-menu">${items.join("")}</div></details>` : "";
   function renderUpdate(){
     if (!state.units.length) return `<div class="panel"><div class="empty"><b>No units to report for</b>Units appear here once the Strategy Office adds them.</div></div>`;
     const opts = `<option value="${ALL}" ${isAll()?"selected":""}>All units</option>` + sortedUnits().map(u => `<option value="${esc(u.id)}" ${u.id===state.editUnit?"selected":""}>${esc(u.name)}${u.id === myUnit() ? " (yours)" : ""}</option>`).join("");
     const single = hasDraft() && !isAll(), ed = single && canEdit(state.editUnit);
     const past = state.week < thisMonday();
-    const head = `<div class="panel-head">
-      <div class="toolbar"><label for="unitPick" class="small muted">Unit</label>
-        <select id="unitPick"><option value="">Choose your function or unit…</option>${opts}</select></div>
-      ${single ? `<div class="toolbar">${ed && canLead(state.editUnit) ? `<button class="btn" id="listsBtn">Departments${(unitOf(state.editUnit).departments||[]).length ? ` (${unitOf(state.editUnit).departments.length})` : ""}</button><button class="btn ghost" id="carryBtn">Bring forward unfinished work…</button>` : ""}${mayUndo() ? `<button class="btn" id="histBtn" title="Every saved version of this plan">History</button>` : ""}${downloads ? `<button class="btn" id="unitPdfBtn">Plan (PDF)</button><button class="btn" id="unitXlsxBtn">Plan (Excel)</button>` : ""}${ed ? `<button class="btn primary" id="addTask">+ Add task</button>` : ""}</div>` : ""}
-      ${isAll() && downloads ? `<div class="toolbar"><button class="btn" id="pdfBtn">Performance report (PDF)</button><button class="btn" id="xlsxAllBtn">All plans (Excel)</button></div>` : ""}
-    </div>`;
-    if (!state.editUnit || !hasDraft()) return `<div class="panel">${head}<div class="empty"><b>Choose your unit to start</b>Pick your function or business unit. Anyone can view; to update, sign in with your name and your unit's PIN (the name button at the top). Then update status, % complete, notes and evidence as the week goes on.</div></div>`;
+    const lead = single ? X.banner(state.editUnit) + remindersPanel(state.editUnit) : "";
+    const pick = `<div class="toolbar"><label for="unitPick" class="small muted">Unit</label><select id="unitPick"><option value="">Choose your function or unit…</option>${opts}</select></div>`;
+    const menu = [];
+    if (single) {
+      if (ed && canLead(state.editUnit)) menu.push(`<button type="button" id="listsBtn">${ico(IC.users)}Departments${(unitOf(state.editUnit).departments||[]).length ? ` (${unitOf(state.editUnit).departments.length})` : ""}</button>`);
+      if (mayUndo()) menu.push(`<button type="button" id="histBtn" title="Every saved version of this plan">${ico(IC.clock)}History</button>`);
+      if (downloads) menu.push(`<button type="button" id="unitPdfBtn">${ico(IC.down)}Plan (PDF)</button>`, `<button type="button" id="unitXlsxBtn">${ico(IC.down)}Plan (Excel)</button>`);
+    } else if (isAll() && downloads) menu.push(`<button type="button" id="pdfBtn">${ico(IC.down)}Performance report (PDF)</button>`, `<button type="button" id="xlsxAllBtn">${ico(IC.down)}All plans (Excel)</button>`);
+    const acts = `<div class="toolbar plan-acts">${single && ed && canLead(state.editUnit) ? `<button class="btn" type="button" id="carryBtn">${ico(IC.fwd)}Bring forward</button>` : ""}${moreMenu(menu)}${single && ed ? `<button class="btn primary" type="button" id="addTask">${ico(IC.plus)}Add task</button>` : ""}</div>`;
+    const topRow = `<div class="plan-top"><div class="plan-wk">${weekBan()}</div>${acts}</div>`;
+    const lvlSeg = `<div class="seg" role="tablist" aria-label="List level"><button type="button" role="tab" data-lvl="tasks" aria-selected="${pf().lvl !== "deliv"}">All tasks</button><button type="button" role="tab" data-lvl="deliv" aria-selected="${pf().lvl === "deliv"}">By deliverable</button></div>`;
+    const bar1 = `<div class="plan-bar">${pick}${lvlSeg}</div>`;
+    if (!state.editUnit || !hasDraft()) return `${topRow}<div class="panel">${bar1}<div class="empty"><b>Choose your unit to start</b>Pick your function or business unit. Anyone can view; to update, sign in with your name and your unit's PIN (the name button at the top). Then update status, % complete, notes and evidence as the week goes on.</div></div>`;
     const warn = state.remoteChanged ? `<div class="banner warn" style="margin:12px 16px 0">Someone else saved ${isAll() ? "one of these plans" : "this plan"} while you were editing. Saving adds your changes on top of theirs. <button class="btn" id="reloadRemote" style="margin-left:6px">Drop mine and load theirs</button></div>` : "";
     const submitLbl = past && !isAppr() ? "Submit for approval" : isAll() ? "Save all changes" : "Save plan";
     const saveBar = (meta) => `<div class="save-bar"><span class="small muted">${state.dirty ? `<b style='color:var(--accent)'>Unsaved changes${isAll() && state.dirtyUnits.size ? ` in ${state.dirtyUnits.size} unit${state.dirtyUnits.size>1?"s":""}` : ""}</b>` : meta}</span>
-        <div class="toolbar"><button class="btn" id="discardBtn" ${state.dirty?"":"disabled"}>Discard changes</button><button class="btn primary" id="saveBtn" ${state.dirty?"":"disabled"}>${submitLbl}</button></div></div>`;
+        <div class="toolbar"><button class="btn" id="discardBtn" ${state.dirty?"":"disabled"}>Discard changes</button><button class="btn primary" id="saveBtn" ${state.dirty?"":"disabled"}>${ico(IC.save)}${submitLbl}</button></div></div>`;
+    const noMatch = `<div class="empty"><b>No tasks match these filters</b><button class="btn" type="button" id="pfClear">Clear filters</button></div>`;
 
     if (isAll()) {
       const can = isAppr();
+      const allTasks = sortedUnits().flatMap(u => (state.allDrafts[u.id] || emptyPlan(u.id)).tasks);
+      const deptList = [...new Set(allTasks.map(t => t.dept).filter(Boolean))].sort();
+      let shown = 0;
       const groups = sortedUnits().map(u => {
         const d = state.allDrafts[u.id] || emptyPlan(u.id);
-        const s = summarize(d);
-        const rows = sortOrder(d.tasks, "edit").map(i => taskRowHtml(u.id, d.tasks[i], i)).join("");
-        return `<tbody><tr class="group-row"><td colspan="11"><div class="toolbar" style="justify-content:space-between">
+        const s = summarize(d), vis = visibleRows(d.tasks); shown += vis.length;
+        const f = pf(), filtered = f.q || f.pri || f.st || f.dep;
+        if (filtered && !vis.length) return "";
+        const rows = vis.map(r => taskRowHtml(u.id, d.tasks[r.i], r.i, r.ind)).join("");
+        return `<tbody><tr class="group-row"><td colspan="7"><div class="toolbar" style="justify-content:space-between">
             <div><b>${esc(u.name)}</b> <span class="tag">${esc(u.type||"")}</span> <span class="small muted">${s.total} tasks · ${s.done} done${state.dirtyUnits.has(u.id) ? " · <b style='color:var(--accent)'>edited</b>" : ""}</span></div>
-            ${canEdit(u.id) ? `<button class="btn" data-add-unit="${esc(u.id)}">+ Add task</button>` : ""}</div>${ownerDatalist(u.id)}</td></tr>
-          ${rows || `<tr><td colspan="11" class="small muted">No tasks entered yet.</td></tr>`}</tbody>`;
+            ${canEdit(u.id) ? `<button class="btn small" data-add-unit="${esc(u.id)}">${ico(IC.plus)}Add task</button>` : ""}</div>${ownerDatalist(u.id)}</td></tr>
+          ${rows || `<tr><td colspan="7" class="small muted">No tasks entered yet.</td></tr>`}</tbody>`;
       }).join("");
-      return `<div class="panel">${head}${warn}${can ? "" : `<div class="banner info" style="margin:12px 16px 0">All units is view-only, except your own unit's rows. Group Strategy approvers can edit every unit here.</div>`}
-        <div class="scroll"><table class="edit-table">${editHead()}${groups}</table></div>
+      return `${topRow}<div class="panel">${bar1}${planFilterBar(deptList, shown, allTasks.length)}${warn}${can ? "" : `<div class="banner info" style="margin:12px 16px 0">All units is view-only, except your own unit's rows. Group Strategy approvers can edit every unit here.</div>`}
+        ${shown || !groups ? `<div class="scroll"><table class="edit-table">${editHead()}${groups}</table></div>` : noMatch}
         <div class="banner info" style="margin:12px 16px">To edit a unit's key results, blockers and asks, or its departments and staff lists, choose that unit on its own.</div>
         ${saveBar("Showing every unit's plan for this week")}</div>`;
     }
@@ -902,13 +981,15 @@ applyPlugin(jsPDF); window.jspdf = { jsPDF }; window.XLSX = XLSX;
     const access = !ed
       ? `<div class="banner warn" style="margin:12px 16px 0"><b>View only.</b> To update ${esc(u.name || "this unit")}, sign in with your name and ${esc(u.name || "the unit")}'s PIN. <button class="btn" id="signInBtn" style="margin-left:6px">Sign in</button></div>`
       : past && !isAppr() ? `<div class="banner warn" style="margin:12px 16px 0"><b>This week has ended.</b> You can still update it, but your changes go to Group Strategy for approval and are recorded only when approved.</div>`
-      : state.week <= thisMonday() && !isAppr() ? `<div class="banner info" style="margin:12px 16px 0">Saved tasks keep their title, expected outcome, type, department, due date and priority (🔒). Update status, %, notes, owner, dependencies and evidence freely. To change a fixed field or remove a task, use <b>Request change</b> or ×: Group Strategy approves it first.</div>` : "";
-    const listHint = ed && !(u.departments||[]).length ? `<div class="banner info" style="margin:12px 16px 0">${esc(u.name||"This unit")} has no departments yet. Select <b>Departments</b> to add them, then pick one for each task.</div>` : "";
+      : state.week <= thisMonday() && !isAppr() ? `<div class="banner info" style="margin:12px 16px 0">Saved tasks keep their title, expected outcome, type, department, due date and priority (lock icon). Update status, %, notes, owner and evidence freely. To change a fixed field or remove a task, use the pencil or the bin: Group Strategy approves it first.</div>` : "";
+    const listHint = ed && !(u.departments||[]).length ? `<div class="banner info" style="margin:12px 16px 0">${esc(u.name||"This unit")} has no departments yet. Open the ⋯ menu, choose <b>Departments</b> and add them, then pick one for each task.</div>` : "";
     const rdis = ed ? "" : "disabled";
     const us = summarize(d);
-    const unitBar = us.total ? `<div style="padding:12px 16px 0">${progressBar(`${u.name || "Unit"}: progress this week`, us.avg, `${us.done} of ${us.total} tasks done${us.noStatus ? ` · ${us.noStatus} with no status yet` : ""}`)}</div>` : "";
-    return `${X.banner(state.editUnit)}${remindersPanel(state.editUnit)}<div class="panel">${head}${unitBar}${state.showLists && ed && canLead(state.editUnit) ? renderLists() : ""}${access}${warn}${requestsPanel(state.editUnit)}${ed ? carryBanner() : ""}${listHint}
-      ${ownerDatalist(state.editUnit)}${d.tasks.length ? `<div class="scroll edit-scroll"><table class="edit-table">${editHead()}<tbody>${sortOrder(d.tasks, "edit").map(i => taskRowHtml(state.editUnit, d.tasks[i], i)).join("")}</tbody></table></div>` : `<div class="empty"><b>No tasks yet for ${esc(unitName(state.editUnit))}</b>${ed ? "Add this week's tasks, or copy last week's unfinished ones." : "Nothing entered for this week."}</div>`}
+    const deptList = [...new Set([...(u.departments || []), ...d.tasks.map(t => t.dept).filter(Boolean)])].sort();
+    const vis = visibleRows(d.tasks);
+    const prog = us.total ? ` · ${us.done} done · ${us.avg}% overall` : "";
+    return `${lead}${topRow}<div class="panel">${bar1}${planFilterBar(deptList, vis.length, d.tasks.length, prog)}${state.showLists && ed && canLead(state.editUnit) ? renderLists() : ""}${access}${warn}${requestsPanel(state.editUnit)}${ed ? carryBanner() : ""}${listHint}
+      ${ownerDatalist(state.editUnit)}${d.tasks.length ? (vis.length ? `<div class="scroll edit-scroll"><table class="edit-table">${editHead()}<tbody>${vis.map(r => taskRowHtml(state.editUnit, d.tasks[r.i], r.i, r.ind)).join("")}</tbody></table></div>` : noMatch) : `<div class="empty"><b>No tasks yet for ${esc(unitName(state.editUnit))}</b>${ed ? "Add this week's tasks, or bring forward unfinished ones." : "Nothing entered for this week."}</div>`}
       <div class="reports">
         <div><label for="f-wins">Key results this week</label><textarea id="f-wins" data-r="wins" placeholder="What was achieved" ${rdis}>${esc(d.wins)}</textarea></div>
         <div><label for="f-blockers">Blockers and issues</label><textarea id="f-blockers" data-r="blockers" placeholder="What is stopping progress" ${rdis}>${esc(d.blockers)}</textarea></div>
@@ -1022,8 +1103,8 @@ applyPlugin(jsPDF); window.jspdf = { jsPDF }; window.XLSX = XLSX;
     if (!db) html += `<div class="banner warn">Not connected to the database, so plans cannot be loaded or saved.</div>`;
     if (!state.unitsLoaded || !state.plansLoaded) html += `<div class="panel"><div class="empty"><b>Loading weekly plans…</b>Fetching plans for ${esc(weekLabel(state.week))}.</div></div>`;
     else if (state.tab==="dashboard") html += renderDash();
-        else if (state.tab==="update") html += planBanner() + renderUpdate();
-    else if (state.tab==="plan") html += planBanner() + renderUpdate() + renderImport();
+        else if (state.tab==="update") html += renderUpdate();
+    else if (state.tab==="plan") html += renderUpdate() + `<details class="panel imp-det" id="impDet" ${(state.impOpen || state.imp) ? "open" : ""}><summary><b>Import or export with Excel</b> <span class="small muted">download the template, fill it in, upload it</span></summary>${renderImport()}</details>`;
     else if (state.tab==="tasks") html += renderTasks();
     else if (state.tab==="follow") html += renderFollow();
     else if (state.tab==="monthly") html += renderMonthly();
@@ -1094,8 +1175,13 @@ applyPlugin(jsPDF); window.jspdf = { jsPDF }; window.XLSX = XLSX;
 
   const main = $("#main");
   main.addEventListener("click", e => {
+    const mm = document.querySelector("details.more[open]"); if (mm && (!e.target.closest("details.more") || e.target.closest(".more-menu button"))) mm.open = false;
+    const row = e.target.closest("tr.task-row");
+    if (row && !e.target.closest("input, select, textarea, button, label, a, summary") && (state.tab === "update" || state.tab === "plan") && row.dataset.id) { openPanel(row.dataset.u + "|" + row.dataset.id); return; }
     const t = e.target.closest("button, tr[data-open-unit], tr[data-tgl], .hbar-row[data-open-unit]");
     if (!t) return;
+    if (t.id === "pfClear") { state.pf = { q: "", pri: "", st: "", dep: "", lvl: pf().lvl }; render(); return; }
+    if (t.dataset.lvl) { pf().lvl = t.dataset.lvl; render(); return; }
     if (t.dataset.tgl) { const k = t.dataset.tgl; state.expanded.has(k) ? state.expanded.delete(k) : state.expanded.add(k); render(); return; }
     if (t.matches("tr[data-open-unit], .hbar-row[data-open-unit]") || (t.dataset.openUnit && t.matches("button"))) { if (state.tab === "dashboard") { state.dash.units = [t.dataset.openUnit]; state.dash.pop = false; render(); window.scrollTo({ top: 0, behavior: "smooth" }); return; } openUnit(t.dataset.openUnit); return; }
     if (t.dataset.datt) { state.dash.att = t.dataset.datt; render(); return; }
@@ -1180,11 +1266,12 @@ applyPlugin(jsPDF); window.jspdf = { jsPDF }; window.XLSX = XLSX;
       if (again) render();
     } else if (el.dataset.r) { state.draft[el.dataset.r] = el.value; state.dirtyUnits.add(state.editUnit); markDirty(); }
     else if (el.id==="fQ") { state.filter.q = el.value; render(); }
+    else if (el.id==="pfQ") { pf().q = el.value; render(); }
     else if (el.id==="ovQ") { state.ov.q = el.value; render(); }
     else if (el.dataset.reqNote) { state.reqNotes[el.dataset.reqNote] = el.value; }
   });
   main.addEventListener("keydown", e => { if (e.key === "Enter" && e.target.matches("textarea.title-in, textarea.out-in")) e.preventDefault(); });
-  main.addEventListener("toggle", e => { if (e.target.id === "remPanel") state.remOpen = e.target.open; }, true);
+  main.addEventListener("toggle", e => { if (e.target.id === "remPanel") state.remOpen = e.target.open; if (e.target.id === "impDet") state.impOpen = e.target.open; }, true);
   // chart tooltips: any element with data-tip
   const tip = document.createElement("div"); tip.className = "viz-tip"; tip.hidden = true; document.body.appendChild(tip);
   main.addEventListener("mouseover", e => { const el = e.target.closest("[data-tip]"); if (!el) return; tip.innerHTML = el.dataset.tip; tip.hidden = false;
@@ -1193,6 +1280,7 @@ applyPlugin(jsPDF); window.jspdf = { jsPDF }; window.XLSX = XLSX;
   main.addEventListener("mouseout", e => { const el = e.target.closest("[data-tip]"); if (!el || (e.relatedTarget && el.contains(e.relatedTarget))) return; tip.hidden = true; const xh = el.closest("svg")?.querySelector(".xhair"); if (xh) xh.style.display = "none"; });
   main.addEventListener("change", e => {
     const el = e.target;
+    if (el.dataset.pfl) { pf()[el.dataset.pfl] = el.value; render(); return; }
     if (el.dataset.pu) {
       const [pid, k] = el.dataset.pu.split("|"), q = x => document.querySelector(`[data-pu="${CSS.escape(pid)}|${x}"]`);
       if (k === "unit") q("departments").innerHTML = DEPT_OPTS(el.value, []);
