@@ -138,7 +138,7 @@ export function createExtras(c) {
       const cards = list.slice(0, f.ashow).map((x) => `<div class="fb-card${x.ackAt ? "" : " new"}">
         <div class="fb-top"><span class="pill ${x.from === "CEO" ? "s-bad" : x.from === "DCEO" ? "s-prog" : "s-done"}">${esc(x.from)}</span> <b>${esc(c.unitName(x.unit))}</b>
           <span class="small muted">${x.week ? esc(c.weekLabel(x.week)) + " · " : ""}${esc(fmt((x.createdAt || "").slice(0, 10)))}${x.by ? " · " + esc(x.by) : ""}</span></div>
-        <div class="fb-body">${esc(x.body)}</div>
+        ${x.taskRef ? `<div class="small"><span class="ref">${esc(x.taskRef)}</span></div>` : ""}<div class="fb-body">${esc(x.body)}</div>
         <div class="fb-foot small">${x.ackAt ? `<span class="muted">Acknowledged by ${esc(x.ackBy)} on ${esc(fmt(x.ackAt.slice(0, 10)))}</span>` : (c.canLead(x.unit) ? `<button class="btn small" data-x="fb-ack" data-id="${esc(x.id)}">Acknowledge</button> <button class="btn small ghost" data-x="act-from-fb" data-unit="${esc(x.unit)}" data-id="${esc(x.id)}">Log a corrective action</button>` : '<span class="muted">Not yet acknowledged</span>')}
           ${c.canFeedback() ? `<button class="btn small ghost" data-x="fb-edit" data-id="${esc(x.id)}">Edit</button>` : ""}</div></div>`).join("");
       return `<div class="panel">${head}
@@ -154,7 +154,7 @@ export function createExtras(c) {
       && (!q || `${a.issue} ${a.action} ${a.owner} ${a.notes} ${a.taskTitle}`.toLowerCase().includes(q)));
     const rows = list.slice(0, f.ashow).map((a) => { const late = a.due && a.due < c.todayIso && ["Open", "In progress"].includes(a.status);
       return `<tr class="clickable" data-x="act-open" data-id="${esc(a.id)}" tabindex="0"><td class="small"><b>${esc(c.unitName(a.unit))}</b></td><td><span class="pill ${a.source === "Self" ? "s-none" : a.source === "CEO" ? "s-bad" : a.source === "DCEO" ? "s-prog" : "s-done"}">${esc(a.source)}</span></td>
-        <td class="sup-req">${esc(a.issue)}${a.taskTitle ? `<div class="small muted">Task: ${esc(a.taskTitle)}</div>` : ""}</td><td class="sup-req">${esc(a.action)}</td><td class="small">${esc(a.owner)}</td>
+        <td class="sup-req">${esc(a.issue)}${a.taskTitle || a.taskRef ? `<div class="small muted">Task: ${a.taskRef ? `<span class="ref">${esc(a.taskRef)}</span> ` : ""}${esc(a.taskTitle || "")}</div>` : ""}</td><td class="sup-req">${esc(a.action)}</td><td class="small">${esc(a.owner)}</td>
         <td class="num small ${late ? "late" : ""}">${esc(fmt(a.due))}${late ? " · overdue" : ""}</td><td><span class="pill ${statusCls(a.status)}">${esc(a.status)}</span></td><td class="small muted">${esc(fmt((a.updatedAt || "").slice(0, 10)))}</td></tr>`; }).join("");
     const canLog = c.isAppr() || c.canLead(c.myUnit());
     return `<div class="panel">${head}
@@ -269,7 +269,7 @@ export function createExtras(c) {
     else if (x === "fb-new") { state.xm = { type: "feedback", isNew: true, row: { unit: g.unit || (c.sortedUnits()[0] || {}).id || "", from: "Group Strategy", week: c.thisWeek(), body: "" } }; drawModal(); }
     else if (x === "fb-edit") { const r = state.fbs.find((y) => y.id === id); if (r) { state.xm = { type: "feedback", isNew: false, row: { ...r } }; drawModal(); } }
     else if (x === "fb-save") {
-      const m = state.xm, row = { id: m.isNew ? undefined : m.row.id, unit: v("fb-unit"), from: v("fb-from"), week: v("fb-week"), body: v("fb-body").trim() };
+      const m = state.xm, row = { id: m.isNew ? undefined : m.row.id, unit: v("fb-unit"), from: v("fb-from"), week: v("fb-week"), body: v("fb-body").trim(), taskRef: m.row.taskRef || "" };
       if (!row.body) { c.toast("Write the feedback first"); return; }
       const res = await c.api().saveFeedback(A(), row); if (ok(res, "Feedback saved")) { g.unit = row.unit; closeModal(); }
     }
@@ -280,7 +280,7 @@ export function createExtras(c) {
     else if (x === "act-open") { const r = state.acts.find((y) => y.id === id); if (r) { state.xm = { type: "action", isNew: false, canEdit: c.canLead(r.unit), row: { ...r } }; drawModal(); } }
     else if (x === "act-save") {
       const m = state.xm, r = m.row;
-      const row = { id: m.isNew ? undefined : r.id, unit: v("ac-unit") || r.unit, source: c.isAppr() ? v("ac-src") : (r.source || "Self"), issue: v("ac-issue").trim(), action: v("ac-action").trim(), owner: v("ac-owner").trim(), due: v("ac-due"), status: v("ac-st"), taskTitle: v("ac-task").trim(), notes: v("ac-notes").trim(), week: r.week || "" };
+      const row = { id: m.isNew ? undefined : r.id, unit: v("ac-unit") || r.unit, source: c.isAppr() ? v("ac-src") : (r.source || "Self"), issue: v("ac-issue").trim(), action: v("ac-action").trim(), owner: v("ac-owner").trim(), due: v("ac-due"), status: v("ac-st"), taskTitle: v("ac-task").trim(), notes: v("ac-notes").trim(), week: r.week || "", taskRef: r.taskRef || "" };
       if (!row.issue || !row.action) { c.toast("Describe the issue and the corrective action"); return; }
       const res = await c.api().saveAction(A(), row); if (ok(res, "Saved")) closeModal();
     }
@@ -304,5 +304,11 @@ export function createExtras(c) {
   mr.addEventListener("click", (e) => { const el = e.target.closest("[data-x]"); if (el) onAction(el); else if (e.target.classList && e.target.classList.contains("overlay")) closeModal(); });
   document.addEventListener("keydown", (e) => { if (e.key === "Escape" && state.xm) closeModal(); });
 
-  return { renderSupport, renderFb, subscribe, badgeCount, banner };
+  // used by the task panel: feedback and corrective actions that belong to one task
+  const forTask = (unit, ref) => ({ fbs: state.fbs.filter((f) => f.unit === unit && ref && f.taskRef === ref), acts: state.acts.filter((a) => a.unit === unit && ref && a.taskRef === ref) });
+  const openFeedback = (unit, ref, week) => { state.xm = { type: "feedback", isNew: true, row: { unit, from: "Group Strategy", week: week || c.thisWeek(), body: "", taskRef: ref } }; drawModal(); };
+  const openAction = (unit, ref, title) => { state.xm = { type: "action", isNew: true, canEdit: true, row: { unit, source: c.isAppr() ? "Group Strategy" : "Self", issue: "", action: "", owner: "", due: "", status: "Open", taskTitle: title || "", taskRef: ref, notes: "", week: "" } }; drawModal(); };
+  const openExisting = (kind, id) => { if (kind === "fb") { const r = state.fbs.find((y) => y.id === id); if (r) { state.xm = { type: "feedback", isNew: false, row: { ...r } }; drawModal(); } } else { const r = state.acts.find((y) => y.id === id); if (r) { state.xm = { type: "action", isNew: false, canEdit: c.canLead(r.unit), row: { ...r } }; drawModal(); } } };
+  const ackFb = async (id) => { const res = await c.api().ackFeedback(A(), id); ok(res, "Acknowledged"); };
+  return { renderSupport, renderFb, subscribe, badgeCount, banner, forTask, openFeedback, openAction, openExisting, ackFb };
 }

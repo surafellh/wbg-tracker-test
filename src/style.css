@@ -341,3 +341,32 @@ span.ref{cursor:default}
 .pv-doc table{border-collapse:collapse}.pv-doc td,.pv-doc th{border:1px solid var(--line);padding:4px 8px}
 .pv-slide{border:1px solid var(--line);border-radius:10px;padding:14px 18px;margin-bottom:12px}
 .pv-tabs{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px}
+
+/* ---- Stage 3b: discussion, bell menu, print ---- */
+.cmt-list{display:flex;flex-direction:column;gap:8px}
+.cmt{border:1px solid var(--line);border-radius:10px;padding:8px 12px;background:var(--surface)}
+.cmt.mine{border-color:var(--ghost);background:var(--brand-soft)}
+.cmt-body{white-space:pre-wrap;word-break:break-word;margin-top:2px}
+.mention{color:var(--brand);background:var(--brand-soft);border-radius:4px;padding:0 3px}
+.cmt-new{position:relative;display:flex;flex-direction:column;gap:8px}
+.cmt-new textarea{width:100%;box-sizing:border-box}
+.sug{position:absolute;left:0;right:0;bottom:56px;z-index:5;background:var(--surface);border:1px solid var(--line);border-radius:10px;box-shadow:0 8px 24px rgba(0,0,0,.25);overflow:hidden}
+.sug-i{display:block;width:100%;text-align:left;padding:8px 12px;background:none;border:0;border-bottom:1px solid var(--line);cursor:pointer;color:inherit;font:inherit}
+.sug-i:hover,.sug-i:focus{background:var(--brand-soft)}
+.bell-menu{position:fixed;z-index:1300;width:min(360px,calc(100vw - 16px));max-height:70vh;overflow:auto;background:var(--surface);color:var(--ink,inherit);border:1px solid var(--line);border-radius:12px;box-shadow:0 12px 36px rgba(0,0,0,.35)}
+.bm-i{display:block;width:100%;text-align:left;padding:10px 12px;background:none;border:0;border-top:1px solid var(--line);cursor:pointer;color:inherit;font:inherit}
+.bm-i:hover,.bm-i:focus{background:var(--brand-soft)}
+@media print{
+  @page{size:landscape;margin:10mm}
+  body{background:#fff!important;color:#000!important}
+  header.hero,nav.tabs,.toast,.save-bar,#modalRoot,#xModalRoot,#viewRoot,#bellMenu,.dash-filters,.panel-head .toolbar,.banner{display:none!important}
+  button:not(.ref):not(.tag):not(.kid-tgl){display:none!important}
+  .wrap{max-width:none!important;padding:0!important}
+  .panel{box-shadow:none!important;break-inside:avoid}
+  .scroll{overflow:visible!important}
+  table{font-size:10px}
+  body.print-panel #main,body.print-panel header.hero{display:none!important}
+  body.print-panel .overlay{position:static!important;background:none!important;padding:0!important;display:block!important}
+  body.print-panel .task-panel{max-height:none!important;max-width:none!important;box-shadow:none!important;overflow:visible!important}
+  body.print-panel .panel-foot,body.print-panel .cmt-new{display:none!important}
+}

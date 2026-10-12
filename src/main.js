@@ -413,7 +413,7 @@ applyPlugin(jsPDF); window.jspdf = { jsPDF }; window.XLSX = XLSX;
           <input type="text" id="fQ" placeholder="Search by reference, task, department or owner" value="${esc(f.q)}" aria-label="Search">
           <label class="small"><input type="checkbox" id="fGroup" ${f.group ? "checked" : ""}> Group by department</label>
         </div>
-        <div class="toolbar"><span class="small muted">${list.length} tasks</span>${downloads ? `<button class="btn" id="tasksPdfBtn">PDF</button><button class="btn" id="tasksXlsxBtn">Excel</button><button class="btn" id="exportBtn">CSV</button>` : ""}</div>
+        <div class="toolbar"><span class="small muted">${list.length} tasks</span><button class="btn" id="printBtn" type="button">Print</button>${downloads ? `<button class="btn" id="tasksPdfBtn">PDF</button><button class="btn" id="tasksXlsxBtn">Excel</button><button class="btn" id="exportBtn">CSV</button>` : ""}</div>
       </div>
       ${list.length ? `<div class="scroll"><table><thead><tr>${readHead("tasks")}</tr></thead><tbody>${body}</tbody></table></div>` : `<div class="empty"><b>No tasks match</b>Change the filters, or pick another period.</div>`}
     </div>`;
@@ -565,7 +565,7 @@ applyPlugin(jsPDF); window.jspdf = { jsPDF }; window.XLSX = XLSX;
     document.querySelectorAll("nav.tabs button").forEach(b => b.setAttribute("aria-selected", String(b.dataset.tab===state.tab)));
     $("#unitsTabBtn").hidden = !isAppr(); $("#peopleTabBtn").hidden = !isAppr();
     const nb = X.badgeCount(), fbb = $("#fbCount"); if (fbb) { fbb.textContent = nb; fbb.hidden = !nb; }
-    const np = pendingFor().length, ab = $("#apprCount"); if (ab) { ab.textContent = np; ab.hidden = !np; } const bb = $("#bellBtn"); if (bb) bb.classList.toggle("has", !!np);
+    const np = pendingFor().length, ab = $("#apprCount"); if (ab) { ab.textContent = np; ab.hidden = !np; } const nm = (state.mentions || []).length, bb = $("#bellBtn"); if (bb) { bb.classList.toggle("has", !!(np + nm)); bb.title = np + nm ? `${nm ? nm + " mention" + (nm === 1 ? "" : "s") : ""}${nm && np ? " · " : ""}${np ? np + " waiting for approval" : ""}` : "Notifications"; bb.setAttribute("aria-label", "Notifications: " + bb.title); }
     const role = me ? roleText(me) + (me.unit && !isAppr() && me.role !== "executive" ? " · " + unitName(me.unit) : "") : "";
     $("#whoBtn").innerHTML = me ? `<b>${esc(me.name)}</b> · ${esc(role)}` : "Sign in";
     $("#modeChip").hidden = dataMode !== "local";
@@ -1024,6 +1024,7 @@ applyPlugin(jsPDF); window.jspdf = { jsPDF }; window.XLSX = XLSX;
     if (active) { const el = document.getElementById(active); if (el && el.focus) { el.focus(); if (el.setSelectionRange && el.type==="text") { const n = el.value.length; try { el.setSelectionRange(n,n); } catch(e){} } } }
     fillPeople(); fetchCarry(); fetchNext();
     if (state.panel) renderPanel();
+    if (state.pendingOpen && state.plansLoaded && state.pendingOpen.week === state.week) { const po = state.pendingOpen; state.pendingOpen = null; const hit = ((state.plans[po.unit] || {}).tasks || []).find(t => t.ref === po.ref); if (hit) { state.panel = { u: po.unit, id: hit.id }; renderPanel(); } else toast("This task was not found in that week."); }
     if (state.pendingPanel && (state.tab === "update" || state.tab === "plan")) { const pp = state.pendingPanel; state.pendingPanel = null; if (panelDraft(pp.u) && panelDraft(pp.u).tasks.some(x => x.id === pp.id)) { state.panel = { u: pp.u, id: pp.id }; renderPanel(); } }
     if (state.tab === "dashboard") ensureDash();
   }
@@ -1127,6 +1128,7 @@ applyPlugin(jsPDF); window.jspdf = { jsPDF }; window.XLSX = XLSX;
     else if (t.id==="mRefresh") loadMonth();
     else if (t.id==="mPdf") exportMonthPdf();
     else if (t.id==="mXlsx") exportMonthXlsx();
+    else if (t.id==="printBtn") window.print();
     else if (t.id==="saveBtn") saveDraft();
     else if (t.id==="discardBtn") { state.unlock = new Set(); loadDraft(); render(); toast("Changes discarded"); }
     else if (t.id==="carryBtn") openBf();
@@ -1242,7 +1244,7 @@ applyPlugin(jsPDF); window.jspdf = { jsPDF }; window.XLSX = XLSX;
     render();
   });
   main.addEventListener("keydown", e => { const h = e.target.closest && e.target.closest("th[data-sort]"); if (h && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); h.click(); } });
-  $("#bellBtn").onclick = () => goTab("approvals");
+  $("#bellBtn").onclick = bellMenu;
   function goTab(to){ const b = document.querySelector(`nav.tabs button[data-tab="${to}"]`); if (b) b.click(); }
   // A new empty task in a unit's draft; its reference number is requested right away.
   function makeTask(u, extra){
@@ -1280,7 +1282,7 @@ applyPlugin(jsPDF); window.jspdf = { jsPDF }; window.XLSX = XLSX;
     const locked = lk ? `<div class="small muted">🔒 Saved task: the title, outcome, type, department, due date and priority are fixed. Use <b>Request change</b> in the table to ask Group Strategy.</div>` : "";
     root.innerHTML = `<div class="overlay" id="pnOverlay"><div class="modal wide task-panel" role="dialog" aria-modal="true" aria-label="Task ${esc(t.ref || "")}">
       <div class="panel-head"><div><div><span class="ref big">${esc(t.ref || "numbering…")}</span> ${t.parent ? `<span class="tag">↳ under ${esc(t.parent)}</span>` : ""} <span class="tag">${esc(unitName(u))}</span> ${t.carried ? '<span class="tag">carried</span>' : ""}</div></div>
-        <div class="toolbar">${!ed && editable === false && state.tab !== "update" && state.tab !== "plan" && canEdit(u) && state.filter.period !== "month" && !state.panel.ro ? `<button class="btn" id="pnEdit">Edit in this week's update</button>` : ""}<button class="icon-btn" id="pnClose" aria-label="Close">×</button></div></div>
+        <div class="toolbar">${!ed && editable === false && state.tab !== "update" && state.tab !== "plan" && canEdit(u) && state.filter.period !== "month" && !state.panel.ro ? `<button class="btn" id="pnEdit">Edit in this week's update</button>` : ""}<button class="btn" id="pnPrint" type="button">Print</button><button class="icon-btn" id="pnClose" aria-label="Close">×</button></div></div>
       <div class="panel-body">
         ${locked}
         ${fld("Task or deliverable", ed && !lk ? `<textarea class="grow" rows="2" id="p-title" data-pf="title">${esc(t.title)}</textarea>` : `<div class="p-val"><b>${esc(t.title) || "(no title)"}</b></div>`)}
@@ -1312,16 +1314,102 @@ applyPlugin(jsPDF); window.jspdf = { jsPDF }; window.XLSX = XLSX;
         <h3 class="p-h">Evidence</h3>
         ${ev || '<div class="small muted">No files attached.</div>'}
         ${ed ? `<div><label class="btn small ev-add">📎 Attach<input type="file" multiple accept="${EVIDENCE.accept}" id="pnFile" hidden></label></div>` : ""}
+        ${t.ref ? fbSection(u, t) : ""}
+        ${t.ref ? threadSection(u, t) : ""}
       </div>
       <div class="panel-foot toolbar">${editable ? `<button class="btn primary" id="pnSave" ${state.dirty ? "" : "disabled"}>Save plan</button>` : ""}<button class="btn" id="pnClose2">Close</button>${editable && state.dirty ? '<span class="small" style="color:var(--accent)"><b>Unsaved changes</b></span>' : ""}</div>
     </div></div>`;
     root.querySelectorAll("textarea.grow").forEach(grow);
+    if (t.ref && state.panel.loadedRef !== t.ref && !state.panel.loading) { const pn = state.panel; pn.loading = true; pn.loadedRef = t.ref; loadThread().finally(() => { pn.loading = false; }); }
     if (keep) { const el = document.getElementById(keep.id); if (el && el.focus) { el.focus(); try { if (keep.s != null) el.setSelectionRange(keep.s, keep.e); } catch (x) {} } }
   }
+  // ----- feedback and corrective actions that belong to this task -----
+  function fbSection(u, t){
+    const { fbs, acts } = X.forTask(u, t.ref);
+    const canAct = isAppr() || canLead(u), canFb = canFeedback(me);
+    const fb = fbs.map(f => `<div class="fb-card${f.ackAt ? "" : " new"}"><div class="fb-top"><span class="pill ${f.from === "CEO" ? "s-bad" : f.from === "DCEO" ? "s-prog" : "s-done"}">${esc(f.from)}</span> <span class="small muted">${esc(fmt((f.createdAt || "").slice(0, 10)))}${f.by ? " · " + esc(f.by) : ""}</span></div><div class="fb-body">${esc(f.body)}</div>
+      <div class="fb-foot small">${f.ackAt ? `<span class="muted">Acknowledged by ${esc(f.ackBy)} on ${esc(fmt(f.ackAt.slice(0, 10)))}</span>` : (canLead(u) ? `<button class="btn small" data-pfb-ack="${esc(f.id)}">Acknowledge</button> ` : '<span class="muted">Waiting for the unit to acknowledge</span>')}${canFb ? ` <button class="btn small ghost" data-pfb-edit="${esc(f.id)}">Edit</button>` : ""}${canAct ? ` <button class="btn small ghost" data-pact-from="${esc(f.id)}">Log a corrective action</button>` : ""}</div></div>`).join("");
+    const ac = acts.map(a => { const late = a.due && a.due < todayIso && ["Open", "In progress"].includes(a.status); return `<div class="fb-card"><div class="fb-top"><span class="pill ${a.status === "Done" || a.status === "Closed" ? "s-done" : a.status === "In progress" ? "s-prog" : "s-not"}">${esc(a.status)}</span> <span class="small muted">${esc(a.source)}${a.owner ? " · " + esc(a.owner) : ""}${a.due ? ` · due ${esc(fmt(a.due))}${late ? " (overdue)" : ""}` : ""}</span></div>
+      <div class="fb-body"><b>Issue:</b> ${esc(a.issue)}<br><b>Action:</b> ${esc(a.action)}</div><div class="fb-foot small"><button class="btn small ghost" data-pact-open="${esc(a.id)}">${canLead(u) ? "Open / update" : "View"}</button></div></div>`; }).join("");
+    return `<h3 class="p-h">Feedback and corrective actions</h3>
+      ${fb || ac ? fb + ac : '<div class="small muted">None linked to this task yet.</div>'}
+      <div class="toolbar">${canFb ? '<button class="btn small" id="pnFb" type="button">＋ Give feedback on this task</button>' : ""}${canAct ? '<button class="btn small" id="pnAct" type="button">＋ Log a corrective action</button>' : ""}</div>`;
+  }
+  // ----- discussion with @mentions -----
+  const mentionHtml = c => { let h = esc(c.body); (c.mentions || []).forEach(m => { const t = "@" + esc(m.name); h = h.split(t).join(`<b class="mention">${t}</b>`); }); return h.replace(/\n/g, "<br>"); };
+  const stamp = at => { const d = new Date(at); return isNaN(d) ? "" : `${fmt(at.slice(0, 10))} ${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`; };
+  function threadSection(u, t){
+    const pn = state.panel, list = pn.comments;
+    const body = list === null || list === undefined ? '<div class="small muted">Loading the discussion…</div>'
+      : pn.threadErr ? `<div class="small muted">You cannot see the discussion of this task.</div>`
+      : list.length ? list.map(c => `<div class="cmt${c.byId && c.byId === (me && me.id) ? " mine" : ""}"><div class="small"><b>${esc(c.by || "")}</b> <span class="muted">${esc(stamp(c.at))}</span></div><div class="cmt-body">${mentionHtml(c)}</div></div>`).join("") : '<div class="small muted">No comments yet. Start the discussion, and use @ to bring someone in.</div>';
+    return `<h3 class="p-h">Discussion</h3><div class="cmt-list" id="pnThread">${body}</div>
+      ${pn.threadErr ? "" : `<div class="cmt-new"><textarea id="p-comment" rows="3" placeholder="Write a comment. Type @ to mention someone." maxlength="4000">${esc(pn.draft || "")}</textarea><div id="pnSug" class="sug" hidden></div>
+        <div class="toolbar"><button class="btn primary" id="pnPost" type="button">Post comment</button><span class="small muted">Mentioned people get a notification on the bell.</span></div></div>`}`;
+  }
+  async function loadThread(){
+    const pn = state.panel, pk = panelTask(); if (!pn || !pk || !pk.t.ref) return;
+    const ref = pk.t.ref, u = pn.u;
+    try {
+      const r = await api.taskComments(auth(), u, ref), pp = pn.people ? null : await api.mentionables(auth(), u);
+      if (state.panel !== pn) return;
+      pn.threadErr = r.error || ""; pn.comments = r.error ? [] : (r.comments || []); if (pp && !pp.error) pn.people = pp.people || [];
+      pn.loadedRef = ref; renderPanel(); if (document.activeElement && document.activeElement.id === "p-comment") mentionSuggest();
+      if (!r.error) api.readMentions(auth(), u, ref).then(() => refreshMentions()).catch(() => {});
+    } catch (e) { if (state.panel === pn) { pn.comments = []; pn.threadErr = "x"; renderPanel(); } }
+  }
+  setInterval(() => { if (state.panel && !document.hidden && document.activeElement && document.activeElement.id !== "p-comment") loadThread(); }, 30000);
+  function mentionSuggest(){
+    const ta = $("#p-comment"), box = $("#pnSug"), pn = state.panel; if (!ta || !box || !pn) return;
+    const before = ta.value.slice(0, ta.selectionStart), m = /@([^\s@]*)$/.exec(before);
+    if (!m) { box.hidden = true; return; }
+    const q = m[1].toLowerCase(), me_ = me && me.id;
+    const hits = (pn.people || []).filter(p => p.id !== me_ && p.name.toLowerCase().includes(q)).slice(0, 6);
+    box.innerHTML = hits.map(p => `<button type="button" class="sug-i" data-pm="${esc(p.id)}">${esc(p.name)} <span class="small muted">${esc(p.title || ROLE_LABEL[p.role] || p.role)}</span></button>`).join("") || '<div class="small muted" style="padding:6px 10px">No one found</div>';
+    box.hidden = false;
+  }
+  async function postComment(){
+    const pn = state.panel, pk = panelTask(); if (!pn || !pk) return;
+    const body = (pn.draft || "").trim(); if (!body) { toast("Write a comment first"); return; }
+    const mentions = Object.entries(pn.ment || {}).filter(([id, name]) => body.includes("@" + name)).map(([id]) => ({ id }));
+    const b = $("#pnPost"); if (b) b.disabled = true;
+    try {
+      const r = await api.addComment(auth(), { unit: pn.u, ref: pk.t.ref, taskId: pk.t.id, week: state.week, body, mentions });
+      if (r.error) { toast(errText(r)); if (b) b.disabled = false; return; }
+      pn.draft = ""; pn.ment = {}; toast(mentions.length ? "Posted. The people you mentioned were notified." : "Posted"); await loadThread();
+    } catch (e) { toast(errText(e)); if (b) b.disabled = false; }
+  }
+  // ----- the bell: mentions and approvals -----
+  state.mentions = [];
+  async function refreshMentions(){
+    if (!me) return;
+    try { const r = await api.myMentions(auth()); state.mentions = Array.isArray(r) ? r : []; } catch (e) { return; }
+    renderHero();
+  }
+  setInterval(() => { if (me && !document.hidden) refreshMentions(); }, 60000);
+  function openTaskByRef(unit, ref, week){
+    const hit = ((state.plans[unit] || {}).tasks || []).find(t => t.ref === ref);
+    if (hit) { state.pendingOpen = null; state.panel = { u: unit, id: hit.id }; renderPanel(); return; }
+    if (week && week !== state.week) { if (state.dirty) { toast("Save or discard your changes first"); return; } state.pendingOpen = { unit, ref, week }; setWeek(week); return; }
+    toast("This task is not in the week you are viewing, or you cannot see it.");
+  }
+  function closeBellMenu(){ const m = $("#bellMenu"); if (m) m.remove(); }
+  function bellMenu(){
+    if ($("#bellMenu")) { closeBellMenu(); return; }
+    const np = pendingFor().length, ms = state.mentions;
+    const items = ms.map((m, i) => `<button type="button" class="bm-i" data-bm="${i}"><b>${esc(m.by)}</b> mentioned you on <span class="ref">${esc(m.ref)}</span> <span class="small muted">${esc(unitName(m.unit))}</span><div class="small muted">${esc(m.snippet)}</div></button>`).join("");
+    const m = document.createElement("div"); m.id = "bellMenu"; m.className = "bell-menu";
+    m.innerHTML = `<div class="small muted" style="padding:8px 12px">Notifications</div>${items}${np ? `<button type="button" class="bm-i" data-bm-appr="1"><b>${np}</b> change${np === 1 ? "" : "s"} waiting for approval</button>` : ""}${!items && !np ? '<div class="small muted" style="padding:10px 12px 14px">Nothing new.</div>' : ""}`;
+    document.body.appendChild(m);
+    const r = $("#bellBtn").getBoundingClientRect(); m.style.top = (r.bottom + 8) + "px"; m.style.right = Math.max(8, innerWidth - r.right) + "px";
+    m.addEventListener("click", e => { const b = e.target.closest("button"); if (!b) return; closeBellMenu(); if (b.dataset.bmAppr) goTab("approvals"); else { const x = state.mentions[Number(b.dataset.bm)]; if (x) openTaskByRef(x.unit, x.ref, x.week); } });
+  }
+  document.addEventListener("click", e => { if ($("#bellMenu") && !e.target.closest("#bellMenu") && !e.target.closest("#bellBtn")) closeBellMenu(); });
   const panelRoot = $("#panelRoot");
   if (panelRoot) {
     const pOn = () => panelTask();
     panelRoot.addEventListener("input", e => {
+      if (e.target.id === "p-comment") { state.panel.draft = e.target.value; mentionSuggest(); return; }
       const el = e.target, pk = pOn(); if (!pk || !pk.editable) return;
       const u = state.panel.u;
       if (el.dataset.pk) { const k = pk.tasks.find(x => x.id === el.dataset.pk); if (k) { applyField(u, k, "weight", el); markDirty(); const b = $("#pnSave"); if (b) b.disabled = false; } return; }
@@ -1335,6 +1423,15 @@ applyPlugin(jsPDF); window.jspdf = { jsPDF }; window.XLSX = XLSX;
       if (e.target.id === "pnOverlay" || e.target.id === "pnClose" || e.target.id === "pnClose2") { closePanel(); return; }
       const b = e.target.closest("button"); if (!b) return;
       const pk = pOn(); if (!pk) return; const u = state.panel.u, t = pk.t;
+      if (b.dataset.pm) { const pn = state.panel, ta = $("#p-comment"), person = (pn.people || []).find(p => p.id === b.dataset.pm); if (person && ta) { const pos = ta.selectionStart, before = ta.value.slice(0, pos).replace(/@[^\s@]*$/, ""), after = ta.value.slice(pos); ta.value = before + "@" + person.name + " " + after; pn.draft = ta.value; (pn.ment = pn.ment || {})[person.id] = person.name; ta.focus(); const at = (before + "@" + person.name + " ").length; ta.setSelectionRange(at, at); $("#pnSug").hidden = true; } return; }
+      if (b.id === "pnPost") { postComment(); return; }
+      if (b.id === "pnPrint") { printPanel(); return; }
+      if (b.id === "pnFb") { X.openFeedback(u, t.ref, state.week); return; }
+      if (b.id === "pnAct") { X.openAction(u, t.ref, t.title); return; }
+      if (b.dataset.pfbAck) { X.ackFb(b.dataset.pfbAck); return; }
+      if (b.dataset.pfbEdit) { X.openExisting("fb", b.dataset.pfbEdit); return; }
+      if (b.dataset.pactOpen) { X.openExisting("act", b.dataset.pactOpen); return; }
+      if (b.dataset.pactFrom) { const f = (X.forTask(u, t.ref).fbs || []).find(x => x.id === b.dataset.pactFrom) || {}; X.openAction(u, t.ref, t.title); setTimeout(() => { const i = document.getElementById("ac-issue"); if (i && !i.value) i.value = f.body || ""; }); return; }
       if (b.id === "pnSave") { await saveDraft(); renderPanel(); return; }
       if (b.id === "pnEdit") { const id = t.id; state.panel = null; renderPanel(); openUnit(u); state.pendingPanel = { u, id }; return; }
       if (b.id === "pnAddKid") { const nt = makeTask(u, { parent: t.ref, dept: t.dept || "", owner: t.owner || "", due: t.due || "", priority: t.priority || "Medium", category: t.category || "" }); state.panel = { u, id: nt.id }; render(); setTimeout(() => { const el = document.getElementById("p-title"); el && el.focus(); }); return; }
@@ -1348,6 +1445,7 @@ applyPlugin(jsPDF); window.jspdf = { jsPDF }; window.XLSX = XLSX;
     });
   }
   document.addEventListener("keydown", e => { if (e.key === "Escape" && state.panel && !$("#viewRoot").innerHTML) closePanel(); });
+  function printPanel(){ document.body.classList.add("print-panel"); const done = () => { document.body.classList.remove("print-panel"); window.removeEventListener("afterprint", done); }; window.addEventListener("afterprint", done); window.print(); }
   function downloadEvidence(e){
     api.evidenceUrl(e.path, e.name).then(url => { const a = document.createElement("a"); a.href = url; a.target = "_blank"; a.rel = "noopener"; if (api.mode === "local") a.download = e.name; document.body.appendChild(a); a.click(); a.remove(); }).catch(() => toast("Could not open the file"));
   }
@@ -1985,7 +2083,7 @@ applyPlugin(jsPDF); window.jspdf = { jsPDF }; window.XLSX = XLSX;
     state.level = store.get("wp-level") || ((isAppr() || me.role === "executive") ? "deliverables" : "tasks");
     if (!state.editUnit || state.editUnit === ALL) { const mu = myUnit(); if (mu) { state.editUnit = mu; store.set("wp-unit", mu); } }
     if (!isAppr() && state.editUnit && !myUnit() && me.role !== "executive" && me.role !== "leader") state.editUnit = null;
-    subscribeRequests(); X.subscribe();
+    subscribeRequests(); X.subscribe(); refreshMentions();
     window.addEventListener("offline", () => banner("You are offline. Changes will not save until the connection returns."));
     window.addEventListener("online", () => { bannerMsg = ""; subscribePlans(); render(); });
     db.collection("units").onSnapshot(snap => {

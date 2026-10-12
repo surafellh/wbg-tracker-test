@@ -77,6 +77,7 @@ export function renderDashboard(c) {
       <div class="panel"><div class="panel-head"><h2>Weekly trend</h2><span class="small muted">% of tasks done and average % complete, per week</span></div>${trendChart(series, c)}</div>
       <div class="panel"><div class="panel-head"><h2>Escalations</h2><span class="small muted">Found automatically</span></div>${escalations(c)}</div>
     </div>
+    <div class="panel" style="margin-top:16px"><div class="panel-head"><h2>Completed by week</h2><span class="small muted">Tasks finished in each week (by completion date)</span></div>${completedChart(units, c)}</div>
     <div class="grid2 even" style="margin-top:16px">
       <div class="panel"><div class="panel-head"><h2>Units by average % complete</h2><span class="small muted">${esc(weekLabel(c.week))}</span></div>${rankChart(cur.per, c)}</div>
       <div class="panel"><div class="panel-head"><h2>Status mix by unit</h2><span class="small muted">Share of each unit's tasks</span></div>${statusChart(cur.per, c)}</div>
@@ -108,6 +109,30 @@ function trendChart(series, c) {
   const legend = `<div class="legend">${lines.map(([, col, lbl]) => `<span><i class="key-line" style="background:${col}"></i>${lbl}</span>`).join("")}</div>`;
   const table = `<details class="viz-table"><summary class="small muted">Show the numbers</summary><div class="scroll"><table><thead><tr><th>Week</th><th>Tasks</th><th>Done</th><th>% done</th><th>Avg. complete</th><th>Units with a plan</th></tr></thead><tbody>${series.map((s) => `<tr><td>${esc(fmt(s.w))}</td><td class="num">${s.total}</td><td class="num">${s.done}</td><td class="num">${s.donePct ?? "–"}${s.donePct === null ? "" : "%"}</td><td class="num">${s.avg ?? "–"}${s.avg === null ? "" : "%"}</td><td class="num">${s.reporting}</td></tr>`).join("")}</tbody></table></div></details>`;
   return `<div class="chart-wrap">${legend}${svg}${table}</div>`;
+}
+
+// Tasks finished in each week, counted by their completion date (Saturday to Friday), once per task.
+function completedChart(units, c) {
+  const { esc, fmt } = c.h;
+  const rows = c.weeks.map((w) => {
+    const end = weekEndOf(w), seen = new Set(); let n = 0;
+    units.forEach((u) => real((c.byWeek[w] || {})[u.id]).forEach((t) => {
+      if (t.status !== "Done" || !t.completedAt || t.completedAt < w || t.completedAt > end) return;
+      const key = u.id + "|" + (t.ref || t.id); if (!seen.has(key)) { seen.add(key); n++; }
+    }));
+    return { w, n };
+  });
+  const max = Math.max(1, ...rows.map((r) => r.n)), W = Math.max(300, Math.min(c.width * 1.5, 900)), H = 220, L = 34, R = 10, T = 16, B = 30, iw = W - L - R, ih = H - T - B;
+  const bw = Math.min(46, (iw / rows.length) * 0.65), cx = (i) => L + (i + 0.5) * (iw / rows.length), y = (v) => T + ih - (v / max) * ih;
+  const ticks = [0, Math.ceil(max / 2), max].filter((v, i, a) => a.indexOf(v) === i);
+  const grid = ticks.map((v) => `<line x1="${L}" x2="${L + iw}" y1="${y(v)}" y2="${y(v)}" class="gridline"/><text x="${L - 6}" y="${y(v) + 4}" text-anchor="end" class="axis">${v}</text>`).join("");
+  const step = Math.ceil(rows.length / Math.max(2, Math.floor(iw / 70)));
+  const bars = rows.map((r, i) => `<rect x="${cx(i) - bw / 2}" y="${y(r.n)}" width="${bw}" height="${Math.max(r.n ? 2 : 0, ih - (y(r.n) - T))}" rx="3" fill="${r.w === c.week ? "var(--viz-1)" : "var(--viz-2)"}" data-tip="${esc(`<b>Week of ${fmt(r.w)}</b><br>Completed: ${r.n}`)}"/>${r.n ? `<text x="${cx(i)}" y="${y(r.n) - 5}" text-anchor="middle" class="endlbl">${r.n}</text>` : ""}`).join("");
+  const xl = rows.map((r, i) => (i % step === 0 || i === rows.length - 1) ? `<text x="${cx(i)}" y="${H - 8}" text-anchor="middle" class="axis${r.w === c.week ? " cur" : ""}">${esc(fmt(r.w))}</text>` : "").join("");
+  const total = rows.reduce((a, r) => a + r.n, 0);
+  return `<div class="chart-wrap"><svg class="chart" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" role="img" aria-label="Tasks completed in each week">${grid}${bars}${xl}</svg>
+    <div class="small muted">${total} task${total === 1 ? "" : "s"} completed in these ${rows.length} weeks. The selected week is highlighted. Tasks need a completion date to be counted.</div>
+    <details class="viz-table"><summary class="small muted">Show the numbers</summary><div class="scroll"><table><thead><tr><th>Week</th><th>Completed</th></tr></thead><tbody>${rows.map((r) => `<tr><td>${esc(fmt(r.w))}</td><td class="num">${r.n}</td></tr>`).join("")}</tbody></table></div></details></div>`;
 }
 
 function rankChart(per, c) {

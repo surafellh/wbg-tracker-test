@@ -198,3 +198,12 @@ What is new
 - **Evidence preview:** View opens PDF and images directly, Excel as tables, Word as formatted text, PowerPoint as slide text only (.docx, .xlsx, .pptx), text and CSV as text. Download is always there.
 - **Due colours:** overdue in red, due within 3 days in amber.
 - Not in 3a (coming in 3b): discussion and @mentions, bell opening the task, feedback inside the panel, completed-by-week chart, print.
+
+## Stage 3b: discussion, mentions, bell, task feedback, completed-by-week, print
+**Database step (once, BEFORE using the new site):** run `supabase/upgrade-9-task-discussion.sql` in the Supabase SQL Editor (test project first). It adds comments and mention notifications (reached only through checked functions), a task reference on feedback and corrective actions, and updates the two save functions. Safe to run twice.
+
+- **Discussion** in the task panel. Anyone who can work with the unit (unit members, leaders, the CEO/DCEO, Group Strategy) can read and write. Type `@` to mention a person of that unit or an executive; they get a notification.
+- **Bell:** shows mentions and approvals waiting. A mention opens the task with its discussion.
+- **Feedback and corrective actions inside the task panel:** give feedback on the task (CEO, DCEO, Group Strategy), log a corrective action, acknowledge feedback, open an action. The Feedback tab still gives the overview of all of them, with the task reference shown.
+- **Dashboard:** new "Completed by week" chart (tasks counted by completion date, Saturday to Friday).
+- **Print:** Print button in All tasks and in the task panel (landscape, buttons hidden).

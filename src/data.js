@@ -20,8 +20,8 @@ const COLLECTIONS = {
   activity: { table: "activity", map: { ts: "ts", by: "by_name", unit: "unit_id", week: "week", action: "action", summary: "summary", details: "details" }, ts: ["ts"], nullText: ["week"] },
   requests: { table: "change_requests", map: { createdAt: "created_at", unit: "unit_id", week: "week", planId: "plan_id", by: "requested_by", status: "status", summary: "summary", details: "details", patch: "patch", decidedBy: "decided_by", decidedAt: "decided_at", note: "decision_note" }, ts: ["createdAt", "decidedAt"] },
   support: { table: "support_requests", map: { ref: "ref", function: "function_id", requester: "requester", category: "category", description: "description", priority: "priority", requested: "date_requested", status: "status", responded: "response_date", action: "action_taken", respondedBy: "responded_by", evidence: "evidence_ref", followUp: "follow_up", remarks: "remarks", createdBy: "created_by", createdAt: "created_at", updatedBy: "updated_by", updatedAt: "updated_at" }, ts: ["createdAt", "updatedAt"], nullText: ["requested", "responded"] },
-  feedback: { table: "feedback", map: { unit: "unit_id", week: "week", from: "from_role", by: "by_name", body: "body", createdAt: "created_at", ackBy: "ack_by", ackAt: "ack_at" }, ts: ["createdAt", "ackAt"], nullText: ["week", "ackAt"] },
-  actions: { table: "corrective_actions", map: { unit: "unit_id", week: "week", source: "source", issue: "issue", action: "action", owner: "owner", due: "due", status: "status", taskTitle: "task_title", notes: "notes", createdBy: "created_by", createdAt: "created_at", updatedBy: "updated_by", updatedAt: "updated_at", closedAt: "closed_at" }, ts: ["createdAt", "updatedAt", "closedAt"], nullText: ["week", "due", "closedAt"] },
+  feedback: { table: "feedback", map: { unit: "unit_id", week: "week", from: "from_role", by: "by_name", body: "body", taskRef: "task_ref", createdAt: "created_at", ackBy: "ack_by", ackAt: "ack_at" }, ts: ["createdAt", "ackAt"], nullText: ["week", "ackAt"] },
+  actions: { table: "corrective_actions", map: { unit: "unit_id", week: "week", source: "source", issue: "issue", action: "action", owner: "owner", due: "due", status: "status", taskTitle: "task_title", taskRef: "task_ref", notes: "notes", createdBy: "created_by", createdAt: "created_at", updatedBy: "updated_by", updatedAt: "updated_at", closedAt: "closed_at" }, ts: ["createdAt", "updatedAt", "closedAt"], nullText: ["week", "due", "closedAt"] },
   history: { table: "row_history", map: { tbl: "tbl", rowId: "row_id", op: "op", old: "old_row", at: "changed_at", by: "changed_by" }, ts: ["at"] },
 };
 // A history row stores the database row; turn it back into a plan document.
@@ -171,6 +171,8 @@ function createSupabaseData() {
     bumpAll();
     return data || { error: "no_response" };
   };
+  // reads that change nothing: no refresh of the live lists
+  const rpcq = async (fn, args) => { const { data, error } = await sb.rpc(fn, args || {}); if (error) fail(error); return data || { error: "no_response" }; };
   const api = {
     mode: "supabase",
     // ----- sign-in (Supabase Auth, one-time code sent to the email) -----
@@ -193,6 +195,11 @@ function createSupabaseData() {
     async setPassword(password) { const { error } = await sb.auth.updateUser({ password, data: { has_password: true } }); return error ? { error: error.message } : { ok: true }; },
     adminResetPassword: (id) => rpc("wbg_admin_reset_password", { p_user: id }),
     allocRefs: (auth, unit, n) => rpc("wbg_alloc_refs", { p_unit: unit, p_n: n }),
+    taskComments: (auth, unit, ref) => rpcq("wbg_task_comments", { p_unit: unit, p_ref: ref }),
+    mentionables: (auth, unit) => rpcq("wbg_mentionables", { p_unit: unit }),
+    addComment: (auth, c) => rpc("wbg_add_comment", { p_unit: c.unit, p_ref: c.ref, p_task_id: c.taskId || "", p_week: c.week || null, p_body: c.body, p_mentions: c.mentions || [] }),
+    myMentions: () => rpcq("wbg_my_mentions"),
+    readMentions: (auth, unit, ref) => rpcq("wbg_read_mentions", { p_unit: unit, p_ref: ref }),
     onSignedOut(fn) { sb.auth.onAuthStateChange((ev) => { if (ev === "SIGNED_OUT") fn(); }); },
     async publicUnits() { const { data, error } = await sb.rpc("wbg_public_units"); if (error) fail(error); return data || []; },
     async requestAccess(r) { const { data, error } = await sb.rpc("wbg_request_access", { p_email: r.email, p_name: r.name, p_unit: r.unit || "", p_contact: r.contact || "", p_note: r.note || "" }); if (error) return { error: error.message }; return data; },
@@ -331,7 +338,7 @@ function createLocalData() {
   const curId = () => read("wbg_local_session");
   const prof = () => people().find((x) => x.id === curId()) || null;
   // the caller as the database sees them
-  const A = () => { const p = prof(); return p && p.status === "active" && p.setupDone ? { name: p.name, role: p.role, title: p.title, unit: p.unit, departments: p.departments || [] } : {}; };
+  const A = () => { const p = prof(); return p && p.status === "active" && p.setupDone ? { id: p.id, name: p.name, role: p.role, title: p.title, unit: p.unit, departments: p.departments || [] } : {}; };
   const meOut = (p) => (p ? { status: p.status, setupDone: p.setupDone, invited: p.invited, id: p.id, email: p.email, name: p.name, role: p.role, title: p.title, unit: p.unit, departments: p.departments || [] } : null);
   // what each collection shows this person (same as the row level security policies)
   function readFilter(c, items) {
@@ -351,6 +358,7 @@ function createLocalData() {
     if (assignRefs(plans, getStore("units"), counters)) { setStore("plans", plans); write("wbg_local_refs", counters); }
   }
   const isAppr = (a) => isAdmin(a);
+  const discussOk = (a, unit) => !!a.role && (["super_admin", "executive", "leader"].includes(a.role) || a.unit === unit);
   const unitOk = (a, unit) => unitMember(a, unit);
   const leadOk = (a, unit) => unitLead(a, unit);
   const ok = (x) => Promise.resolve({ ok: true, ...(x || {}) });
@@ -463,7 +471,7 @@ function createLocalData() {
       const from = auth.role === "executive" ? auth.title : (row.from || "Group Strategy");
       if (!row.unit || !(row.body || "").trim() || !["CEO", "DCEO", "Group Strategy"].includes(from)) return err("bad_request");
       const old = row.id ? getStore("feedback").find((x) => x.id === row.id) : null;
-      put("feedback", { ackBy: "", ackAt: "", ...(old || {}), id: old ? old.id : (row.id || Date.now().toString(36) + Math.random().toString(36).slice(2, 8)), unit: row.unit, week: row.week || "", from, body: row.body, by: old ? old.by : (auth.name || "").trim(), createdAt: old ? old.createdAt : new Date().toISOString() });
+      put("feedback", { ackBy: "", ackAt: "", ...(old || {}), id: old ? old.id : (row.id || Date.now().toString(36) + Math.random().toString(36).slice(2, 8)), unit: row.unit, week: row.week || "", taskRef: row.taskRef || (old && old.taskRef) || "", from, body: row.body, by: old ? old.by : (auth.name || "").trim(), createdAt: old ? old.createdAt : new Date().toISOString() });
       addActivity(auth.name, row.unit, row.week || "", { action: "feedback", summary: "Feedback from " + from });
       return ok();
     },
@@ -499,6 +507,28 @@ function createLocalData() {
     async signInPassword(email, password) { const e = (email || "").trim().toLowerCase(), p = people().find((x) => x.email === e); if (!p || !p.pw || p.pw !== password) return { error: "Invalid login credentials" }; write("wbg_local_session", p.id); return { profile: meOut(p) }; },
     async hasPassword() { const p = prof(); return !!(p && p.pw); },
     async setPassword(password) { const l = people(), p = l.find((x) => x.id === curId()); if (!p) return { error: "not_signed_in" }; p.pw = password; setPeople(l); return { ok: true }; },
+    // ----- discussion on tasks (same rules as the database functions) -----
+    async taskComments(auth, unit, ref) {
+      if (!discussOk(auth, unit)) return err("not_allowed");
+      return ok({ comments: (read("wbg_local_comments") || []).filter((c) => c.unit === unit && c.ref === ref).sort((a, b) => (a.at < b.at ? -1 : 1)) });
+    },
+    async mentionables(auth, unit) {
+      if (!discussOk(auth, unit)) return err("not_allowed");
+      return ok({ people: people().filter((p) => p.status === "active" && p.setupDone && p.name && (p.unit === unit || ["super_admin", "executive"].includes(p.role))).map((p) => ({ id: p.id, name: p.name, role: p.role, title: p.title })) });
+    },
+    async addComment(auth, c) {
+      if (!discussOk(auth, c.unit)) return err("not_allowed");
+      const body = (c.body || "").trim(); if (!body || !c.ref || body.length > 4000) return err("bad_request");
+      const valid = people().filter((p) => p.status === "active" && p.setupDone && (p.unit === c.unit || ["super_admin", "executive"].includes(p.role)));
+      const ment = (c.mentions || []).map((m) => valid.find((p) => p.id === m.id)).filter(Boolean).map((p) => ({ id: p.id, name: p.name }));
+      const rec = { id: Date.now().toString(36) + Math.random().toString(36).slice(2, 8), unit: c.unit, ref: c.ref, taskId: c.taskId || "", week: c.week || "", byId: auth.id, by: (auth.name || "").trim(), body, mentions: ment, at: new Date().toISOString() };
+      write("wbg_local_comments", [...(read("wbg_local_comments") || []), rec]);
+      write("wbg_local_mentions", [...(read("wbg_local_mentions") || []), ...ment.filter((m) => m.id !== auth.id).map((m) => ({ id: rec.id + m.id, userId: m.id, unit: c.unit, ref: c.ref, taskId: rec.taskId, week: rec.week, by: rec.by, snippet: body.slice(0, 140), at: rec.at, read: false }))]);
+      addActivity(rec.by, c.unit, rec.week, { action: "comment", summary: `Comment on ${c.ref}: ${body.slice(0, 100)}` });
+      return ok({ id: rec.id });
+    },
+    async myMentions(auth) { return (read("wbg_local_mentions") || []).filter((m) => m.userId === auth.id && !m.read).sort((a, b) => (a.at < b.at ? 1 : -1)).slice(0, 50); },
+    async readMentions(auth, unit, ref) { write("wbg_local_mentions", (read("wbg_local_mentions") || []).map((m) => (m.userId === auth.id && m.unit === unit && m.ref === ref ? { ...m, read: true } : m))); return ok(); },
     allocRefs(auth, unit, n) {
       const c = read("wbg_local_refs") || {}, pre = unitPrefixes(getStore("units"));
       const start = (c[unit] || 0) + 1; c[unit] = (c[unit] || 0) + n; write("wbg_local_refs", c);
