@@ -6,7 +6,7 @@ import { createData, configError, planFromRow, EVIDENCE, fileType } from "./data
 import { startGate } from "./gate.js";
 import { groupTasks, rollupOf, rolledPlan, leafPlan, leafTasks, parentChoices, weightOf } from "./rollup.js";
 import { ROLES, ROLE_LABEL, ROLE_HELP, isAdmin, unitMember, deptOk, canUndo, canFeedback, canEditDepartments, roleText } from "./access.js";
-import { LOCKED, planOps, needsApproval, applyOps, addisToday, addisWeekStart, calcPct, CATEGORIES, weekStartOf, weekEndOf, nextWeekOf, prevWeekOf } from "./rules.js";
+import { WEEK_CUTOVER, LOCKED, planOps, needsApproval, applyOps, addisToday, addisWeekStart, calcPct, CATEGORIES, weekStartOf, weekEndOf, nextWeekOf, prevWeekOf } from "./rules.js";
 import { unitAlerts, levelRank, BLOCKED_DAYS } from "./alerts.js";
 import { renderDashboard } from "./dashboard.js";
 import { createExtras } from "./extras.js";
@@ -551,9 +551,9 @@ applyPlugin(jsPDF); window.jspdf = { jsPDF }; window.XLSX = XLSX;
   function unitName(id){ const u = state.units.find(x => x.id===id); return u ? u.name : id; }
   function sortedUnits(){ return [...state.units].sort((a,b) => (a.type||"").localeCompare(b.type||"") || (a.order??99)-(b.order??99) || a.name.localeCompare(b.name)); }
 
-  const GROUPS = { dashboard: ["dashboard"], plans: ["update", "plan", "approvals"], delivery: ["support", "fb"], reports: ["tasks", "monthly"] };
-  const SUB_LABEL = { update: "Progress update", plan: "Next plan", approvals: "Approvals", support: "Business support", fb: "Feedback", tasks: "Weekly report", monthly: "Monthly report" };
-  const PAGE_TITLE = { dashboard: ["Dashboards", "How every unit and function is doing this week."], update: ["Plans", "Update progress on this week's tasks."], plan: ["Plans", "Plan the tasks for next week."], approvals: ["Plans", "Changes waiting for approval."], support: ["Delivery", "Support requested from group functions."], fb: ["Delivery", "Feedback and corrective actions."], tasks: ["Reports", "Every task, filtered and downloadable."], monthly: ["Reports", "Consolidated by Ethiopian calendar month."], follow: ["Follow-up", ""], activity: ["Activity log", "Who changed what, and when."], units: ["Settings · Units", "Group Strategy only."], people: ["Settings · People", "Group Strategy only."] };
+  const GROUPS = { dashboard: ["dashboard"], plans: ["update", "plan", "mplan", "approvals"], delivery: ["support", "fb"], reports: ["tasks", "monthly"] };
+  const SUB_LABEL = { update: "Progress update", plan: "Next plan", mplan: "Monthly plan", approvals: "Approvals", support: "Business support", fb: "Feedback", tasks: "Weekly report", monthly: "Monthly report" };
+  const PAGE_TITLE = { dashboard: ["Dashboards", "How every unit and function is doing this week."], update: ["Plans", "Update progress on this week's tasks."], plan: ["Plans", "Plan the tasks for next week."], mplan: ["Plans", "Plan the month once and split it across its weeks."], approvals: ["Plans", "Changes waiting for approval."], support: ["Delivery", "Support requested from group functions."], fb: ["Delivery", "Feedback and corrective actions."], tasks: ["Reports", "Every task, filtered and downloadable."], monthly: ["Reports", "Consolidated by Ethiopian calendar month."], follow: ["Follow-up", ""], activity: ["Activity log", "Who changed what, and when."], units: ["Settings · Units", "Group Strategy only."], people: ["Settings · People", "Group Strategy only."] };
   const groupOf = t => Object.keys(GROUPS).find(g => GROUPS[g].includes(t)) || "";
   const SM = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
   const weekShort = w => { const a = parse(w), b = parse(weekEndOf(w)); return a.getMonth() === b.getMonth() ? `${SM[a.getMonth()]} ${a.getDate()} – ${b.getDate()}` : `${SM[a.getMonth()]} ${a.getDate()} – ${SM[b.getMonth()]} ${b.getDate()}`; };
@@ -661,6 +661,7 @@ applyPlugin(jsPDF); window.jspdf = { jsPDF }; window.XLSX = XLSX;
     link: '<path d="M10 14a4 4 0 005.7 0l3-3a4 4 0 00-5.7-5.7l-1 1M14 10a4 4 0 00-5.7 0l-3 3a4 4 0 005.7 5.7l1-1"/>', filter: '<path d="M3 5h18l-7 8v6l-4 2v-8z"/>',
     save: '<path d="M5 4h11l3 3v13H5zM8 4v5h7V4M8 20v-6h8v6"/>'
   };
+  const catLabel = k => k === "Revenue" ? "Financial" : (k || "Operational");
   const dueInfo = t => {
     if (!t.due) return { txt: "No date", cls: "mut", sub: "" };
     const n = Math.round((Date.parse(t.due) - Date.parse(todayIso)) / 864e5);
@@ -673,6 +674,8 @@ applyPlugin(jsPDF); window.jspdf = { jsPDF }; window.XLSX = XLSX;
   };
   const priPill = p => p ? `<span class="pill ${p === "High" ? "s-bad" : p === "Medium" ? "s-not" : "s-none"}">${esc(p)}</span>` : '<span class="muted">–</span>';
   function taskRowHtml(u, t, i, ind = 0){
+    if (state.tab === "plan") return planRowHtml(u, t, i);
+    if (pf().kind === "fin") return finRowHtml(u, t, i);
     const key = `${u}|${i}`, ed = rowEd(u, t), lk = isLocked(u, t), free = ed && (!savedTask(u, t) || state.unlock.has(t.id)), dis = ed ? "" : "disabled";
     const kidsL = t.ref ? ((planFor(u) || {}).tasks || []).filter(x => x.parent === t.ref) : [], roll = rollupOf(t, kidsL);
     const auto = (hasTgt(t) && calcPct(t) !== null) || !!roll, pend = pendingTask(u, t.id), carriedN = t.carriedCount || (t.carried ? 1 : 0);
@@ -718,7 +721,71 @@ applyPlugin(jsPDF); window.jspdf = { jsPDF }; window.XLSX = XLSX;
       <td class="c-act"><div class="task-side">${act}</div></td>
     </tr>`;
   }
-  const editHead = () => `<thead><tr>${th("edit","title","Task")}${th("edit","due","Due")}${th("edit","dept","Department")}${th("edit","priority","Priority")}${th("edit","status","Status")}${th("edit","pct","Progress")}<th class="c-act"></th></tr></thead>`;
+  // Next plan: one editable line per planned item (category, due, department, priority, target)
+  function planRowHtml(u, t, i){
+    const ed = rowEd(u, t), lk = isLocked(u, t), free = ed && !lk, key = `${u}|${i}`;
+    const dis = free ? "" : "disabled", fin = t.category === "Revenue";
+    const sub = [t.ref ? `<span class="ref">${esc(t.ref)}</span>` : '<span class="pill s-none">New</span>', t.carried ? '<span class="pill s-not">Carried</span>' : "", t.parent ? `<span class="pill s-none">↳ ${esc(t.parent)}</span>` : "", t.owner ? `<span class="who">${esc(t.owner)}</span>` : "", lk ? `<span class="mi" title="Fixed task">${ico(IC.lock)}</span>` : ""].filter(Boolean).join("");
+    const main = free ? `<textarea class="grow title-in" rows="1" id="t-title-${t.id}" data-f="title" placeholder="Task or product" aria-label="Task">${esc(t.title)}</textarea>` : `<div class="tt">${esc(t.title) || '<span class="muted">(no title)</span>'}</div>`;
+    const act = `<button class="icon-btn ib" type="button" data-open-task="${esc(u)}|${esc(t.id)}" aria-label="Open details" title="Open details">${ico(IC.open)}</button>` + (ed ? (state.confirmDelete === t.id ? `<span class="confirm">Remove? <button class="btn danger small" data-del-yes="${esc(key)}">Yes</button><button class="btn small" data-del-no>No</button></span>` : `<button class="icon-btn ib bad" type="button" data-del="${t.id}" aria-label="Remove task" title="Remove">${ico(IC.trash)}</button>`) : "");
+    return `<tr class="task-row" data-u="${esc(u)}" data-i="${i}" data-id="${esc(t.id)}">
+      <td class="c-task"><div class="task-main">${main}<div class="sub">${sub}</div></div></td>
+      <td class="c-cat" data-l="Category"><select id="t-cat-${t.id}" data-f="category" aria-label="Category" ${dis}><option value="Operational" ${sel(!fin)}>Operational</option><option value="Revenue" ${sel(fin)}>Financial</option></select></td>
+      <td class="c-due" data-l="Due"><input type="date" id="t-due-${t.id}" data-f="due" value="${esc(t.due)}" aria-label="Due date" ${dis}></td>
+      <td class="c-dept" data-l="Department"><select id="t-dept-${t.id}" data-f="dept" aria-label="Department" ${dis}>${deptOptions(u, t)}</select></td>
+      <td class="c-pri" data-l="Priority"><select id="t-pri-${t.id}" data-f="priority" aria-label="Priority" ${dis}><option value="" ${sel(!t.priority)}>Not set</option>${PRIORITIES.map(p => `<option ${sel(p === t.priority)}>${p}</option>`).join("")}</select></td>
+      <td class="c-tgt" data-l="Target"><div class="tg2"><input type="number" step="any" id="t-tg-${t.id}" data-f="target" value="${t.target ?? ""}" placeholder="–" aria-label="Target" ${dis}><input type="text" id="t-ms-${t.id}" data-f="measure" value="${esc(t.measure || "")}" placeholder="unit" maxlength="20" aria-label="Target unit" ${dis}></div></td>
+      <td class="c-act"><div class="task-side">${act}</div></td></tr>`;
+  }
+  // Progress update, Financial: one line per revenue product, actual typed in the row
+  const finPct = t => { const c = calcPct(t); return c === null ? 0 : c; };
+  function finRowHtml(u, t, i){
+    const ed = rowEd(u, t), pct = finPct(t);
+    return `<tr class="task-row" data-u="${esc(u)}" data-i="${i}" data-id="${esc(t.id)}" data-fin="1">
+      <td class="c-task"><div class="tt">${esc(t.title) || '<span class="muted">(no title)</span>'}</div><div class="sub">${t.ref ? `<span class="ref">${esc(t.ref)}</span>` : ""}${t.dept ? `<span class="who">${esc(t.dept)}</span>` : ""}</div></td>
+      <td class="num fin-n" data-l="Target">${hasTgt(t) ? esc(Number(t.target).toLocaleString()) + (t.measure ? ` <span class="small muted">${esc(t.measure)}</span>` : "") : '<span class="muted">–</span>'}</td>
+      <td data-l="Actual"><input type="number" step="any" class="fin-in" id="t-act-${t.id}" data-f="actual" value="${t.actual ?? ""}" placeholder="0" aria-label="Actual" ${ed ? "" : "disabled"}></td>
+      <td data-l="Performance"><div class="pc"><div class="bar"><i class="fin-bar" style="width:${pct}%"></i></div><span class="num small fin-pct">${hasTgt(t) ? pct + "%" : "–"}</span></div></td>
+      <td class="c-act"><div class="task-side"><button class="icon-btn ib" type="button" data-open-task="${esc(u)}|${esc(t.id)}" aria-label="Open details" title="Open details">${ico(IC.open)}</button></div></td></tr>`;
+  }
+  function finTotal(tasks){
+    const withT = tasks.filter(hasTgt), T = withT.reduce((a, t) => a + Number(t.target), 0), A = withT.reduce((a, t) => a + (Number(t.actual) || 0), 0), pct = T > 0 ? Math.min(100, Math.round(A / T * 100)) : 0;
+    return `<tr class="tot"><td><b>Total</b></td><td class="num fin-n" id="finTotT">${T.toLocaleString()}</td><td class="num fin-n" id="finTotA">${A.toLocaleString()}</td><td><div class="pc"><div class="bar"><i id="finTotB" style="width:${pct}%"></i></div><span class="num small" id="finTotP">${T ? pct + "%" : "–"}</span></div></td><td></td></tr>`;
+  }
+  function refreshFin(tr, task){
+    const pct = finPct(task); const b = tr.querySelector(".fin-bar"), pp = tr.querySelector(".fin-pct");
+    if (b) b.style.width = pct + "%"; if (pp) pp.textContent = hasTgt(task) ? pct + "%" : "–";
+    const all = (state.tab === "update" && state.draft && !isAll()) ? state.draft.tasks.filter(x => x.category === "Revenue" && hasTgt(x)) : [];
+    if (!all.length) return; const T = all.reduce((a, x) => a + Number(x.target), 0), A = all.reduce((a, x) => a + (Number(x.actual) || 0), 0), tp = T > 0 ? Math.min(100, Math.round(A / T * 100)) : 0;
+    const set = (id, v) => { const e = document.getElementById(id); if (e) e.textContent = v; };
+    set("finTotA", A.toLocaleString()); set("finTotP", tp + "%"); const tb = document.getElementById("finTotB"); if (tb) tb.style.width = tp + "%";
+  }
+  // Indicative score for the week (shown to the unit, official rating comes later)
+  const RATE = p => p >= 95 ? ["Outstanding", "s-done"] : p >= 90 ? ["Very high", "s-done"] : p >= 80 ? ["High", "s-done"] : p >= 75 ? ["Satisfactory", "s-prog"] : p >= 50 ? ["Needs improvement", "s-not"] : ["Low", "s-bad"];
+  function weekScore(tasks){
+    const n = tasks.length; if (!n) return null;
+    const end = weekEndOf(state.week), pctOf = t => t.status === "Done" ? 100 : (typeof t.pct === "number" ? t.pct : 0);
+    const comp = Math.round(tasks.reduce((a, t) => a + pctOf(t), 0) / n);
+    const due = tasks.filter(t => t.due && t.due <= end), onTime = due.length ? Math.round(100 * due.filter(t => t.status === "Done" && (!t.completedAt || t.completedAt <= t.due)).length / due.length) : null;
+    const fin = tasks.filter(t => t.category === "Revenue" && hasTgt(t) && Number(t.target) > 0), T = fin.reduce((a, t) => a + Number(t.target), 0), fv = fin.length ? Math.round(100 * Math.min(1, fin.reduce((a, t) => a + (Number(t.actual) || 0), 0) / T)) : null;
+    const clear = Math.round(100 * (1 - tasks.filter(t => t.status === "Blocked" || t.status === "Delayed").length / n));
+    const crit = [["Task completion", 40, comp, "Average % complete of every task this week"], ["On-time delivery", 25, onTime, "Tasks due this week that are done by their due date"], ["Revenue against target", 20, fv, "Actual against target on financial lines"], ["Nothing blocked", 15, clear, "Share of tasks that are not blocked or delayed"]];
+    const avail = crit.filter(c => c[2] !== null), W = avail.reduce((a, c) => a + c[1], 0), got = avail.reduce((a, c) => a + c[1] * c[2] / 100, 0);
+    return { total: Math.round(100 * got / W), crit };
+  }
+  function scoreCard(tasks){
+    const sc = weekScore(tasks); if (!sc) return "";
+    const r = RATE(sc.total);
+    return `<section class="panel score-card"><div class="sc-main"><div class="sc-h"><b>Week score</b><span class="pill s-not" title="Calculated from this tracker. The official rating is set at quarter end.">Indicative</span></div>
+      <div class="sc-n"><span class="num">${sc.total}%</span><span class="pill ${r[1]}">${r[0]}</span></div><div class="small muted">Shown to the unit and Group Strategy. The official rating is set at quarter end.</div></div>
+      <div class="sc-bars">${sc.crit.map(c => `<div class="crit" title="${esc(c[3])}"><span>${esc(c[0])}</span><div class="bar"><i style="width:${c[2] === null ? 0 : c[2]}%"></i></div><span class="num small">${c[2] === null ? "n/a" : (Math.round(c[1] * c[2] / 10) / 10) + " / " + c[1]}</span></div>`).join("")}</div></section>`;
+  }
+  const editHeadOld = () => `<thead><tr>${th("edit","title","Task")}${th("edit","due","Due")}${th("edit","dept","Department")}${th("edit","priority","Priority")}${th("edit","status","Status")}${th("edit","pct","Progress")}<th class="c-act"></th></tr></thead>`;
+  const editHead = () => {
+    if (state.tab === "plan") return `<thead><tr>${th("edit","title","Task or product")}${th("edit","category","Category")}${th("edit","due","Due")}${th("edit","dept","Department")}${th("edit","priority","Priority")}${th("edit","target","Target")}<th class="c-act"></th></tr></thead>`;
+    if (pf().kind === "fin") return `<thead><tr>${th("edit","title","Product")}${th("edit","target","Target")}<th>Actual</th>${th("edit","pct","Performance")}<th class="c-act"></th></tr></thead>`;
+    return editHeadOld();
+  };
 
   // ---------- helpers for task kinds ----------
   const KINDS = ["Task","KPI / OKR"];
@@ -729,7 +796,7 @@ applyPlugin(jsPDF); window.jspdf = { jsPDF }; window.XLSX = XLSX;
   const sortVal = (t, k) => ({
     title: (t.title || "").toLowerCase(), kind: t.kind || "Task", dept: (t.dept || "").toLowerCase(), owner: (t.owner || "").toLowerCase(), unit: (t.unitName || "").toLowerCase(),
     due: t.due || "", priority: PRI_RANK[t.priority] ?? 9, status: ST_RANK[t.status] ?? 9, pct: typeof t.pct === "number" ? t.pct : (t.status === "Done" ? 100 : -1),
-    notes: (t.notes || "").toLowerCase(), ev: (t.ev || []).length,
+    notes: (t.notes || "").toLowerCase(), ev: (t.ev || []).length, category: t.category === "Revenue" ? 1 : 0, target: typeof t.target === "number" ? t.target : -1,
   })[k];
   // Returns the list's indexes in display order. Empty values always go last.
   function sortOrder(list, scope, valFn = sortVal){
@@ -899,10 +966,10 @@ applyPlugin(jsPDF); window.jspdf = { jsPDF }; window.XLSX = XLSX;
       ${list.map(r => `<div class="req-mini"><span>${esc((r.details || [])[0] || r.summary)}${(r.details || []).length > 1 ? ` <span class="muted small">+${r.details.length - 1} more</span>` : ""} <span class="muted small">· ${esc(r.by)} · ${esc(fmt((r.createdAt || "").slice(0, 10)))}</span></span>${canEdit(u) ? `<button class="btn small" data-withdraw="${esc(r.id)}">Withdraw</button>` : ""}${isAppr() ? `<button class="btn small" data-goto="approvals">Review</button>` : ""}</div>`).join("")}</div>`;
   }
   // ---------- Plans: week banner, filters, list ----------
-  const pf = () => state.pf || (state.pf = { q: "", pri: "", st: "", dep: "", lvl: "tasks" });
+  const pf = () => state.pf || (state.pf = { q: "", pri: "", st: "", dep: "", lvl: "tasks", kind: "ops" });
   function visibleRows(tasks){
     const f = pf(), q = f.q.trim().toLowerCase();
-    const ok = t => (!q || [t.title, t.ref, t.owner, t.dept, t.outcome].some(x => (x || "").toLowerCase().includes(q))) && (!f.pri || t.priority === f.pri) && (!f.st || (f.st === "none" ? !t.status : t.status === f.st)) && (!f.dep || t.dept === f.dep);
+    const ok = t => (!q || [t.title, t.ref, t.owner, t.dept, t.outcome].some(x => (x || "").toLowerCase().includes(q))) && (!f.pri || t.priority === f.pri) && (!f.st || (f.st === "none" ? !t.status : t.status === f.st)) && (!f.dep || t.dept === f.dep) && (state.tab === "plan" || (f.kind === "fin") === (t.category === "Revenue"));
     const base = sortOrder(tasks, "edit");
     if (f.lvl !== "deliv") return base.filter(i => ok(tasks[i])).map(i => ({ i, ind: 0 }));
     const refs = new Set(tasks.map(t => t.ref).filter(Boolean)), out = [];
@@ -944,7 +1011,9 @@ applyPlugin(jsPDF); window.jspdf = { jsPDF }; window.XLSX = XLSX;
     const acts = `<div class="toolbar plan-acts">${single && ed && canLead(state.editUnit) ? `<button class="btn" type="button" id="carryBtn">${ico(IC.fwd)}Bring forward</button>` : ""}${moreMenu(menu)}${single && ed ? `<button class="btn primary" type="button" id="addTask">${ico(IC.plus)}Add task</button>` : ""}</div>`;
     const topRow = `<div class="plan-top"><div class="plan-wk">${weekBan()}</div>${acts}</div>`;
     const lvlSeg = `<div class="seg" role="tablist" aria-label="List level"><button type="button" role="tab" data-lvl="tasks" aria-selected="${pf().lvl !== "deliv"}">All tasks</button><button type="button" role="tab" data-lvl="deliv" aria-selected="${pf().lvl === "deliv"}">By deliverable</button></div>`;
-    const bar1 = `<div class="plan-bar">${pick}${lvlSeg}</div>`;
+    const planMode = state.tab === "plan", fin = !planMode && pf().kind === "fin";
+    const kindSeg = `<div class="seg" role="tablist" aria-label="Kind of work"><button type="button" role="tab" data-kind="ops" aria-selected="${!fin}">Operational</button><button type="button" role="tab" data-kind="fin" aria-selected="${fin}">Financial</button></div>`;
+    const bar1 = `<div class="plan-bar">${pick}<div class="toolbar">${planMode ? "" : kindSeg}${planMode || fin ? "" : lvlSeg}</div></div>`;
     if (!state.editUnit || !hasDraft()) return `${topRow}<div class="panel">${bar1}<div class="empty"><b>Choose your unit to start</b>Pick your function or business unit. Anyone can view; to update, sign in with your name and your unit's PIN (the name button at the top). Then update status, % complete, notes and evidence as the week goes on.</div></div>`;
     const warn = state.remoteChanged ? `<div class="banner warn" style="margin:12px 16px 0">Someone else saved ${isAll() ? "one of these plans" : "this plan"} while you were editing. Saving adds your changes on top of theirs. <button class="btn" id="reloadRemote" style="margin-left:6px">Drop mine and load theirs</button></div>` : "";
     const submitLbl = past && !isAppr() ? "Submit for approval" : isAll() ? "Save all changes" : "Save plan";
@@ -961,15 +1030,15 @@ applyPlugin(jsPDF); window.jspdf = { jsPDF }; window.XLSX = XLSX;
         const d = state.allDrafts[u.id] || emptyPlan(u.id);
         const s = summarize(d), vis = visibleRows(d.tasks); shown += vis.length;
         const f = pf(), filtered = f.q || f.pri || f.st || f.dep;
-        if (filtered && !vis.length) return "";
+        if ((filtered || fin) && !vis.length) return "";
         const rows = vis.map(r => taskRowHtml(u.id, d.tasks[r.i], r.i, r.ind)).join("");
         return `<tbody><tr class="group-row"><td colspan="7"><div class="toolbar" style="justify-content:space-between">
             <div><b>${esc(u.name)}</b> <span class="tag">${esc(u.type||"")}</span> <span class="small muted">${s.total} tasks · ${s.done} done${state.dirtyUnits.has(u.id) ? " · <b style='color:var(--accent)'>edited</b>" : ""}</span></div>
             ${canEdit(u.id) ? `<button class="btn small" data-add-unit="${esc(u.id)}">${ico(IC.plus)}Add task</button>` : ""}</div>${ownerDatalist(u.id)}</td></tr>
-          ${rows || `<tr><td colspan="7" class="small muted">No tasks entered yet.</td></tr>`}</tbody>`;
+          ${rows || `<tr><td colspan="7" class="small muted">${fin ? "No financial lines yet." : "No tasks entered yet."}</td></tr>`}${fin && vis.length ? finTotal(vis.map(r => d.tasks[r.i])) : ""}</tbody>`;
       }).join("");
-      return `${topRow}<div class="panel">${bar1}${planFilterBar(deptList, shown, allTasks.length)}${warn}${can ? "" : `<div class="banner info" style="margin:12px 16px 0">All units is view-only, except your own unit's rows. Group Strategy approvers can edit every unit here.</div>`}
-        ${shown || !groups ? `<div class="scroll"><table class="edit-table">${editHead()}${groups}</table></div>` : noMatch}
+      return `${topRow}${planMode ? "" : scoreCard(allTasks)}<div class="panel">${bar1}${planFilterBar(deptList, shown, allTasks.length)}${warn}${can ? "" : `<div class="banner info" style="margin:12px 16px 0">All units is view-only, except your own unit's rows. Group Strategy approvers can edit every unit here.</div>`}
+        ${shown || !groups ? `<div class="scroll edit-scroll"><table class="edit-table">${editHead()}${groups}</table></div>` : noMatch}
         <div class="banner info" style="margin:12px 16px">To edit a unit's key results, blockers and asks, or its departments and staff lists, choose that unit on its own.</div>
         ${saveBar("Showing every unit's plan for this week")}</div>`;
     }
@@ -988,13 +1057,13 @@ applyPlugin(jsPDF); window.jspdf = { jsPDF }; window.XLSX = XLSX;
     const deptList = [...new Set([...(u.departments || []), ...d.tasks.map(t => t.dept).filter(Boolean)])].sort();
     const vis = visibleRows(d.tasks);
     const prog = us.total ? ` · ${us.done} done · ${us.avg}% overall` : "";
-    return `${lead}${topRow}<div class="panel">${bar1}${planFilterBar(deptList, vis.length, d.tasks.length, prog)}${state.showLists && ed && canLead(state.editUnit) ? renderLists() : ""}${access}${warn}${requestsPanel(state.editUnit)}${ed ? carryBanner() : ""}${listHint}
-      ${ownerDatalist(state.editUnit)}${d.tasks.length ? (vis.length ? `<div class="scroll edit-scroll"><table class="edit-table">${editHead()}<tbody>${vis.map(r => taskRowHtml(state.editUnit, d.tasks[r.i], r.i, r.ind)).join("")}</tbody></table></div>` : noMatch) : `<div class="empty"><b>No tasks yet for ${esc(unitName(state.editUnit))}</b>${ed ? "Add this week's tasks, or bring forward unfinished ones." : "Nothing entered for this week."}</div>`}
-      <div class="reports">
+    return `${lead}${topRow}${planMode ? "" : scoreCard(d.tasks)}<div class="panel">${bar1}${planFilterBar(deptList, vis.length, d.tasks.length, prog)}${state.showLists && ed && canLead(state.editUnit) ? renderLists() : ""}${access}${warn}${requestsPanel(state.editUnit)}${ed ? carryBanner() : ""}${listHint}
+      ${ownerDatalist(state.editUnit)}${d.tasks.length ? (vis.length ? `<div class="scroll edit-scroll"><table class="edit-table">${editHead()}<tbody>${vis.map(r => taskRowHtml(state.editUnit, d.tasks[r.i], r.i, r.ind)).join("")}${fin ? finTotal(vis.map(r => d.tasks[r.i])) : ""}</tbody></table></div>` : (fin && !pf().q && !pf().pri && !pf().st && !pf().dep ? `<div class="empty"><b>No financial lines yet</b>Add revenue lines in Next plan or Monthly plan with the category Financial, and they appear here to fill in the actual.</div>` : noMatch)) : `<div class="empty"><b>No tasks yet for ${esc(unitName(state.editUnit))}</b>${ed ? "Add this week's tasks, or bring forward unfinished ones." : "Nothing entered for this week."}</div>`}
+      ${planMode ? "" : `<div class="reports">
         <div><label for="f-wins">Key results this week</label><textarea id="f-wins" data-r="wins" placeholder="What was achieved" ${rdis}>${esc(d.wins)}</textarea></div>
         <div><label for="f-blockers">Blockers and issues</label><textarea id="f-blockers" data-r="blockers" placeholder="What is stopping progress" ${rdis}>${esc(d.blockers)}</textarea></div>
         <div><label for="f-asks">Asks to top management or other units</label><textarea id="f-asks" data-r="asks" placeholder="Decision, approval or support needed, and by when" ${rdis}>${esc(d.asks)}</textarea></div>
-      </div>
+      </div>`}
       ${ed ? saveBar(meta) : `<div class="save-bar"><span class="small muted">${meta}</span></div>`}
     </div>`;
   }
@@ -1105,6 +1174,7 @@ applyPlugin(jsPDF); window.jspdf = { jsPDF }; window.XLSX = XLSX;
     else if (state.tab==="dashboard") html += renderDash();
         else if (state.tab==="update") html += renderUpdate();
     else if (state.tab==="plan") html += renderUpdate() + `<details class="panel imp-det" id="impDet" ${(state.impOpen || state.imp) ? "open" : ""}><summary><b>Import or export with Excel</b> <span class="small muted">download the template, fill it in, upload it</span></summary>${renderImport()}</details>`;
+    else if (state.tab==="mplan") html += renderMplan();
     else if (state.tab==="tasks") html += renderTasks();
     else if (state.tab==="follow") html += renderFollow();
     else if (state.tab==="monthly") html += renderMonthly();
@@ -1118,7 +1188,7 @@ applyPlugin(jsPDF); window.jspdf = { jsPDF }; window.XLSX = XLSX;
     main.innerHTML = html;
     growAll();
     if (active) { const el = document.getElementById(active); if (el && el.focus) { el.focus(); if (el.setSelectionRange && el.type==="text") { const n = el.value.length; try { el.setSelectionRange(n,n); } catch(e){} } } }
-    fillPeople(); fetchCarry(); fetchNext();
+    fillPeople(); fetchCarry(); fetchNext(); if (state.tab === "mplan") loadMp(); syncStick();
     if (state.panel) renderPanel();
     if (state.pendingOpen && state.plansLoaded && state.pendingOpen.week === state.week) { const po = state.pendingOpen; state.pendingOpen = null; const hit = ((state.plans[po.unit] || {}).tasks || []).find(t => t.ref === po.ref); if (hit) { state.panel = { u: po.unit, id: hit.id }; renderPanel(); } else toast("This task was not found in that week."); }
     if (state.pendingPanel && (state.tab === "update" || state.tab === "plan")) { const pp = state.pendingPanel; state.pendingPanel = null; if (panelDraft(pp.u) && panelDraft(pp.u).tasks.some(x => x.id === pp.id)) { state.panel = { u: pp.u, id: pp.id }; renderPanel(); } }
@@ -1158,6 +1228,121 @@ applyPlugin(jsPDF); window.jspdf = { jsPDF }; window.XLSX = XLSX;
       width: w > 900 ? Math.floor((w - 16) * 2 / 3) - 34 : w - 34, unitName, h: { esc, fmt, weekLabel, toEth, ethMonth: w => ethName(toEth(w)), ethWeek: w => ethWeekLabel(w) } });
   }
 
+  // ---------- Monthly plan: enter the month once, split it over its weeks ----------
+  const MP_NAMES = ["January","February","March","April","May","June","July","August","September","October","November","December"];
+  const mpMonth = i => ({ i, y: 2026 + (i < 6 ? 0 : 1), m: (6 + i) % 12 });
+  function mpWeeks(i){
+    const { y, m } = mpMonth(i), out = []; const d = new Date(Date.UTC(y, m, 1));
+    while (d.getUTCDay() !== 6) d.setUTCDate(d.getUTCDate() + 1);
+    while (d.getUTCMonth() === m) { const iso = d.toISOString().slice(0, 10); if (iso >= WEEK_CUTOVER) out.push(iso); d.setUTCDate(d.getUTCDate() + 7); }
+    return out;
+  }
+  function splitN(T, n, mode){
+    if (!n) return [];
+    const wts = mode === "front" ? Array.from({ length: n }, (_, i) => n - i) : mode === "back" ? Array.from({ length: n }, (_, i) => i + 1) : Array(n).fill(1);
+    const sum = wts.reduce((a, b) => a + b, 0), raw = wts.map(w => T * w / sum), out = raw.map(Math.floor);
+    const r = T - out.reduce((a, b) => a + b, 0), ord = raw.map((v, i) => [v - Math.floor(v), i]).sort((a, b) => b[0] - a[0]);
+    for (let k = 0; k < r; k++) out[ord[k % n][1]]++;
+    return out;
+  }
+  state.mp = { i: null, rows: [], key: "", loading: false, busy: false, dirty: false };
+  const mpCur = () => { if (state.mp.i === null) { const t = parse(todayIso); const i = ((t.getMonth() - 6 + 12) % 12); state.mp.i = Math.max(3, i); } return state.mp.i; };
+  async function loadMp(){
+    const mp = state.mp, u = state.editUnit; if (!db || !u || isAll()) return;
+    const i = mpCur(), key = `${u}|${i}`; if (mp.key === key) return; mp.key = key; mp.loading = true; mp.rows = []; mp.dirty = false; render();
+    const weeks = mpWeeks(i), tag = `${mpMonth(i).y}-${mpMonth(i).m}`;
+    try {
+      const plans = await Promise.all(weeks.map(w => db.doc(`plans/${planId(w, u)}`).get().then(sn => sn.exists ? sn.data() : null)));
+      if (mp.key !== key) return;
+      const map = new Map();
+      plans.forEach((pl, wi) => ((pl && pl.tasks) || []).forEach(t => {
+        if (!t.mpId || t.mpMonth !== tag) return;
+        let r = map.get(t.mpId); if (!r) { r = { id: t.mpId, category: t.category === "Revenue" ? "Revenue" : "Operational", title: t.title || "", dept: t.dept || "", vals: Array(weeks.length).fill(0), total: 0, split: "custom", saved: true }; map.set(t.mpId, r); }
+        r.vals[wi] = Number(t.target) || 0;
+      }));
+      map.forEach(r => { r.total = r.vals.reduce((a, b) => a + b, 0); r.split = ["even", "front", "back"].find(m => splitN(r.total, weeks.length, m).join() === r.vals.join()) || "custom"; });
+      mp.rows = [...map.values()];
+    } catch (e) { mp.rows = []; }
+    mp.loading = false; render();
+  }
+  function renderMplan(){
+    if (!state.units.length) return `<div class="panel"><div class="empty"><b>No units yet</b></div></div>`;
+    const mp = state.mp, i = mpCur(), weeks = mpWeeks(i), u = state.editUnit, ed = !!u && !isAll() && canEdit(u);
+    const opts = sortedUnits().map(x => `<option value="${esc(x.id)}" ${x.id === u ? "selected" : ""}>${esc(x.name)}${x.id === myUnit() ? " (yours)" : ""}</option>`).join("");
+    const pick = `<div class="toolbar"><label for="unitPick" class="small muted">Unit</label><select id="unitPick"><option value="">Choose your function or unit…</option>${opts}</select></div>`;
+    const months = `<div class="seg mp-months" role="tablist">${Array.from({ length: 12 }, (_, k) => { const c = mpMonth(k), off = !mpWeeks(k).length; return `<button type="button" role="tab" data-mpm="${k}" aria-selected="${k === i}" ${off ? 'disabled title="Before the Saturday-week change on 10 Oct 2026"' : ""}>${MONTHS[c.m]}</button>`; }).join("")}</div>`;
+    const top = `<div class="plan-top"><div class="plan-wk"><div class="weekban"><span class="pill out">MONTHLY PLAN</span><span class="wk-big">${MP_NAMES[mpMonth(i).m]} ${mpMonth(i).y}</span><span class="small muted">${weeks.length} week${weeks.length === 1 ? "" : "s"}</span></div>
+      <div class="small muted plan-hint">Enter the month once and choose how it is split over its weeks. Each week's amount lands in that week's plan as the target, so people only fill in the actual. You can change any week by hand.</div></div>
+      <div class="toolbar plan-acts">${ed ? `<button class="btn" type="button" id="mpAdd">${ico(IC.plus)}Add row</button><button class="btn primary" type="button" id="mpCreate" ${mp.busy || !mp.rows.length ? "disabled" : ""}>${mp.busy ? "Creating…" : "Create weekly plans"}</button>` : ""}</div></div>`;
+    const bar = `<div class="plan-bar">${pick}${months}</div>`;
+    if (!u || isAll()) return `${top}<div class="panel">${bar}<div class="empty"><b>Choose your unit</b>Pick the function or business unit whose month you want to plan.</div></div>`;
+    if (!weeks.length) return `${top}<div class="panel">${bar}<div class="empty"><b>No Saturday weeks in this month</b>Weekly plans before 10 Oct 2026 use the old Monday weeks. Start from October.</div></div>`;
+    const depts = (unitOf(u).departments || []);
+    const dis = ed ? "" : "disabled";
+    const head = weeks.map(w => `<th class="num">${esc(weekShort(w))}</th>`).join("");
+    const rows = mp.rows.map(r => {
+      const sum = r.vals.reduce((a, b) => a + (Number(b) || 0), 0), ok = sum === Number(r.total || 0);
+      return `<tr data-mpr="${esc(r.id)}">
+        <td data-l="Category"><select data-mpf="category" aria-label="Category" ${dis}><option value="Operational" ${sel(r.category !== "Revenue")}>Operational</option><option value="Revenue" ${sel(r.category === "Revenue")}>Financial</option></select></td>
+        <td class="c-task" data-l="Task or product"><input type="text" data-mpf="title" value="${esc(r.title)}" placeholder="Task or product" aria-label="Task or product" ${dis}></td>
+        <td data-l="Department"><select data-mpf="dept" aria-label="Department" ${dis}><option value="">–</option>${depts.map(d => `<option ${sel(d === r.dept)}>${esc(d)}</option>`).join("")}</select></td>
+        <td data-l="Month target"><input type="number" step="any" class="mp-n" data-mpf="total" value="${r.total || ""}" aria-label="Month target" ${dis}></td>
+        <td data-l="Split"><select data-mpf="split" aria-label="Split" ${dis}>${[["even", "Evenly"], ["front", "More early"], ["back", "More late"], ["custom", "Custom"]].map(o => `<option value="${o[0]}" ${sel(o[0] === r.split)}>${o[1]}</option>`).join("")}</select></td>
+        ${r.vals.map((v, k) => `<td data-l="${esc(weekShort(weeks[k]))}"><input type="number" step="any" class="mp-n" data-mpw="${k}" value="${v}" aria-label="Week ${k + 1}" ${dis}></td>`).join("")}
+        <td data-l="Check"><span class="pill mp-chk ${ok ? "s-done" : "s-not"}">${ok ? "Adds up" : (sum > Number(r.total || 0) ? "Over by " : "Short by ") + Math.abs(sum - Number(r.total || 0))}</span></td>
+        <td class="c-act">${!r.saved && ed ? `<button class="icon-btn ib bad" type="button" data-mprm="${esc(r.id)}" aria-label="Remove row" title="Remove row">${ico(IC.trash)}</button>` : ""}</td></tr>`;
+    }).join("");
+    const body = mp.loading ? `<div class="empty"><b>Loading the month…</b></div>` : mp.rows.length ? `<div class="scroll"><table class="mp-table"><thead><tr><th>Category</th><th>Task or product</th><th>Department</th><th>Month target</th><th>Split</th>${head}<th>Check</th><th class="c-act"></th></tr></thead><tbody>${rows}</tbody></table></div>`
+      : `<div class="empty"><b>Nothing planned for ${MP_NAMES[mpMonth(i).m]} yet</b>${ed ? "Add a row for each task or product, set the month target and how it splits." : "Nobody has planned this month yet."}${ed ? `<br><button class="btn primary" type="button" id="mpAdd2">${ico(IC.plus)}Add row</button>` : ""}</div>`;
+    const note = !ed ? `<div class="banner warn" style="margin:12px 16px 0"><b>View only.</b> Sign in with this unit's PIN to plan its month.</div>` : "";
+    return `${top}<div class="panel">${bar}${note}${body}${mp.dirty ? `<div class="save-bar"><span class="small"><b style="color:var(--accent)">Not created yet.</b> Press Create weekly plans to put these into the weeks.</span></div>` : ""}</div>`;
+  }
+  function mpRowOf(el){ const tr = el.closest("tr[data-mpr]"); return tr ? { tr, r: state.mp.rows.find(x => x.id === tr.dataset.mpr) } : {}; }
+  function mpCheck(tr, r){
+    const sum = r.vals.reduce((a, b) => a + (Number(b) || 0), 0), T = Number(r.total || 0), ok = sum === T, p = tr.querySelector(".mp-chk");
+    p.className = "pill mp-chk " + (ok ? "s-done" : "s-not"); p.textContent = ok ? "Adds up" : (sum > T ? "Over by " : "Short by ") + Math.abs(sum - T);
+  }
+  function mpInput(el){
+    const { tr, r } = mpRowOf(el); if (!r) return false;
+    const f = el.dataset.mpf, w = el.dataset.mpw; state.mp.dirty = true;
+    if (w !== undefined) { r.vals[Number(w)] = el.value === "" ? 0 : Number(el.value); r.split = "custom"; tr.querySelector('[data-mpf="split"]').value = "custom"; mpCheck(tr, r); return true; }
+    if (f === "total" || f === "split") {
+      if (f === "total") r.total = el.value === "" ? 0 : Number(el.value); else r.split = el.value;
+      if (r.split !== "custom") { r.vals = splitN(Number(r.total) || 0, r.vals.length, r.split); tr.querySelectorAll("[data-mpw]").forEach((x, k) => { x.value = r.vals[k]; }); }
+      mpCheck(tr, r); return true;
+    }
+    r[f] = el.value; return true;
+  }
+  async function mpCreate(){
+    const mp = state.mp, u = state.editUnit, i = mpCur(), weeks = mpWeeks(i), { y, m } = mpMonth(i), tag = `${y}-${m}`;
+    if (!u || !canEdit(u)) { toast("Sign in with this unit's PIN first"); return; }
+    if (state.dirty) { toast("Save or discard your open plan changes first"); return; }
+    const rows = mp.rows.filter(r => (r.title || "").trim());
+    if (!rows.length) { toast("Give each row a task or product name"); return; }
+    const bad = rows.filter(r => r.vals.reduce((a, b) => a + (Number(b) || 0), 0) !== Number(r.total || 0));
+    if (bad.length) { toast(`${bad.length} row${bad.length === 1 ? "" : "s"} do not add up to the month target`); return; }
+    mp.busy = true; render();
+    let made = 0, upd = 0, req = 0;
+    try {
+      for (let wi = 0; wi < weeks.length; wi++) {
+        const w = weeks[wi], snap = await db.doc(`plans/${planId(w, u)}`).get(), latest = snap.exists ? snap.data() : null;
+        const plan = latest ? clone(latest) : { week: w, unit: u, tasks: [], wins: "", blockers: "", asks: "" }; plan.tasks = plan.tasks || []; let touched = false;
+        rows.forEach(r => {
+          const v = Number(r.vals[wi]) || 0, ex = plan.tasks.find(t => t.mpId === r.id);
+          if (ex) { if (ex.target !== v) { ex.target = v; touched = true; upd++; } const c = calcPct(ex); if (c !== null) ex.pct = c; }
+          else if (v > 0) { plan.tasks.push({ id: uid(), mpId: r.id, mpMonth: tag, title: r.title.trim(), outcome: "", category: r.category, target: v, measure: r.category === "Revenue" ? "ETB" : "", actual: "", dept: r.dept || "", owner: "", due: weekEndOf(w), priority: "Medium", status: "Not started", pct: 0, notes: "", kind: "Task", depUnit: "", dep: "", ev: [] }); touched = true; made++; }
+        });
+        if (!touched) continue;
+        const res = await persistPlan(u, w, latest, plan, { latest, source: "Monthly plan", action: "import", prefix: `Monthly plan ${MP_NAMES[m]}: ` });
+        if (res.error) throw Object.assign(new Error(res.error), { code: res.error });
+        req += res.requested || 0;
+      }
+      toast([made ? `Created ${made} weekly task${made === 1 ? "" : "s"}` : "", upd ? `updated ${upd} target${upd === 1 ? "" : "s"}` : "", req ? `${req} change${req === 1 ? "" : "s"} sent for approval` : ""].filter(Boolean).join(" · ") || "Nothing changed");
+      mp.key = ""; mp.dirty = false;
+    } catch (e) { toast("Stopped part-way: " + errText(e) + " Check the weeks and press Create again."); }
+    mp.busy = false; loadDraft(); render();
+  }
+
   // ---------- events ----------
   function setWeek(w){
     if (state.dirty) { toast("Save or discard your changes first"); return; }
@@ -1180,8 +1365,13 @@ applyPlugin(jsPDF); window.jspdf = { jsPDF }; window.XLSX = XLSX;
     if (row && !e.target.closest("input, select, textarea, button, label, a, summary") && (state.tab === "update" || state.tab === "plan") && row.dataset.id) { openPanel(row.dataset.u + "|" + row.dataset.id); return; }
     const t = e.target.closest("button, tr[data-open-unit], tr[data-tgl], .hbar-row[data-open-unit]");
     if (!t) return;
-    if (t.id === "pfClear") { state.pf = { q: "", pri: "", st: "", dep: "", lvl: pf().lvl }; render(); return; }
+    if (t.id === "pfClear") { state.pf = { q: "", pri: "", st: "", dep: "", lvl: pf().lvl, kind: pf().kind }; render(); return; }
     if (t.dataset.lvl) { pf().lvl = t.dataset.lvl; render(); return; }
+    if (t.dataset.kind) { pf().kind = t.dataset.kind; render(); return; }
+    if (t.dataset.mpm !== undefined) { if (state.mp.dirty) { toast("Create the weekly plans or reload first"); return; } state.mp.i = Number(t.dataset.mpm); state.mp.key = ""; render(); return; }
+    if (t.id === "mpAdd" || t.id === "mpAdd2") { const n = mpWeeks(mpCur()).length; state.mp.rows.push({ id: "mp_" + uid(), category: "Operational", title: "", dept: "", vals: Array(n).fill(0), total: 0, split: "even", saved: false }); state.mp.dirty = true; render(); const inp = document.querySelector("tr[data-mpr]:last-child [data-mpf=title]"); inp && inp.focus(); return; }
+    if (t.dataset.mprm) { state.mp.rows = state.mp.rows.filter(r => r.id !== t.dataset.mprm); render(); return; }
+    if (t.id === "mpCreate") { mpCreate(); return; }
     if (t.dataset.tgl) { const k = t.dataset.tgl; state.expanded.has(k) ? state.expanded.delete(k) : state.expanded.add(k); render(); return; }
     if (t.matches("tr[data-open-unit], .hbar-row[data-open-unit]") || (t.dataset.openUnit && t.matches("button"))) { if (state.tab === "dashboard") { state.dash.units = [t.dataset.openUnit]; state.dash.pop = false; render(); window.scrollTo({ top: 0, behavior: "smooth" }); return; } openUnit(t.dataset.openUnit); return; }
     if (t.dataset.datt) { state.dash.att = t.dataset.datt; render(); return; }
@@ -1257,13 +1447,14 @@ applyPlugin(jsPDF); window.jspdf = { jsPDF }; window.XLSX = XLSX;
   main.addEventListener("keydown", e => { const tr = e.target.closest("tr[data-open-unit]"); if (tr && (e.key==="Enter"||e.key===" ")) { e.preventDefault(); openUnit(tr.dataset.openUnit); } });
   main.addEventListener("input", e => {
     const el = e.target;
+    if (el.dataset.mpf || el.dataset.mpw !== undefined) { mpInput(el); return; }
     if (el.dataset.f) {
       const tr = el.closest("tr"), u = tr.dataset.u, i = Number(tr.dataset.i), f = el.dataset.f, task = planFor(u).tasks[i];
       if (f==="dept" && el.value==="__new__") { el.value = task.dept || ""; if (isAll()) { toast("Open the unit on its own to add a department"); return; } state.showLists = true; render(); setTimeout(() => { const n = $("#newDept"); n && n.focus(); }); return; }
       if (el.classList.contains("grow")) grow(el);
       const again = applyField(u, task, f, el);
       markDirty();
-      if (again) render();
+      if (again) render(); else if (tr.dataset.fin) refreshFin(tr, task);
     } else if (el.dataset.r) { state.draft[el.dataset.r] = el.value; state.dirtyUnits.add(state.editUnit); markDirty(); }
     else if (el.id==="fQ") { state.filter.q = el.value; render(); }
     else if (el.id==="pfQ") { pf().q = el.value; render(); }
@@ -1354,6 +1545,10 @@ applyPlugin(jsPDF); window.jspdf = { jsPDF }; window.XLSX = XLSX;
   });
   main.addEventListener("keydown", e => { const h = e.target.closest && e.target.closest("th[data-sort]"); if (h && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); h.click(); } });
   $("#bellBtn").onclick = bellMenu;
+  // keep the floating Plans tabs and the table header just under the top bar
+  function syncStick(){ const h = document.querySelector("header.topbar"), ph = document.querySelector(".wrap.pagehead"); const root = document.documentElement.style;
+    root.setProperty("--tbh", (h ? h.offsetHeight : 56) + "px"); root.setProperty("--phh", (ph && getComputedStyle(ph).position === "sticky" ? ph.offsetHeight : 0) + "px"); }
+  window.addEventListener("resize", syncStick);
   // ---------- Stage 4: top bar, grouped tabs, account menu, calendar picker ----------
   function renderNav(){
     const g = groupOf(state.tab);
@@ -1459,46 +1654,51 @@ applyPlugin(jsPDF); window.jspdf = { jsPDF }; window.XLSX = XLSX;
     const kidRows = kids.map(k => `<tr><td>${refChip(k, u) || '<span class="muted small">…</span>'}</td><td>${esc(k.title) || '<span class="muted">(no title)</span>'}</td><td class="small">${esc(k.owner || "")}</td><td><span class="pill ${statusClass(k.status)}">${esc(k.status || "No status")}</span></td><td><div class="prog"><div class="bar"><i style="width:${k.status === "Done" ? 100 : (k.pct || 0)}%"></i></div><span class="num">${k.status === "Done" ? 100 : (k.pct || 0)}%</span></div></td><td class="small">${ed && !lk ? `<input type="number" class="w-in" min="0.1" step="any" data-pk="${esc(k.id)}" value="${weightOf(k)}" aria-label="Weight of ${esc(k.ref || "task")}">` : weightOf(k)}</td></tr>`).join("");
     const ev = (t.ev || []).map((e, k) => `<div class="ev-line"><span>📎 ${esc(e.name)} <span class="small muted">${fmtSize(e.size || 0)}</span></span><span class="toolbar"><button class="btn small" type="button" data-pev="${k}">${canPreview(e.name) ? "View" : "Open"}</button><button class="btn small" type="button" data-pdl="${k}">Download</button>${ed ? `<button class="icon-btn" type="button" data-pevdel="${k}" aria-label="Remove ${esc(e.name)}">×</button>` : ""}</span></div>`).join("");
     const canSub = ed && t.ref && !t.parent;
+    const showTgt = hasTgt(t) || t.category === "Revenue";
+    const tgtF = fld("Target", `<input type="number" step="any" id="p-target" data-pf="target" value="${t.target ?? ""}" ${dis}>`) + fld("Target unit", `<input type="text" id="p-measure" data-pf="measure" value="${esc(t.measure || "")}" maxlength="20" placeholder="ETB, %, units" ${dis}>`);
+    const actF = fld("Actual so far", `<input type="number" step="any" id="p-actual" data-pf="actual" value="${t.actual ?? ""}" ${dis}>`);
     const locked = lk ? `<div class="small muted">🔒 Saved task: the title, outcome, type, department, due date and priority are fixed. Use <b>Request change</b> in the table to ask Group Strategy.</div>` : "";
-    root.innerHTML = `<div class="overlay" id="pnOverlay"><div class="modal wide task-panel" role="dialog" aria-modal="true" aria-label="Task ${esc(t.ref || "")}">
+    const pnState = state.panel, firstShow = !pnState.shown; pnState.shown = true;
+    root.innerHTML = `<div class="scrim" id="pnOverlay"></div><aside class="side task-panel${firstShow ? " anim" : ""}" role="dialog" aria-modal="true" aria-label="Task ${esc(t.ref || "")}">
       <div class="panel-head"><div><div><span class="ref big">${esc(t.ref || "numbering…")}</span> ${t.parent ? `<span class="tag">↳ under ${esc(t.parent)}</span>` : ""} <span class="tag">${esc(unitName(u))}</span> ${t.carried ? '<span class="tag">carried</span>' : ""}</div></div>
         <div class="toolbar">${!ed && editable === false && state.tab !== "update" && state.tab !== "plan" && canEdit(u) && state.filter.period !== "month" && !state.panel.ro ? `<button class="btn" id="pnEdit">Edit in this week's update</button>` : ""}<button class="btn" id="pnPrint" type="button">Print</button><button class="icon-btn" id="pnClose" aria-label="Close">×</button></div></div>
       <div class="panel-body">
         ${locked}
-        ${fld("Task or deliverable", ed && !lk ? `<textarea class="grow" rows="2" id="p-title" data-pf="title">${esc(t.title)}</textarea>` : `<div class="p-val"><b>${esc(t.title) || "(no title)"}</b></div>`)}
-        ${fld("Expected outcome", ed && !lk ? `<textarea class="grow" rows="2" id="p-outcome" data-pf="outcome">${esc(t.outcome || "")}</textarea>` : `<div class="p-val">${esc(t.outcome || "–")}</div>`)}
-        <div class="pgrid">
-          ${fld("Type", `<select id="p-kind" data-pf="kind" ${ldis}>${KINDS.map(k => `<option ${sel(k === (t.kind || "Task"))}>${k}</option>`).join("")}</select>`)}
-          ${fld("Category", `<select id="p-cat" data-pf="category" ${dis}><option value="">–</option>${CATEGORIES.map(k => `<option ${sel(k === t.category)}>${k}</option>`).join("")}</select>`)}
-          ${fld("Department", `<select id="p-dept" data-pf="dept" ${ldis}>${deptOptions(u, t).replace(/<option value="__new__">[^<]*<\/option>/, "")}</select>`)}
-          ${fld("Owner", `<input type="text" id="p-owner" data-pf="owner" value="${esc(t.owner)}" ${dis}>`)}
-          ${fld("Due", `<input type="date" id="p-due" data-pf="due" value="${esc(t.due)}" ${ldis}>`)}
-          ${fld("Priority", `<select id="p-pri" data-pf="priority" ${ldis}><option value="">Not set</option>${PRIORITIES.map(p => `<option ${sel(p === t.priority)}>${p}</option>`).join("")}</select>`)}
+        ${fld("Task", ed && !lk ? `<textarea class="grow" rows="2" id="p-title" data-pf="title">${esc(t.title)}</textarea>` : `<div class="p-val"><b>${esc(t.title) || "(no title)"}</b></div>`)}
+        <div class="pgrid2">
           ${fld("Status", `<select id="p-st" data-pf="status" ${dis}><option value="">No status</option>${STATUSES.map(x => `<option ${sel(x === t.status)}>${x}</option>`).join("")}</select>`)}
           ${fld("% complete", `<input type="number" id="p-pct" data-pf="pct" min="0" max="100" step="5" value="${roll ? roll.pct : (t.pct ?? "")}" ${dis} ${auto ? "readonly" : ""}>`)}
         </div>
-        <div class="pgrid">
-          ${fld("Target", `<input type="number" step="any" id="p-target" data-pf="target" value="${t.target ?? ""}" ${dis}>`)}
-          ${fld("Target unit", `<input type="text" id="p-measure" data-pf="measure" value="${esc(t.measure || "")}" maxlength="20" placeholder="ETB, %, units" ${dis}>`)}
-          ${fld("Actual so far", `<input type="number" step="any" id="p-actual" data-pf="actual" value="${t.actual ?? ""}" ${dis}>`)}
-          ${fld("Lower is better", `<input type="checkbox" id="p-lower" data-pf="lower" ${t.lower ? "checked" : ""} ${dis}>`)}
-          ${fld("Weight in its deliverable", `<input type="number" min="0.1" step="any" id="p-weight" data-pf="weight" value="${weightOf(t)}" ${ed && !lk ? "" : "disabled"} title="Used when this task is part of a deliverable. Default 1 = equal share.">`)}
-          ${fld("Part of deliverable", `<select id="p-parent" data-pf="parent" ${ed && !lk && !kids.length ? "" : "disabled"}>${parentOpts}</select>`)}
-          ${fld("Depends on (unit)", `<select id="p-depu" data-pf="depUnit" ${dis}><option value="">–</option>${others.map(x => `<option value="${esc(x.id)}" ${sel(x.id === t.depUnit)}>${esc(x.name)}</option>`).join("")}</select>`)}
-          ${fld("Dependency", `<input type="text" id="p-dep" data-pf="dep" value="${esc(t.dep || "")}" ${dis}>`)}
-        </div>
-        ${fld("Note", `<textarea class="grow" rows="3" id="p-notes" data-pf="notes" ${dis}>${esc(t.notes || "")}</textarea>`)}
-        <h3 class="p-h">Tasks under this deliverable ${roll ? `<span class="small muted">· ${roll.pct}% from ${roll.total} task${roll.total === 1 ? "" : "s"}, ${roll.done} done (weighted)</span>` : ""}</h3>
-        ${kids.length ? `<div class="scroll"><table><thead><tr><th>Ref</th><th>Task</th><th>Owner</th><th>Status</th><th>Done</th><th>Weight</th></tr></thead><tbody>${kidRows}</tbody></table></div>` : `<div class="small muted">${t.parent ? "This task is part of a deliverable." : "None. This task is a deliverable on its own."}</div>`}
-        ${canSub ? `<div><button class="btn" id="pnAddKid" type="button">＋ Add a task under this</button></div>` : ""}
-        <h3 class="p-h">Evidence</h3>
-        ${ev || '<div class="small muted">No files attached.</div>'}
-        ${ed ? `<div><label class="btn small ev-add">📎 Attach<input type="file" multiple accept="${EVIDENCE.accept}" id="pnFile" hidden></label></div>` : ""}
-        ${t.ref ? fbSection(u, t) : ""}
-        ${t.ref ? threadSection(u, t) : ""}
+        ${showTgt ? `<div class="pgrid2">${tgtF}${actF}</div>` : ""}
+        ${fld("Note", `<textarea class="grow" rows="2" id="p-notes" data-pf="notes" placeholder="One line on where it stands" ${dis}>${esc(t.notes || "")}</textarea>`)}
+        <details class="more-d" data-pd="more" ${pnState.more ? "open" : ""}><summary>More details <span class="small muted">owner, due date, department, target, evidence</span></summary>
+          <div class="d-in">
+            ${fld("Expected outcome", ed && !lk ? `<textarea class="grow" rows="2" id="p-outcome" data-pf="outcome">${esc(t.outcome || "")}</textarea>` : `<div class="p-val">${esc(t.outcome || "–")}</div>`)}
+            <div class="pgrid2">
+              ${fld("Owner", `<input type="text" id="p-owner" data-pf="owner" value="${esc(t.owner)}" ${dis}>`)}
+              ${fld("Due", `<input type="date" id="p-due" data-pf="due" value="${esc(t.due)}" ${ldis}>`)}
+              ${fld("Department", `<select id="p-dept" data-pf="dept" ${ldis}>${deptOptions(u, t).replace(/<option value="__new__">[^<]*<\/option>/, "")}</select>`)}
+              ${fld("Priority", `<select id="p-pri" data-pf="priority" ${ldis}><option value="">Not set</option>${PRIORITIES.map(p => `<option ${sel(p === t.priority)}>${p}</option>`).join("")}</select>`)}
+              ${fld("Type", `<select id="p-kind" data-pf="kind" ${ldis}>${KINDS.map(k => `<option ${sel(k === (t.kind || "Task"))}>${k}</option>`).join("")}</select>`)}
+              ${fld("Category", `<select id="p-cat" data-pf="category" ${dis}><option value="">–</option>${CATEGORIES.map(k => `<option value="${k}" ${sel(k === t.category)}>${catLabel(k)}</option>`).join("")}</select>`)}
+              ${showTgt ? "" : tgtF + actF}
+              ${fld("Part of deliverable", `<select id="p-parent" data-pf="parent" ${ed && !lk && !kids.length ? "" : "disabled"}>${parentOpts}</select>`)}
+              ${fld("Weight in it", `<input type="number" min="0.1" step="any" id="p-weight" data-pf="weight" value="${weightOf(t)}" ${ed && !lk ? "" : "disabled"} title="Used when this task is part of a deliverable. Default 1 = equal share.">`)}
+              ${fld("Depends on (unit)", `<select id="p-depu" data-pf="depUnit" ${dis}><option value="">–</option>${others.map(x => `<option value="${esc(x.id)}" ${sel(x.id === t.depUnit)}>${esc(x.name)}</option>`).join("")}</select>`)}
+              ${fld("Dependency", `<input type="text" id="p-dep" data-pf="dep" value="${esc(t.dep || "")}" ${dis}>`)}
+              ${fld("Lower is better", `<input type="checkbox" id="p-lower" data-pf="lower" ${t.lower ? "checked" : ""} ${dis}>`)}
+            </div>
+            ${kids.length ? `<h3 class="p-h">Tasks under this deliverable <span class="small muted">· ${roll ? roll.pct + "% from " + roll.total + " task" + (roll.total === 1 ? "" : "s") + ", " + roll.done + " done" : ""}</span></h3><div class="scroll"><table><thead><tr><th>Ref</th><th>Task</th><th>Owner</th><th>Status</th><th>Done</th><th>Weight</th></tr></thead><tbody>${kidRows}</tbody></table></div>` : ""}
+            ${canSub ? `<div><button class="btn" id="pnAddKid" type="button">＋ Add a task under this</button></div>` : ""}
+            <h3 class="p-h">Evidence</h3>
+            ${ev || '<div class="small muted">No files attached.</div>'}
+            ${ed ? `<div><label class="btn small ev-add">📎 Attach<input type="file" multiple accept="${EVIDENCE.accept}" id="pnFile" hidden></label></div>` : ""}
+          </div>
+        </details>
+        ${t.ref ? `<details class="more-d" data-pd="disc" ${pnState.disc ? "open" : ""}><summary>Discussion and feedback ${(pnState.comments && pnState.comments.length) ? `<span class="pill s-none">${pnState.comments.length}</span>` : ""}</summary><div class="d-in">${fbSection(u, t)}${threadSection(u, t)}</div></details>` : ""}
       </div>
       <div class="panel-foot toolbar">${editable ? `<button class="btn primary" id="pnSave" ${state.dirty ? "" : "disabled"}>Save plan</button>` : ""}<button class="btn" id="pnClose2">Close</button>${editable && state.dirty ? '<span class="small" style="color:var(--accent)"><b>Unsaved changes</b></span>' : ""}</div>
-    </div></div>`;
+    </aside>`;
     root.querySelectorAll("textarea.grow").forEach(grow);
     if (t.ref && state.panel.loadedRef !== t.ref && !state.panel.loading) { const pn = state.panel; pn.loading = true; pn.loadedRef = t.ref; loadThread().finally(() => { pn.loading = false; }); }
     if (keep) { const el = document.getElementById(keep.id); if (el && el.focus) { el.focus(); try { if (keep.s != null) el.setSelectionRange(keep.s, keep.e); } catch (x) {} } }
@@ -1587,6 +1787,7 @@ applyPlugin(jsPDF); window.jspdf = { jsPDF }; window.XLSX = XLSX;
   document.addEventListener("click", e => { if ($("#bellMenu") && !e.target.closest("#bellMenu") && !e.target.closest("#bellBtn")) closeBellMenu(); });
   const panelRoot = $("#panelRoot");
   if (panelRoot) {
+    panelRoot.addEventListener("toggle", e => { const k = e.target.dataset && e.target.dataset.pd; if (k && state.panel) state.panel[k] = e.target.open; }, true);
     const pOn = () => panelTask();
     panelRoot.addEventListener("input", e => {
       if (e.target.id === "p-comment") { state.panel.draft = e.target.value; mentionSuggest(); return; }
