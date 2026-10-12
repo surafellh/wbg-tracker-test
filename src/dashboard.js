@@ -27,7 +27,7 @@ function weekMetrics(byUnit, units, asOf) {
   const per = units.map((u) => ({ u, m: unitMetrics(byUnit[u.id], asOf) }));
   const s = per.reduce((a, { m }) => { Object.keys(m).forEach((k) => { if (typeof m[k] === "number") a[k] = (a[k] || 0) + m[k]; }); return a; }, {});
   const nums = per.flatMap(({ u }) => real(byUnit[u.id]).map(pctOf).filter((v) => v !== null));
-  return { per, total: s.total || 0, done: s.done || 0, high: s.high || 0, highDone: s.highDone || 0, blk: s.blk || 0, overdue: s.overdue || 0, onTime: s.onTime || 0, dated: s.dated || 0,
+  return { per, total: s.total || 0, done: s.done || 0, prog: s.prog || 0, ns: s.ns || 0, high: s.high || 0, highDone: s.highDone || 0, blk: s.blk || 0, overdue: s.overdue || 0, onTime: s.onTime || 0, dated: s.dated || 0,
     donePct: s.total ? Math.round((s.done / s.total) * 100) : null, avg: avg(nums), reporting: per.filter(({ m }) => m.total).length };
 }
 
@@ -43,11 +43,9 @@ export function renderDashboard(c) {
   let cur = series.find((s) => s.w === c.week) || series[series.length - 1];
   const prev = per0 === "week" ? series[series.indexOf(cur) - 1] : null;
   const winWeeks = per0 === "week" ? [c.week] : per0 === "quarter" ? c.weeks : c.weeks.filter((w) => { const a = c.h.toEth(w), b = c.h.toEth(c.week); return a.y === b.y && a.m === b.m; });
-  if (per0 !== "week") {
-    const byU = {};
-    units.forEach((u) => { const m = new Map(); let last = null; winWeeks.forEach((w) => { const p = (c.byWeek[w] || {})[u.id]; if (!p) return; last = p; real(p).forEach((t) => m.set(t.ref || t.id, t)); }); if (last) byU[u.id] = { ...last, tasks: [...m.values()] }; });
-    cur = { w: c.week, ...weekMetrics(byU, units, asOf(c.week)) };
-  }
+  const byU = {}, winTasks = [];
+  units.forEach((u) => { const m = new Map(); let last = null; winWeeks.forEach((w) => { const p = (c.byWeek[w] || {})[u.id]; if (!p) return; last = p; real(p).forEach((t) => m.set(t.ref || t.id, t)); }); if (last) { byU[u.id] = { ...last, tasks: [...m.values()] }; m.forEach((t) => winTasks.push({ ...t, _u: u })); } });
+  if (per0 !== "week" || true) cur = { w: c.week, ...weekMetrics(byU, units, asOf(c.week)) };
   const perLabel = per0 === "week" ? "this week" : per0 === "month" ? "this month" : "this quarter (last 13 weeks)";
   const delta = prev && prev.donePct !== null && cur.donePct !== null ? cur.donePct - prev.donePct : null;
 
@@ -85,6 +83,28 @@ export function renderDashboard(c) {
     return `<svg class="chart" viewBox="0 0 ${W} ${H}" style="width:100%;height:auto" role="img" aria-label="Tasks done against planned, last 8 weeks">${g}${bars}</svg><div class="legend"><span><i class="key-sq" style="background:var(--track)"></i>Planned</span><span><i class="key-sq" style="background:var(--bar)"></i>Done</span></div>`;
   })();
 
+  const donut = (() => {
+    const segs = [["Done", cur.done, "var(--viz-s1)"], ["In progress", cur.prog, "var(--viz-s2)"], ["Not started", cur.ns, "var(--viz-s3)"], ["Blocked / delayed", cur.blk, "var(--viz-s4)"]], tot = segs.reduce((x, s) => x + s[1], 0);
+    if (!tot) return `<div class="empty" style="padding:30px 16px"><b>No tasks</b></div>`;
+    const R = 62, C = 2 * Math.PI * R; let off = 0;
+    const arcs = segs.filter((s) => s[1]).map(([l, n, col]) => { const len = (n / tot) * C, el = `<circle cx="90" cy="90" r="${R}" fill="none" stroke="${col}" stroke-width="22" stroke-dasharray="${len.toFixed(2)} ${(C - len).toFixed(2)}" stroke-dashoffset="${(-off).toFixed(2)}" transform="rotate(-90 90 90)" data-tip="${esc(`<b>${l}</b><br>${n} of ${tot} tasks (${Math.round((n / tot) * 100)}%)`)}"/>`; off += len; return el; }).join("");
+    return `<div class="donut"><svg viewBox="0 0 180 180" role="img" aria-label="Task status mix"><circle cx="90" cy="90" r="${R}" fill="none" stroke="var(--track)" stroke-width="22"/>${arcs}<text x="90" y="88" text-anchor="middle" class="d-n">${tot}</text><text x="90" y="106" text-anchor="middle" class="d-l">tasks</text></svg>
+      <ul class="d-leg">${segs.map(([l, n, col]) => `<li><i class="key-sq" style="background:${col}"></i><span>${l}</span><b class="num">${n}</b><span class="muted small num">${Math.round((n / tot) * 100)}%</span></li>`).join("")}</ul></div>`;
+  })();
+
+  const single = sel.length === 1 && units.length === 1 ? units[0] : null;
+  const deptBars = (() => {
+    const g = {}; winTasks.forEach((t) => { const k = t.dept || "No department"; (g[k] = g[k] || []).push(t); });
+    const rows = Object.entries(g).map(([k, ts]) => ({ k, n: ts.length, done: ts.filter((t) => t.status === "Done").length, avg: avg(ts.map(pctOf)) })).sort((x, y) => (y.avg ?? -1) - (x.avg ?? -1));
+    return `<div class="bul">${rows.map((r) => `<div class="bul-row" style="cursor:default"><span class="bul-name">${esc(r.k)}</span><span class="bul-track"><i style="width:${Math.max(r.avg ?? 0, 2)}%"></i></span><span class="bul-val num">${r.avg ?? 0}% · ${r.done}/${r.n}</span></div>`).join("")}</div>`;
+  })();
+  const stOrder = { Blocked: 0, Delayed: 1, "In progress": 2, "Not started": 3, "": 4, Done: 5 };
+  const stCls = (s) => (s === "Done" ? "s-done" : s === "In progress" ? "s-prog" : s === "Blocked" || s === "Delayed" ? "s-bad" : s === "Not started" ? "s-not" : "s-none");
+  const taskTbl = () => {
+    const rows = [...winTasks].sort((x, y) => (stOrder[x.status || ""] ?? 4) - (stOrder[y.status || ""] ?? 4) || (x.due || "9").localeCompare(y.due || "9"));
+    return `<div class="scroll" style="max-height:460px"><table class="dtbl"><thead><tr><th>Task</th><th>Owner</th><th>Status</th><th>%</th><th>Due</th></tr></thead><tbody>${rows.map((t) => `<tr><td><b>${esc(t.title)}</b>${t.ref ? ` <span class="muted small num">${esc(t.ref)}</span>` : ""}</td><td class="small">${esc(t.owner || "")}</td><td><span class="pill ${stCls(t.status)}">${esc(t.status || "No status")}</span></td><td class="num">${pctOf(t)}%</td><td class="small ${t.due && t.due < c.today && t.status !== "Done" ? "bad-t" : "muted"}">${t.due ? esc(fmt(t.due)) : "–"}</td></tr>`).join("") || `<tr><td colspan="5" class="muted" style="padding:16px">No tasks.</td></tr>`}</tbody></table></div>`;
+  };
+
   const tblType = c.filter.tbl || (types.includes("Business unit") ? "Business unit" : types[0] || "");
   const tbl = (() => {
     const rows = cur.per.filter(({ u }) => (u.type || "") === tblType);
@@ -101,14 +121,17 @@ export function renderDashboard(c) {
     return `<div class="panel"><div class="panel-head"><h2>Blockers and asks</h2><span class="small muted">Latest from each unit</span></div>${items.length ? `<ul class="ba">${items.slice(0, 8).map((x) => `<li><span class="pill ${x.k === "Blocker" ? "s-bad" : "s-prog"}">${x.k}</span><div><div class="ba-t">${esc(x.t.length > 160 ? x.t.slice(0, 157) + "…" : x.t)}</div><button class="lnk unit-name small muted" data-open-unit="${esc(x.u.id)}">${esc(x.u.name)}</button></div></li>`).join("")}</ul>${items.length > 8 ? `<div class="small muted" style="padding:0 16px 12px">+${items.length - 8} more</div>` : ""}` : `<div class="empty" style="padding:20px 16px"><b>None right now</b></div>`}</div>`;
   })();
 
+  const { nowList, oldList } = splitAlerts(c);
+  const nowN = nowList.length, oldN = oldList.length;
   const title = !nSel ? "Wagwago Business Group" : nSel === 1 ? esc(c.unitName(sel[0])) : nSel + " units selected";
   const sub = per0 === "week" ? `Week of ${esc(weekLabel(c.week))} · ${esc(c.h.ethWeek(c.week))}` : per0 === "month" ? esc(c.h.ethMonth(c.week)) : `13 weeks to ${esc(fmt(c.week))}`;
-  return `<div class="dh"><div><h1>${title}</h1><p>${sub}</p></div>${filters}</div>
+  return `<div class="dh"><div>${single ? `<button class="lnk back" data-dgrp="all">← Whole group</button>` : ""}<h1>${title}</h1><p>${sub}</p></div>${filters}</div>
     ${kpis}
-    <div class="dgrid"><div class="panel"><div class="panel-head"><h2>Completion by unit</h2><span class="small muted">Average % complete · tasks done</span></div>${bullets}</div>
+    <div class="dgrid dgrid3"><div class="panel"><div class="panel-head"><h2>${single ? "Completion by department" : "Completion by unit"}</h2><span class="small muted">${single ? "Average % complete" : "Click a unit to drill in"}</span></div>${single ? deptBars : bullets}</div>
+      <div class="panel"><div class="panel-head"><h2>Task status</h2><span class="small muted">${perLabel}</span></div><div class="pad">${donut}</div></div>
       <div class="panel"><div class="panel-head"><h2>Tasks done against planned</h2><span class="small muted">Last 8 weeks</span></div><div class="pad">${planned}</div></div></div>
-    <div class="dgrid dgrid-b"><div class="panel"><div class="panel-head" style="border:0;padding-bottom:0"><h2>Units</h2><span class="small muted">Click a row to open its plan</span></div>${tbl}</div>
-      <div class="dstack"><div class="panel"><div class="panel-head"><h2>Needs attention</h2><span class="small muted">Found automatically</span></div>${escalations(c)}</div>${asksPanel}</div></div>
+    <div class="dgrid dgrid-b"><div class="panel"><div class="panel-head" style="border:0;padding-bottom:0"><h2>${single ? "Tasks" : "Units"}</h2><span class="small muted">${single ? "Blocked and in-progress first" : "Click a row to drill into that unit"}</span></div>${single ? taskTbl() : tbl}</div>
+      <div class="dstack"><div class="panel"><div class="panel-head" style="border:0;padding-bottom:0"><h2>Needs attention</h2><span class="small muted">Found automatically</span></div>${escalations(c, nowN, oldN)}</div>${asksPanel}</div></div>
     <details class="more"><summary>More charts</summary>
       <div class="grid2" style="margin-top:12px"><div class="panel"><div class="panel-head"><h2>Weekly trend</h2><span class="small muted">% done and average % complete</span></div>${trendChart(series, c)}</div>
       <div class="panel"><div class="panel-head"><h2>Completed by week</h2><span class="small muted">By completion date</span></div>${completedChart(units, c)}</div></div>
@@ -202,12 +225,25 @@ function heatmap(units, c, asOf) {
   return `<div class="chart-wrap">${scale}<div class="scroll"><div class="heatmap" style="--cols:${weeks.length}">${head}${body}</div></div></div>`;
 }
 
-function escalations(c) {
-  const { esc } = c.h;
-  const list = c.alerts.filter((a) => a.level !== "info" || a.kind === "waiting").slice(0, 4);
-  if (!list.length) return `<div class="empty" style="padding:24px 16px"><b>Nothing to escalate</b>No overdue, long-blocked or missing plans this week.</div>`;
-  return `<ul class="esc-list">${list.map((a) => `<li class="esc ${a.level}"><span class="pill ${a.level === "bad" ? "s-bad" : a.level === "warn" ? "s-not" : "s-none"}">${a.level === "bad" ? "Act now" : a.level === "warn" ? "Watch" : "Note"}</span>
+// Split what needs attention: work in the week being looked at, and work left over from earlier weeks.
+function splitAlerts(c) {
+  const ws = c.week, nowList = [], oldList = [];
+  c.alerts.forEach((a) => {
+    if (a.kind === "overdue") {
+      const cur = a.tasks.filter((t) => t.due >= ws), old = a.tasks.filter((t) => t.due < ws);
+      if (cur.length) nowList.push({ ...a, tasks: cur, text: `${cur.length} task${cur.length > 1 ? "s" : ""} due this week not finished yet.` });
+      if (old.length) oldList.push({ ...a, tasks: old, text: `${old.length} task${old.length > 1 ? "s are" : " is"} overdue from earlier weeks.` });
+    } else if (a.kind === "carried") oldList.push(a);
+    else if (a.level !== "info" || a.kind === "waiting") nowList.push(a);
+  });
+  return { nowList, oldList };
+}
+function escalations(c, nowN, oldN) {
+  const { esc } = c.h, tab = c.filter.att || "now", { nowList, oldList } = splitAlerts(c), list = (tab === "old" ? oldList : nowList).slice(0, 4), more = (tab === "old" ? oldList : nowList).length - list.length;
+  const tabs = `<div class="seg" role="tablist" style="margin:8px 16px 4px"><button role="tab" data-datt="now" aria-selected="${tab !== "old"}">This week${nowN ? ` · ${nowN}` : ""}</button><button role="tab" data-datt="old" aria-selected="${tab === "old"}">Earlier weeks${oldN ? ` · ${oldN}` : ""}</button></div>`;
+  if (!list.length) return `${tabs}<div class="empty" style="padding:24px 16px"><b>${tab === "old" ? "Nothing left over" : "Nothing to act on"}</b>${tab === "old" ? "No overdue or long-carried tasks." : "Nothing needs attention in this week."}</div>`;
+  return `${tabs}<ul class="esc-list">${list.map((a) => `<li class="esc ${a.level}"><span class="pill ${a.level === "bad" ? "s-bad" : a.level === "warn" ? "s-not" : "s-none"}">${a.level === "bad" ? "Act now" : a.level === "warn" ? "Watch" : "Note"}</span>
     <div><button class="lnk unit-name" data-open-unit="${esc(a.unit)}">${esc(c.unitName(a.unit))}</button><div class="small">${esc(a.text)}</div>
     ${a.tasks.length ? `<div class="small muted">${a.tasks.slice(0, 2).map((t) => esc(t.title.length > 80 ? t.title.slice(0, 77) + "…" : t.title)).join(" · ")}${a.tasks.length > 2 ? ` · +${a.tasks.length - 2} more` : ""}</div>` : ""}</div></li>`).join("")}</ul>
-    ${c.alerts.length > list.length ? `<div class="small muted" style="padding:0 16px 12px">+${c.alerts.length - list.length} more</div>` : ""}`;
+    ${more > 0 ? `<div class="small muted" style="padding:0 16px 12px">+${more} more</div>` : ""}`;
 }

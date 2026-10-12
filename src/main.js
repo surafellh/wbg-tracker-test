@@ -243,20 +243,29 @@ applyPlugin(jsPDF); window.jspdf = { jsPDF }; window.XLSX = XLSX;
   function carryBanner(){
     const c = state.carryInfo; if (!c || c.key !== `${state.week}|${state.editUnit}` || !state.draft) return "";
     const have = new Set(state.draft.tasks.map(t => norm(t.title))); const n = c.items.filter(t => !have.has(norm(t.title))).length;
-    return n ? `<div class="banner warn" style="margin:12px 16px 0">${n} unfinished task${n > 1 ? "s" : ""} from last week ${n > 1 ? "are" : "is"} not in this week yet. <button class="btn" id="bfBtn2" style="margin-left:6px">Review and bring forward</button></div>` : "";
+    return n ? `<div class="banner warn" style="margin:12px 16px 0">${n} unfinished task${n > 1 ? "s" : ""} from earlier weeks ${n > 1 ? "are" : "is"} not in this week yet. <button class="btn" id="bfBtn2" style="margin-left:6px">Review and bring forward</button></div>` : "";
   }
   function fetchCarry(){
     if (!((state.tab === "update" || state.tab === "plan") && db && state.editUnit && !isAll() && state.draft)) return;
     const key = `${state.week}|${state.editUnit}`; if (state.carryKey === key) return; state.carryKey = key;
-    db.doc(`plans/${planId(prevWeekOf(state.week), state.editUnit)}`).get().then(s => { state.carryInfo = { key, items: s.exists ? allRealTasks(s.data()).filter(t => t.status !== "Done") : [] }; render(); }).catch(() => {});
+    earlierUnfinished(state.editUnit, state.week).then(items => { state.carryInfo = { key, items: items.map(x => x.t) }; render(); }).catch(() => {});
+  }
+  // Unfinished tasks from the weeks before this one (newest version of each task wins; a task finished in a later week is left out)
+  async function earlierUnfinished(unit, week, n = 8){
+    let oldest = week, last = week; for (let i = 0; i < n; i++) { last = prevWeekOf(last); oldest = last; }
+    const snap = await db.collection("plans").where("week", ">=", oldest).where("week", "<=", prevWeekOf(week)).get();
+    const rows = snap.docs.map(d => d.data()).filter(v => v && v.unit === unit).sort((a, b) => a.week < b.week ? 1 : -1);
+    const seen = new Map();
+    rows.forEach(p => allRealTasks(p).forEach(t => { const k = t.ref || norm(t.title); if (!seen.has(k)) seen.set(k, { t, wk: p.week }); }));
+    return [...seen.values()].filter(x => x.t.status !== "Done");
   }
   async function openBf(){
     if (!db || isAll() || !state.editUnit || !state.draft) { toast("Choose one unit first"); return; }
-    let prev = null;
-    try { const s = await db.doc(`plans/${planId(prevWeekOf(state.week), state.editUnit)}`).get(); prev = s.exists ? s.data() : null; } catch (e) { toast("Could not read last week's plan"); return; }
+    let found;
+    try { found = await earlierUnfinished(state.editUnit, state.week); } catch (e) { toast("Could not read the earlier weeks"); return; }
     const have = new Set(state.draft.tasks.map(t => norm(t.title)));
-    const items = allRealTasks(prev).filter(t => t.status !== "Done").map(t => ({ t, dup: have.has(norm(t.title)), checked: !have.has(norm(t.title)) && (t.status === "In progress" || t.status === "Not started" || !t.status) }));
-    if (!items.length) { toast("Nothing unfinished in last week's plan"); return; }
+    const items = found.map(({ t, wk }) => ({ t, wk, dup: have.has(norm(t.title)), checked: !have.has(norm(t.title)) && (t.status === "In progress" || t.status === "Not started" || !t.status) }));
+    if (!items.length) { toast("Nothing unfinished in the earlier weeks"); return; }
     state.bf = { items, week: prevWeekOf(state.week) }; renderModal();
   }
   function bfCount(){ return state.bf ? state.bf.items.filter(x => x.checked && !x.dup).length : 0; }
@@ -265,9 +274,9 @@ applyPlugin(jsPDF); window.jspdf = { jsPDF }; window.XLSX = XLSX;
     const order = ["In progress","Not started","","Blocked","Delayed"];
     const groups = order.map(s => ({ s, list: b.items.map((x, i) => ({ ...x, i })).filter(x => (x.t.status || "") === s) })).filter(g => g.list.length);
     root.innerHTML = `<div class="overlay"><div class="modal" role="dialog" aria-modal="true" aria-labelledby="bfTitle">
-      <div class="panel-head"><div><h2 id="bfTitle">Bring forward from last week</h2><div class="small muted">${esc(weekLabel(b.week))} → ${esc(weekLabel(state.week))}. Done tasks are not listed. Blocked and Delayed tasks start unticked: bring them only if they will still be worked on. Unticked tasks stay in last week only.</div></div></div>
+      <div class="panel-head"><div><h2 id="bfTitle">Bring forward unfinished tasks</h2><div class="small muted">From the last 8 weeks into ${esc(weekLabel(state.week))}. Each task shows the week it was last seen in. Done tasks are not listed. Blocked and Delayed tasks start unticked: bring them only if they will still be worked on. Unticked tasks stay in last week only.</div></div></div>
       <div class="toolbar" style="padding:10px 16px"><button class="btn" id="bfAll">Select all</button><button class="btn" id="bfProg">In progress only</button><button class="btn" id="bfNone">Select none</button></div>
-      <div style="padding:0 16px 8px">${groups.map(g => `<div class="small muted" style="margin:10px 0 4px;font-weight:700;text-transform:uppercase;letter-spacing:.05em">${esc(g.s || "No status")} · ${g.list.length}</div>${g.list.map(x => `<label class="bf-row ${x.dup ? "dim" : ""}"><input type="checkbox" data-bf="${x.i}" ${x.checked ? "checked" : ""} ${x.dup ? "disabled" : ""}><span><b>${esc(x.t.title)}</b>${x.dup ? ' <span class="tag">Already in this week</span>' : ""}<br><span class="small muted">${[x.t.dept, x.t.owner, typeof x.t.pct === "number" ? x.t.pct + "%" : "", x.t.due ? "due " + fmt(x.t.due) : ""].filter(Boolean).map(esc).join(" · ")}</span></span></label>`).join("")}`).join("")}</div>
+      <div style="padding:0 16px 8px">${groups.map(g => `<div class="small muted" style="margin:10px 0 4px;font-weight:700;text-transform:uppercase;letter-spacing:.05em">${esc(g.s || "No status")} · ${g.list.length}</div>${g.list.map(x => `<label class="bf-row ${x.dup ? "dim" : ""}"><input type="checkbox" data-bf="${x.i}" ${x.checked ? "checked" : ""} ${x.dup ? "disabled" : ""}><span><b>${esc(x.t.title)}</b>${x.dup ? ' <span class="tag">Already in this week</span>' : ""}<br><span class="small muted">${[x.t.dept, x.t.owner, typeof x.t.pct === "number" ? x.t.pct + "%" : "", x.t.due ? "due " + fmt(x.t.due) : ""].filter(Boolean).map(esc).join(" · ")}${x.wk ? ` · <b>from ${esc(weekShort(x.wk))}</b>` : ""}</span></span></label>`).join("")}`).join("")}</div>
       <div class="save-bar"><span class="small muted">Past due dates are cleared on the copy and kept in its notes.</span><div class="toolbar"><button class="btn" id="bfCancel">Cancel</button><button class="btn primary" id="bfGo">Bring ${bfCount()} task${bfCount() === 1 ? "" : "s"} forward</button></div></div></div></div>`;
   }
   function bfGo(){
@@ -275,7 +284,7 @@ applyPlugin(jsPDF); window.jspdf = { jsPDF }; window.XLSX = XLSX;
     sel.forEach(x => {
       const t = clone(x.t), past = t.due && t.due < todayIso;
       state.draft.tasks.push({ ...t, id: uid(), carried: true, carriedCount: (t.carriedCount || 0) + 1, prevStatus: t.status || "", prevPct: typeof t.pct === "number" ? t.pct : null, completedAt: "",
-        due: past ? "" : (t.due || ""), notes: [t.notes, `Carried from ${fmt(b.week)} week${past ? ` (was due ${fmt(t.due)})` : ""}`].filter(Boolean).join(" | ") });
+        due: past ? "" : (t.due || ""), notes: [t.notes, `Carried from ${fmt(x.wk || b.week)} week${past ? ` (was due ${fmt(t.due)})` : ""}`].filter(Boolean).join(" | ") });
     });
     if (sel.length) { state.dirty = true; state.dirtyUnits.add(state.editUnit); }
     state.bf = null; renderModal(); toast(sel.length ? `${sel.length} task${sel.length > 1 ? "s" : ""} brought forward. Save to keep them.` : "No tasks selected"); render();
@@ -1088,7 +1097,8 @@ applyPlugin(jsPDF); window.jspdf = { jsPDF }; window.XLSX = XLSX;
     const t = e.target.closest("button, tr[data-open-unit], tr[data-tgl], .hbar-row[data-open-unit]");
     if (!t) return;
     if (t.dataset.tgl) { const k = t.dataset.tgl; state.expanded.has(k) ? state.expanded.delete(k) : state.expanded.add(k); render(); return; }
-    if (t.matches("tr[data-open-unit], .hbar-row[data-open-unit]") || (t.dataset.openUnit && t.matches("button"))) { openUnit(t.dataset.openUnit); return; }
+    if (t.matches("tr[data-open-unit], .hbar-row[data-open-unit]") || (t.dataset.openUnit && t.matches("button"))) { if (state.tab === "dashboard") { state.dash.units = [t.dataset.openUnit]; state.dash.pop = false; render(); window.scrollTo({ top: 0, behavior: "smooth" }); return; } openUnit(t.dataset.openUnit); return; }
+    if (t.dataset.datt) { state.dash.att = t.dataset.datt; render(); return; }
     if (t.dataset.dtbl) { state.dash.tbl = t.dataset.dtbl; render(); return; }
     if (t.dataset.dper) { state.dash.period = t.dataset.dper; state.dash.range = t.dataset.dper === "quarter" ? 13 : 8; render(); ensureDash(); return; }
     if (t.id === "dPopBtn") { state.dash.pop = !state.dash.pop; render(); return; }
@@ -1283,8 +1293,25 @@ applyPlugin(jsPDF); window.jspdf = { jsPDF }; window.XLSX = XLSX;
     m.onclick = async e => { const b = e.target.closest("button[data-a]"); if (!b) return; const a = b.dataset.a; closeAcct(); if (a === "profile") showMenu(); else if (a === "out") { await api.signOut(); location.reload(); } else goTab(a); };
   }
   document.addEventListener("click", e => { if ($("#acctMenu") && !e.target.closest("#acctMenu") && !e.target.closest("#whoBtn")) closeAcct(); if ($("#calPop") && !e.target.closest("#calPop") && !e.target.closest("#weekBtn")) closeCal(); });
-  document.addEventListener("keydown", e => { if (e.key === "Escape") { closeAcct(); closeCal(); } });
+  document.addEventListener("keydown", e => { if (e.key === "Escape") { closeAcct(); closeCal(); closeSearch(); } });
   $("#whoBtn").onclick = acctMenu;
+  $("#actBtn").onclick = () => goTab("activity");
+  function closeSearch(){ const s = $("#srchPop"); if (s) s.remove(); }
+  function openSearch(){
+    if ($("#srchPop")) return closeSearch();
+    const pop = document.createElement("div"); pop.id = "srchPop"; pop.className = "srch-pop"; pop.setAttribute("role", "dialog"); pop.setAttribute("aria-label", "Search tasks");
+    pop.innerHTML = `<input id="srchIn" type="search" placeholder="Search tasks, references, owners" autocomplete="off"><div id="srchOut" class="srch-out small muted">Type to search the tasks in ${esc(weekLabel(state.week))}.</div>`;
+    document.body.append(pop); const inp = pop.querySelector("#srchIn"); inp.focus();
+    const run = () => {
+      const q = inp.value.trim().toLowerCase(), out = pop.querySelector("#srchOut"); if (q.length < 2) { out.textContent = `Type to search the tasks in ${weekLabel(state.week)}.`; return; }
+      const hits = []; state.units.forEach(u => (((state.plans[u.id] || {}).tasks) || []).forEach(t => { if (t.kind !== "KPI / OKR" && [t.title, t.ref, t.owner, t.dept].some(x => String(x || "").toLowerCase().includes(q))) hits.push({ u, t }); }));
+      out.innerHTML = hits.length ? hits.slice(0, 12).map(h => `<button class="srch-hit" data-su="${esc(h.u.id)}" data-sr="${esc(h.t.ref || "")}"><b>${esc(h.t.title)}</b><span class="small muted">${esc(h.t.ref || "")} · ${esc(h.u.name)} · ${esc(h.t.status || "No status")}</span></button>`).join("") + (hits.length > 12 ? `<div class="small muted" style="padding:6px 10px">+${hits.length - 12} more. Narrow the search.</div>` : "") : "No tasks found.";
+    };
+    inp.oninput = run;
+    pop.onclick = e => { e.stopPropagation(); const b = e.target.closest("[data-su]"); if (b) { closeSearch(); openTaskByRef(b.dataset.su, b.dataset.sr); } };
+  }
+  $("#srchBtn").onclick = openSearch;
+  document.addEventListener("click", e => { if ($("#srchPop") && !e.target.closest("#srchPop") && !e.target.closest("#srchBtn")) closeSearch(); });
 
   // Calendar: pick any day to jump to its week (or any Ethiopian month on the monthly report)
   function closeCal(){ const c = $("#calPop"); if (c) c.remove(); }
