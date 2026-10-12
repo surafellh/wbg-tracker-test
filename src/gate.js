@@ -14,7 +14,10 @@ export function startGate(api, current) {
     let email = "", units = null;
     const done = (p) => { root.innerHTML = ""; root.hidden = true; document.body.classList.remove("gated"); resolve(p); };
     root.hidden = false; document.body.classList.add("gated");
-    const shell = (inner) => { root.innerHTML = `<div class="gate"><div class="gate-card"><div class="gate-brand"><span class="gate-dot"></span><b>Wagwago Business Group</b></div><h1>Weekly Activity Tracking</h1>${inner}</div></div>`; };
+    const shell = (inner, tab) => {
+      root.innerHTML = `<div class="gate"><div class="gate-card"><div class="gate-brand"><span class="gate-dot"></span><b>Wagwago Business Group</b></div><h1>Weekly Activity Tracking</h1>${tab ? `<div class="gate-tabs" role="tablist"><button type="button" role="tab" data-gt="in" aria-selected="${tab === "in"}">Sign in</button><button type="button" role="tab" data-gt="up" aria-selected="${tab === "up"}">Sign up</button></div>` : ""}${inner}</div></div>`;
+      root.querySelectorAll("[data-gt]").forEach((b) => { b.onclick = () => { const e = root.querySelector("#gEmail"), v = e ? e.value : ""; if (b.dataset.gt === "in") screenEmail(v); else screenCodeStart(v); }; });
+    };
     const err = (m) => { const e = root.querySelector(".gate-err"); if (e) e.textContent = m || ""; };
     const busy = (b, on, label) => { if (b) { b.disabled = on; if (label) b.textContent = label; } };
 
@@ -27,15 +30,14 @@ export function startGate(api, current) {
 
     // Main screen: email and password
     function screenEmail(prefill) {
-      shell(`<p class="muted">Sign in with your email and password.</p>
+      shell(`<p class="muted">Welcome back. Sign in with your email and password.</p>
         <form id="gForm"><label for="gEmail">Email</label><input id="gEmail" type="email" autocomplete="username" placeholder="name@company.com" value="${esc(prefill || "")}" required>
         <label for="gPass">Password</label><input id="gPass" type="password" autocomplete="current-password" required>
         ${stayBox()}
         <div class="gate-err small" role="alert"></div><button class="btn primary" type="submit">Sign in</button></form>
-        <div class="small" style="margin-top:14px"><a href="#" id="gCode">First time, or forgot your password? Get a code by email</a></div>
-        <div class="small muted" style="margin-top:8px">No access yet? <a href="#" id="gReq">Request access</a></div>${personaBox()}`);
+        <div class="small" style="margin-top:14px"><a href="#" id="gCode">Forgot your password? Get a code by email</a></div>
+        <div class="small muted" style="margin-top:8px">First time here? Use the Sign up tab.</div>${personaBox()}`, "in");
       const inp = root.querySelector("#gEmail"); (prefill ? root.querySelector("#gPass") : inp).focus();
-      root.querySelector("#gReq").onclick = (e) => { e.preventDefault(); screenRequest(inp.value); };
       root.querySelector("#gCode").onclick = (e) => { e.preventDefault(); screenCodeStart(inp.value); };
       wirePersona();
       root.querySelector("#gForm").onsubmit = async (e) => {
@@ -51,12 +53,11 @@ export function startGate(api, current) {
 
     // Code route: first time, or forgot password
     function screenCodeStart(prefill) {
-      shell(`<p class="muted">We send a one-time code to your email. After you enter it you choose a password for next time.</p>
+      shell(`<p class="muted"><b>First time here?</b> Enter your company email. We send a one-time code, then you choose a password for next time.</p>
         <form id="gForm"><label for="gEmail">Email</label><input id="gEmail" type="email" autocomplete="email" placeholder="name@company.com" value="${esc(prefill || "")}" required>
         <div class="gate-err small" role="alert"></div><button class="btn primary" type="submit">Send code</button></form>
-        <div class="small" style="margin-top:14px"><a href="#" id="gBack">Back to sign in</a> · <a href="#" id="gReq">Request access</a></div>`);
+        <div class="small muted" style="margin-top:14px">Not on a company email list? <a href="#" id="gReq">Request access</a>. Already set a password? Use the Sign in tab.</div>`, "up");
       const inp = root.querySelector("#gEmail"); inp.focus();
-      root.querySelector("#gBack").onclick = (e) => { e.preventDefault(); screenEmail(inp.value); };
       root.querySelector("#gReq").onclick = (e) => { e.preventDefault(); screenRequest(inp.value); };
       root.querySelector("#gForm").onsubmit = async (e) => {
         e.preventDefault(); email = inp.value.trim().toLowerCase(); const b = e.submitter; busy(b, true, "Checking…"); err("");

@@ -542,6 +542,10 @@ applyPlugin(jsPDF); window.jspdf = { jsPDF }; window.XLSX = XLSX;
   function unitName(id){ const u = state.units.find(x => x.id===id); return u ? u.name : id; }
   function sortedUnits(){ return [...state.units].sort((a,b) => (a.type||"").localeCompare(b.type||"") || (a.order??99)-(b.order??99) || a.name.localeCompare(b.name)); }
 
+  const GROUPS = { dashboard: ["dashboard"], plans: ["update", "plan", "approvals"], delivery: ["support", "fb"], reports: ["tasks", "monthly"] };
+  const SUB_LABEL = { update: "Progress update", plan: "Next plan", approvals: "Approvals", support: "Business support", fb: "Feedback", tasks: "All tasks", monthly: "Monthly report" };
+  const PAGE_TITLE = { dashboard: ["Dashboards", "How every unit and function is doing this week."], update: ["Plans", "Update progress on this week's tasks."], plan: ["Plans", "Plan the tasks for next week."], approvals: ["Plans", "Changes waiting for approval."], support: ["Delivery", "Support requested from group functions."], fb: ["Delivery", "Feedback and corrective actions."], tasks: ["Reports", "Every task, filtered and downloadable."], monthly: ["Reports", "Consolidated by Ethiopian calendar month."], follow: ["Follow-up", ""], activity: ["Activity log", "Who changed what, and when."], units: ["Settings · Units", "Group Strategy only."], people: ["Settings · People", "Group Strategy only."] };
+  const groupOf = t => Object.keys(GROUPS).find(g => GROUPS[g].includes(t)) || "";
   function renderHero(){
     $("#weekLabel").textContent = weekLabel(state.week);
     const units = state.units.length;
@@ -556,18 +560,17 @@ applyPlugin(jsPDF); window.jspdf = { jsPDF }; window.XLSX = XLSX;
     if (hp) { const pool = Object.values(state.plans).flatMap(p => realTasks(p)); hp.hidden = !(state.plansLoaded && pool.length) || state.tab === "monthly";
       if (!hp.hidden) hp.innerHTML = progressBar(`Overall progress of the week's plan`, avgOf(pool), `${done} of ${all.length} tasks done · every task counts, no status or % counts as 0`, true); }
     const mo = state.tab === "monthly";
-    $("#heroTitle").textContent = mo ? "Monthly Report" : "Weekly Activity Tracking";
-    $("#heroSub").textContent = mo ? "Consolidated by Ethiopian calendar month. Select any number to see the tasks behind it." : "Each function and business unit enters and updates its plan for the week.";
+    const pt = PAGE_TITLE[state.tab] || ["Weekly Activity Tracking", ""]; $("#heroTitle").textContent = pt[0]; $("#heroSub").textContent = pt[1];
     if (mo) { const r = ethMonthRange(state.eth); $("#weekLabel").textContent = ethName(state.eth); $("#weekSub").textContent = `${fmt(r.start)} – ${fmt(r.end)} ${parse(r.end).getFullYear()}`; }
     else $("#weekSub").textContent = (state.week === thisMonday() ? "This week · " : state.week === nextMonday() ? "Next week · " : "") + ethWeekLabel(state.week);
     $("#thisWeek").textContent = mo ? "This month" : "This week";
     $("#prevWeek").setAttribute("aria-label", mo ? "Previous month" : "Previous week"); $("#nextWeek").setAttribute("aria-label", mo ? "Next month" : "Next week");
     document.querySelectorAll("nav.tabs button").forEach(b => b.setAttribute("aria-selected", String(b.dataset.tab===state.tab)));
     $("#unitsTabBtn").hidden = !isAppr(); $("#peopleTabBtn").hidden = !isAppr();
+    renderNav();
     const nb = X.badgeCount(), fbb = $("#fbCount"); if (fbb) { fbb.textContent = nb; fbb.hidden = !nb; }
     const np = pendingFor().length, ab = $("#apprCount"); if (ab) { ab.textContent = np; ab.hidden = !np; } const nm = (state.mentions || []).length, bb = $("#bellBtn"); if (bb) { bb.classList.toggle("has", !!(np + nm)); bb.title = np + nm ? `${nm ? nm + " mention" + (nm === 1 ? "" : "s") : ""}${nm && np ? " · " : ""}${np ? np + " waiting for approval" : ""}` : "Notifications"; bb.setAttribute("aria-label", "Notifications: " + bb.title); }
-    const role = me ? roleText(me) + (me.unit && !isAppr() && me.role !== "executive" ? " · " + unitName(me.unit) : "") : "";
-    $("#whoBtn").innerHTML = me ? `<b>${esc(me.name)}</b> · ${esc(role)}` : "Sign in";
+    $("#whoBtn").textContent = me ? ((me.name || me.email || "?").trim().split(/\s+/).slice(0, 2).map(w => w[0]).join("").toUpperCase() || "?") : "?"; $("#whoBtn").title = me ? me.name : "Sign in";
     $("#modeChip").hidden = dataMode !== "local";
   }
 
@@ -1245,6 +1248,60 @@ applyPlugin(jsPDF); window.jspdf = { jsPDF }; window.XLSX = XLSX;
   });
   main.addEventListener("keydown", e => { const h = e.target.closest && e.target.closest("th[data-sort]"); if (h && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); h.click(); } });
   $("#bellBtn").onclick = bellMenu;
+  // ---------- Stage 4: top bar, grouped tabs, account menu, calendar picker ----------
+  function renderNav(){
+    const g = groupOf(state.tab);
+    document.querySelectorAll("#mainNav button").forEach(b => b.setAttribute("aria-current", String(b.dataset.group === g)));
+    const subs = (GROUPS[g] || []).filter(t => t !== "approvals" || isAppr() || pendingFor().length);
+    const nb = X.badgeCount();
+    $("#subNav").innerHTML = subs.length > 1 ? subs.map(t => `<button role="tab" data-sub="${t}" aria-selected="${t === state.tab}">${SUB_LABEL[t]}${t === "fb" && nb ? ` <span class="badge">${nb}</span>` : ""}${t === "approvals" && pendingFor().length ? ` <span class="badge">${pendingFor().length}</span>` : ""}</button>`).join("") : "";
+    $("#subNav").hidden = !subs.length || subs.length < 2;
+    const wb = $("#weekBtn"); if (wb) wb.classList.toggle("flat", state.tab === "dashboard" && false);
+  }
+  $("#mainNav").addEventListener("click", e => { const b = e.target.closest("button[data-group]"); if (!b) return; const g = b.dataset.group; if (groupOf(state.tab) === g) return; goTab(GROUPS[g][0]); });
+  $("#subNav").addEventListener("click", e => { const b = e.target.closest("button[data-sub]"); if (b) goTab(b.dataset.sub); });
+  function closeAcct(){ const m = $("#acctMenu"); if (m) m.remove(); }
+  function acctMenu(){
+    if ($("#acctMenu")) return closeAcct();
+    if (!me) return showMenu();
+    const m = document.createElement("div"); m.id = "acctMenu"; m.className = "acct-menu"; m.setAttribute("role", "menu");
+    const role = roleText(me) + (me.unit ? " · " + unitName(me.unit) : "");
+    m.innerHTML = `<div class="acct-who"><b>${esc(me.name)}</b><span class="small muted">${esc(me.email || "")}</span><span class="small muted">${esc(role)}</span></div>
+      <button role="menuitem" data-a="profile">Profile and password</button>
+      ${isAppr() ? `<div class="acct-sep">Settings</div><button role="menuitem" data-a="units">Units</button><button role="menuitem" data-a="people">People and roles</button>` : ""}
+      <button role="menuitem" data-a="activity">Activity log</button>
+      <div class="acct-sep"></div><button role="menuitem" data-a="out">Sign out</button>`;
+    document.body.append(m);
+    m.onclick = async e => { const b = e.target.closest("button[data-a]"); if (!b) return; const a = b.dataset.a; closeAcct(); if (a === "profile") showMenu(); else if (a === "out") { await api.signOut(); location.reload(); } else goTab(a); };
+  }
+  document.addEventListener("click", e => { if ($("#acctMenu") && !e.target.closest("#acctMenu") && !e.target.closest("#whoBtn")) closeAcct(); if ($("#calPop") && !e.target.closest("#calPop") && !e.target.closest("#weekBtn")) closeCal(); });
+  document.addEventListener("keydown", e => { if (e.key === "Escape") { closeAcct(); closeCal(); } });
+  $("#whoBtn").onclick = acctMenu;
+
+  // Calendar: pick any day to jump to its week (or any Ethiopian month on the monthly report)
+  function closeCal(){ const c = $("#calPop"); if (c) c.remove(); }
+  function openCal(){
+    if ($("#calPop")) return closeCal();
+    const pop = document.createElement("div"); pop.id = "calPop"; pop.className = "cal-pop"; pop.setAttribute("role", "dialog"); pop.setAttribute("aria-label", "Pick a week");
+    const r = $("#weekBtn").getBoundingClientRect(); pop.style.top = (r.bottom + 8) + "px"; pop.style.right = Math.max(8, innerWidth - r.right - 60) + "px";
+    document.body.append(pop);
+    if (monthTab()) { let y = state.eth.y; const draw = () => { pop.innerHTML = `<div class="cal-head"><button data-y="-1" aria-label="Previous year">&lsaquo;</button><b>${y} EC</b><button data-y="1" aria-label="Next year">&rsaquo;</button></div><div class="cal-months">${ETH_M.map((n, i) => `<button data-m="${i + 1}" ${y === state.eth.y && i + 1 === state.eth.m ? 'aria-current="true"' : ""}>${n}</button>`).join("")}</div>`; };
+      draw(); pop.onclick = e => { e.stopPropagation(); const b = e.target.closest("button"); if (!b) return; if (b.dataset.y) { y += +b.dataset.y; draw(); } else if (b.dataset.m) { state.eth = { y, m: +b.dataset.m }; closeCal(); loadMonth(); } }; return; }
+    let cur = parse(state.week); cur = new Date(cur.getFullYear(), cur.getMonth(), 1);
+    const MN = ["January","February","March","April","May","June","July","August","September","October","November","December"];
+    const draw = () => {
+      const y = cur.getFullYear(), mo = cur.getMonth(), first = new Date(y, mo, 1), lead = (first.getDay() + 1) % 7, days = new Date(y, mo + 1, 0).getDate(), cells = [];
+      for (let i = 0; i < lead; i++) cells.push(""); for (let d = 1; d <= days; d++) cells.push(d);
+      const sel = state.week, selEnd = weekEndOf(sel);
+      pop.innerHTML = `<div class="cal-head"><button data-mo="-1" aria-label="Previous month">&lsaquo;</button><b>${MN[mo]} ${y}</b><button data-mo="1" aria-label="Next month">&rsaquo;</button></div>
+        <div class="cal-grid"><span>Sa</span><span>Su</span><span>Mo</span><span>Tu</span><span>We</span><span>Th</span><span>Fr</span>${cells.map(d => { if (!d) return "<i></i>"; const s = iso(new Date(y, mo, d)), inSel = s >= sel && s <= selEnd; return `<button data-d="${s}" class="${inSel ? "in" : ""}${s === todayIso ? " today" : ""}">${d}</button>`; }).join("")}</div>
+        <div class="cal-foot small muted">${esc(ethWeekLabel(state.week))}</div>`;
+    };
+    draw();
+    pop.onclick = e => { e.stopPropagation(); const b = e.target.closest("button"); if (!b) return; if (b.dataset.mo) { cur = new Date(cur.getFullYear(), cur.getMonth() + +b.dataset.mo, 1); draw(); } else if (b.dataset.d) { closeCal(); setWeek(weekStartOf(b.dataset.d)); } };
+  }
+  $("#weekBtn").onclick = openCal;
+
   function goTab(to){ const b = document.querySelector(`nav.tabs button[data-tab="${to}"]`); if (b) b.click(); }
   // A new empty task in a unit's draft; its reference number is requested right away.
   function makeTask(u, extra){
@@ -2079,7 +2136,6 @@ applyPlugin(jsPDF); window.jspdf = { jsPDF }; window.XLSX = XLSX;
   function startApp(profile){
     me = profile; myId = profile.name; api.setProfile && api.setProfile(profile);
     api.onSignedOut(() => location.reload());
-    $("#whoBtn").onclick = showMenu;
     state.level = store.get("wp-level") || ((isAppr() || me.role === "executive") ? "deliverables" : "tasks");
     if (!state.editUnit || state.editUnit === ALL) { const mu = myUnit(); if (mu) { state.editUnit = mu; store.set("wp-unit", mu); } }
     if (!isAppr() && state.editUnit && !myUnit() && me.role !== "executive" && me.role !== "leader") state.editUnit = null;
