@@ -2697,7 +2697,7 @@ applyPlugin(jsPDF); window.jspdf = { jsPDF }; window.XLSX = XLSX;
             ${lab("pfTheme", "Theme", `<select id="pfTheme">${Object.entries(THEME).map(([k, v]) => `<option value="${k}" ${(store.get("wp-theme") || "auto") === k ? "selected" : ""}>${v}</option>`).join("")}</select>`)}
             ${lab("pfStart", "Open the app on", `<select id="pfStart">${[["dashboard", "Dashboard"], ["update", "This week's update"], ["plan", "Next week's plan"], ["mplan", "Monthly plan"], ["tasks", "All tasks"]].map(([k, v]) => `<option value="${k}" ${(store.get("wp-start") || "dashboard") === k ? "selected" : ""}>${v}</option>`).join("")}</select>`)}</div></section>
           <section class="pf-sec"><h3>Password and security</h3>
-            <div id="pwBox" hidden><div class="pf-grid"><div class="pf-f"><label for="pwA">New password (at least 10 characters)</label><input type="password" id="pwA" autocomplete="new-password"></div><div class="pf-f"><label for="pwB">Repeat it</label><input type="password" id="pwB" autocomplete="new-password"></div></div><div id="pwErr" class="small" style="color:var(--bad);min-height:18px" role="alert"></div><div class="toolbar"><button class="btn primary" type="button" id="pwSave">Save password</button><button class="btn" type="button" id="pwCancel">Cancel</button></div></div>
+            <div id="pwBox" hidden><div class="pf-grid"><div class="pf-f"><label for="pwA">New password (at least 6 characters)</label><input type="password" id="pwA" autocomplete="new-password"></div><div class="pf-f"><label for="pwB">Repeat it</label><input type="password" id="pwB" autocomplete="new-password"></div></div><div id="pwErr" class="small" style="color:var(--bad);min-height:18px" role="alert"></div><div class="toolbar"><button class="btn primary" type="button" id="pwSave">Save password</button><button class="btn" type="button" id="pwCancel">Cancel</button></div></div>
             <div class="toolbar" id="secBtns"><button class="btn" type="button" id="pwOpen">Change password</button><button class="btn" type="button" data-pf="out-all" title="Signs you out on every phone and computer, including this one">Sign out of all devices</button></div></section>
           <section class="pf-sec"><h3>Role and access</h3>
             <div class="small" style="margin-bottom:10px">Now: <b>${detail(me.role, me.unit, me.departments)}</b></div>${reqBox}${histH}</section>
@@ -2715,7 +2715,7 @@ applyPlugin(jsPDF); window.jspdf = { jsPDF }; window.XLSX = XLSX;
       if (b.id === "pwCancel") { $$("#pwBox").hidden = true; $$("#secBtns").hidden = false; return; }
       if (b.id === "pwSave") {
         const a = $$("#pwA").value, c = $$("#pwB").value, er = m => { $$("#pwErr").textContent = m; };
-        if (a.length < 10) return er("Use at least 10 characters."); if (a !== c) return er("The two passwords are not the same.");
+        if (a.length < 6) return er("Use at least 6 characters."); if (a !== c) return er("The two passwords are not the same.");
         const r = await api.setPassword(a); if (r.error) return er(/same|different/i.test(r.error) ? "Choose a password you have not used before." : "Could not save: " + r.error);
         root.innerHTML = ""; toast("Password changed"); return;
       }

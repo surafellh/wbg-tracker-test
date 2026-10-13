@@ -103,7 +103,7 @@ export function startGate(api, current) {
       root.querySelector("#gSkip").onclick = async (e) => { e.preventDefault(); await after(p); };
       root.querySelector("#gForm").onsubmit = async (e) => {
         e.preventDefault(); const a = root.querySelector("#pw1").value, c = root.querySelector("#pw2").value, b = e.submitter;
-        if (a.length < 10) return err("Use at least 10 characters.");
+        if (a.length < 6) return err("Use at least 6 characters.");
         if (a !== c) return err("The two passwords are not the same.");
         if (/^(.)\1+$/.test(a) || /^(1234567890|password12|qwertyuiop)/i.test(a)) return err("Choose something less guessable.");
         busy(b, true, "Saving…"); const r = await api.setPassword(a); busy(b, false, "Save password");
