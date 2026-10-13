@@ -194,6 +194,14 @@ function createSupabaseData() {
     async hasPassword() { const { data } = await sb.auth.getUser(); return !!(data && data.user && data.user.user_metadata && data.user.user_metadata.has_password); },
     async setPassword(password) { const { error } = await sb.auth.updateUser({ password, data: { has_password: true } }); return error ? { error: error.message } : { ok: true }; },
     adminResetPassword: (id) => rpc("wbg_admin_reset_password", { p_user: id }),
+    // ----- profile settings and role requests -----
+    updateProfile: (data) => rpc("wbg_update_profile", { p_data: data }),
+    requestRole: (r) => rpc("wbg_request_role", { p_role: r.role, p_unit: r.unit || "", p_departments: r.departments || [], p_reason: r.reason || "", p_kind: r.kind || "upgrade" }),
+    myRoleRequests: () => rpcq("wbg_my_role_requests"),
+    withdrawRoleRequest: (id) => rpc("wbg_withdraw_role_request", { p_id: id }),
+    adminRoleRequests: () => rpcq("wbg_admin_role_requests"),
+    adminDecideRole: (id, approve, data) => rpc("wbg_admin_decide_role", { p_id: id, p_approve: approve, p_data: data || {} }),
+    async signOutEverywhere() { roleNow = ""; await sb.auth.signOut({ scope: "global" }); },
     allocRefs: (auth, unit, n) => rpc("wbg_alloc_refs", { p_unit: unit, p_n: n }),
     taskComments: (auth, unit, ref) => rpcq("wbg_task_comments", { p_unit: unit, p_ref: ref }),
     mentionables: (auth, unit) => rpcq("wbg_mentionables", { p_unit: unit }),
@@ -332,6 +340,8 @@ function createLocalData() {
   const NEWBIE = { id: "new.person@wagwagoelectric.com", email: "new.person@wagwagoelectric.com", name: "", role: "staff", title: "", unit: null, departments: [], status: "active", setupDone: false, invited: false };
   const people = () => { let p = read("wbg_local_people"); if (!p) { p = [...PEOPLE0, NEWBIE]; write("wbg_local_people", p); } return p; };
   const setPeople = (p) => write("wbg_local_people", p);
+  const roleReqs = () => read("wbg_local_rolereq") || [];
+  const setRoleReqs = (l) => write("wbg_local_rolereq", l);
   const invites = () => read("wbg_local_invites") || [];
   const accessReqs = () => read("wbg_local_access") || [];
   const domains = () => read("wbg_local_domains") || DOMAINS;
@@ -339,7 +349,7 @@ function createLocalData() {
   const prof = () => people().find((x) => x.id === curId()) || null;
   // the caller as the database sees them
   const A = () => { const p = prof(); return p && p.status === "active" && p.setupDone ? { id: p.id, name: p.name, role: p.role, title: p.title, unit: p.unit, departments: p.departments || [] } : {}; };
-  const meOut = (p) => (p ? { status: p.status, setupDone: p.setupDone, invited: p.invited, id: p.id, email: p.email, name: p.name, role: p.role, title: p.title, unit: p.unit, departments: p.departments || [] } : null);
+  const meOut = (p) => (p ? { status: p.status, setupDone: p.setupDone, invited: p.invited, id: p.id, email: p.email, name: p.name, role: p.role, title: p.title, unit: p.unit, departments: p.departments || [], phone: p.phone || "", jobTitle: p.jobTitle || "" } : null);
   // what each collection shows this person (same as the row level security policies)
   function readFilter(c, items) {
     const a = A(); if (!a.role) return [];
@@ -548,6 +558,53 @@ function createLocalData() {
       addActivity(p.name, p.unit || "", "", { action: "user", summary: `Signed up: ${p.name} (${p.email})` });
       return { profile: meOut(p) };
     },
+    // ----- profile settings and role requests (same rules as the database functions) -----
+    async updateProfile(d) {
+      const l = people(), p = l.find((x) => x.id === curId()); if (!p || p.status !== "active") return { error: "not_allowed" };
+      const name = "name" in d ? String(d.name || "").trim().slice(0, 120) : p.name; if (name.length < 3) return { error: "name_needed" };
+      p.name = name; if ("phone" in d) p.phone = String(d.phone || "").trim().slice(0, 40); if ("jobTitle" in d) p.jobTitle = String(d.jobTitle || "").trim().slice(0, 80);
+      setPeople(l); return { ok: true, profile: meOut(p) };
+    },
+    async requestRole(r) {
+      const p = prof(); if (!p || p.status !== "active" || !p.setupDone || p.role === "super_admin") return { error: "not_allowed" };
+      if (!["leader", "planning", "manager", "staff"].includes(r.role)) return { error: "bad_role" };
+      const list = roleReqs(); if (list.some((x) => x.userId === p.id && x.status === "pending")) return { error: "already_pending" };
+      const unit = r.unit || null, deps = r.departments || [], u = getStore("units").find((x) => x.id === unit);
+      if (!u) return { error: "unit_needed" };
+      if (["manager", "staff"].includes(r.role) && !deps.length) return { error: "department_needed" };
+      if (deps.some((d) => !(u.departments || []).includes(d))) return { error: "department_needed" };
+      const kind = r.kind === "signup" ? "signup" : "upgrade";
+      if (kind === "upgrade") { if (r.role === p.role && unit === p.unit && JSON.stringify(deps) === JSON.stringify(p.departments || [])) return { error: "no_change" }; if ((r.reason || "").trim().length < 5) return { error: "reason_needed" }; }
+      const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+      list.push({ id, userId: p.id, email: p.email, name: p.name, kind, fromRole: p.role, fromUnit: p.unit, fromDepartments: p.departments || [], role: r.role, unit, departments: deps, reason: (r.reason || "").trim().slice(0, 500), status: "pending", createdAt: new Date().toISOString() });
+      setRoleReqs(list); addActivity(p.name, unit || "", "", { action: "user", summary: `${p.name} asked for the role ${r.role}${kind === "signup" ? " (at sign-up)" : " (upgrade)"}` });
+      return { ok: true, id };
+    },
+    async myRoleRequests() { const p = prof(); if (!p) return { error: "not_allowed" }; return { ok: true, requests: roleReqs().filter((x) => x.userId === p.id).sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1)).slice(0, 6) }; },
+    async withdrawRoleRequest(id) { const p = prof(), l = roleReqs(), q = l.find((x) => x.id === id && p && x.userId === p.id && x.status === "pending"); if (!q) return { error: "not_found" }; Object.assign(q, { status: "withdrawn", decidedAt: new Date().toISOString(), decidedBy: p.name }); setRoleReqs(l); return { ok: true }; },
+    async signOutEverywhere() { try { localStorage.removeItem("wbg_local_session"); } catch (x) {} },
+    async adminRoleRequests() {
+      if (!isAppr(A())) return err("not_allowed");
+      const ppl = people();
+      return ok({ requests: roleReqs().filter((x) => x.status === "pending").map((x) => { const u = ppl.find((q) => q.id === x.userId) || {}; return { ...x, phone: u.phone || "", jobTitle: u.jobTitle || "" }; }), accessCount: accessReqs().filter((r) => r.status === "pending").length });
+    },
+    async adminDecideRole(id, approve, d) {
+      const a = A(); if (!isAppr(a)) return err("not_allowed");
+      const l = roleReqs(), r = l.find((x) => x.id === id && x.status === "pending"); if (!r) return err("not_found");
+      const list = people(), p = list.find((x) => x.id === r.userId); if (!p) return err("not_found");
+      const was = `${p.role} · ${p.unit || "-"} · ${JSON.stringify(p.departments || [])}`;
+      let role = r.role, unit = r.unit, deps = r.departments;
+      if (approve) {
+        role = (d && d.role) || r.role; unit = d && "unit" in d ? (d.unit || null) : r.unit; deps = (d && d.departments) || r.departments;
+        if (role === "super_admin") return err("not_allowed");
+        if (!getStore("units").some((u) => u.id === unit)) return err("unit_needed");
+        if (["manager", "staff"].includes(role) && !deps.length) return err("department_needed");
+        Object.assign(p, { role, title: "", unit, departments: deps, invited: true }); setPeople(list);
+      }
+      Object.assign(r, { status: approve ? "approved" : "rejected", decidedBy: a.name, decidedAt: new Date().toISOString(), note: (d && d.note) || "" }); setRoleReqs(l);
+      addActivity(a.name, (approve ? unit : r.unit) || "", "", { action: "user", summary: `${approve ? "Approved" : "Rejected"} the role request of ${r.name} (${r.email})`, details: ["Was: " + was, approve ? `Now: ${role} · ${unit || "-"} · ${JSON.stringify(deps)}` : `Asked for: ${r.role} · ${r.unit || "-"}`] });
+      return ok();
+    },
     // ----- people (Group Strategy only) -----
     async adminUsers() { if (!isAppr(A())) return err("not_allowed"); return ok({ users: people().map((p) => ({ ...meOut(p), createdAt: "", lastSeen: "" })), invites: invites(), requests: accessReqs().filter((r) => r.status === "pending"), domains: domains() }); },
     async adminSaveUser(id, d) {
@@ -586,7 +643,7 @@ function createLocalData() {
   };
   // every change runs as the signed-in person, never as what the page says
   for (const k of Object.keys(api)) {
-    if (typeof api[k] !== "function" || /^(session|me|setProfile|setRemember|signInPassword|hasPassword|setPassword|localPeople|localSignIn|checkEmail|sendCode|verifyCode|signOut|onSignedOut|publicUnits|requestAccess|completeSignup|admin\w+|uploadEvidence|evidenceUrl|evidenceBlob|readAll)$/.test(k)) continue;
+    if (typeof api[k] !== "function" || /^(session|me|setProfile|setRemember|signInPassword|hasPassword|setPassword|localPeople|localSignIn|checkEmail|sendCode|verifyCode|signOut|onSignedOut|publicUnits|requestAccess|completeSignup|updateProfile|requestRole|myRoleRequests|withdrawRoleRequest|signOutEverywhere|admin\w+|uploadEvidence|evidenceUrl|evidenceBlob|readAll)$/.test(k)) continue;
     const f = api[k]; api[k] = (_ignored, ...rest) => f(A(), ...rest);
   }
 
