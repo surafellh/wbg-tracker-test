@@ -94,7 +94,7 @@ export function startGate(api, current) {
     // Choose a password (after a code sign-in)
     async function screenPassword(p) {
       let has = false; try { has = await api.hasPassword(); } catch (x) {}
-      shell(`<p><b>${has ? "Choose a new password" : "Create your password"}</b></p><p class="small muted">Use it with your email next time, so you do not need a code. At least 10 characters; a short sentence is a good password.</p>
+      shell(`<p><b>${has ? "Choose a new password" : "Create your password"}</b></p><p class="small muted">Use it with your email next time, so you do not need a code. At least 6 characters; a short sentence is a good password.</p>
         <form id="gForm"><label for="pw1">New password</label><input id="pw1" type="password" autocomplete="new-password" required minlength="10">
         <label for="pw2">Repeat it</label><input id="pw2" type="password" autocomplete="new-password" required minlength="10">
         <div class="gate-err small" role="alert"></div><button class="btn primary" type="submit">Save password</button></form>
