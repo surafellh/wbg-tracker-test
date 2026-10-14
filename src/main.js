@@ -403,6 +403,45 @@ applyPlugin(jsPDF); window.jspdf = { jsPDF }; window.XLSX = XLSX;
     if (f.dept) c.push(["dept", "Department: " + f.dept]);
     return c;
   }
+  // ---------- Actions for the CEO (Group Strategy, CEO and DCEO only) ----------
+  state.ceoType = ""; state.ceoOpen = new Set();
+  function ceoRows(){
+    const month = state.filter.period === "month";
+    if (month && !state.monthData) return null;
+    const by = new Map(); poolTasks().forEach(t => { if (!by.has(t.unit)) by.set(t.unit, []); by.get(t.unit).push(t); });
+    return sortedUnits().filter(u => !state.ceoType || u.type === state.ceoType).map(u => ({ id: u.id, a: assess({ name: u.name, type: u.type, tasks: leafTasks(by.get(u.id) || []), today: todayIso }) })).filter(r => r.a).sort((x, y) => x.a.score - y.a.score);
+  }
+  const ceoText = (r, per) => ceoActions(r.a, per).map((x, i) => `${i + 1}. ${x}`).join("\n");
+  function renderCeo(){
+    if (!canFeedback(me)) return `<div class="panel"><div class="empty"><b>Not available</b>This page is for Group Strategy, the CEO and the DCEO.</div></div>`;
+    const month = state.filter.period === "month", per = month ? "month" : "week", perLabel = month ? ethName(state.eth) : weekLabel(state.week);
+    const rows = ceoRows();
+    const bar = `<div class="panel-head"><div><h2>Actions for the CEO</h2><div class="small muted">${esc(perLabel)} · ${month ? "monthly view: firmer actions" : "weekly view: check-ins"}</div></div>
+      <div class="toolbar"><select id="fPeriod" aria-label="Period"><option value="week" ${!month ? "selected" : ""}>Week: ${esc(weekLabel(state.week))}</option><option value="month" ${month ? "selected" : ""}>Month: ${esc(ethName(state.eth))}</option></select>
+      <div class="seg" role="tablist" aria-label="Unit type">${[["", "All"], ["Business unit", "Business units"], ["Corporate function", "Function units"]].map(([v, l]) => `<button type="button" role="tab" data-ceotype="${v}" aria-selected="${state.ceoType === v}">${l}</button>`).join("")}</div></div></div>`;
+    if (!rows) return `<div class="panel">${bar}<div class="empty"><b>Collecting the weeks of ${esc(ETH_M[state.eth.m - 1])}…</b></div></div>`;
+    if (!rows.length) return `<div class="panel">${bar}<div class="empty"><b>No tasks to assess</b>Nothing is planned for this selection yet.</div></div>`;
+    const cnt = {}; rows.forEach(r => cnt[r.a.band.label] = (cnt[r.a.band.label] || 0) + 1);
+    const chips = `<div class="toolbar small" style="padding:10px 16px;gap:14px;flex-wrap:wrap">${Object.entries(cnt).map(([k, v]) => `<span><b>${v}</b> ${esc(k)}</span>`).join("")}</div>`;
+    const body = rows.map(r => {
+      const a = r.a, acts = ceoActions(a, per), open = state.ceoOpen.has(r.id);
+      const pill = `<span class="pill ${a.score >= 75 ? "s-done" : a.score >= 50 ? "s-prog" : "s-bad"}">${esc(a.band.label)} · ${a.score}%</span>`;
+      return `<tr class="clickable" data-ceotgl="${esc(r.id)}" tabindex="0"><td><b>${open ? "▾" : "▸"} ${esc(a.name)}</b></td><td class="small">${a.isBU ? "Business unit" : "Function"}</td><td>${pill}</td><td class="small num">${a.isBU && a.finPct != null ? a.finPct + "%" : "–"}</td><td class="small">${esc(acts[0] || "")}${acts.length > 1 ? ` <span class="muted">+${acts.length - 1}</span>` : ""}</td></tr>`
+        + (open ? `<tr class="ceo-open"><td colspan="5"><ol class="ceo-l">${acts.map(x => `<li>${esc(x)}</li>`).join("")}</ol><div class="toolbar" style="margin-top:10px"><button class="btn small primary" type="button" data-ceosend="fb" data-u="${esc(r.id)}">Send as feedback</button>${isAppr() ? `<button class="btn small" type="button" data-ceosend="act" data-u="${esc(r.id)}">Log as corrective action</button>` : ""}</div></td></tr>` : "");
+    }).join("");
+    return `<div class="panel">${bar}${chips}<div class="scroll"><table><thead><tr><th>Unit</th><th>Type</th><th>Rating</th><th>Financial</th><th>First action</th></tr></thead><tbody>${body}</tbody></table></div></div>`;
+  }
+  async function ceoSend(kind, id){
+    const rows = ceoRows(); const r = rows && rows.find(x => x.id === id); if (!r) return;
+    const month = state.filter.period === "month", per = month ? "month" : "week", perLabel = month ? ethName(state.eth) : weekLabel(state.week), text = ceoText(r, per);
+    try {
+      let res;
+      if (kind === "fb") res = await api.saveFeedback(auth(), { unit: id, from: isAppr() ? "Group Strategy" : (auth().title || "CEO"), week: state.week, body: `${r.a.band.label} (${r.a.score}%) for ${perLabel}.\n${text}`, taskRef: "" });
+      else res = await api.saveAction(auth(), { unit: id, source: "Group Strategy", issue: `${r.a.band.label} (${r.a.score}%) for ${perLabel}.`, action: text, owner: "", due: "", status: "Open", taskTitle: "", notes: "", week: state.week, taskRef: "" });
+      if (res && res.error) { toast(errText(res)); return; }
+      toast(kind === "fb" ? "Sent to " + r.a.name + " as feedback" : "Logged as a corrective action for " + r.a.name);
+    } catch (e) { toast(errText(e)); }
+  }
   function renderTasks(){
     const f = state.filter, month = f.period === "month";
     if (month && !state.monthData) return `<div class="panel"><div class="empty"><b>Collecting the weeks of ${esc(ETH_M[state.eth.m - 1])}…</b></div></div>`;
@@ -413,15 +452,6 @@ applyPlugin(jsPDF); window.jspdf = { jsPDF }; window.XLSX = XLSX;
     const overall = `<div class="panel overall" style="margin-bottom:14px"><div class="panel-head"><div><h2>Overall progress</h2><div class="small muted">${esc(scopeName)} · ${esc(perLabel)}</div></div></div>
       <div style="padding:6px 16px 16px">${sm.total ? `${progressBar("Average completion across " + sm.total + " task" + (sm.total === 1 ? "" : "s"), sm.avg, "", true)}
       <div class="toolbar small" style="margin-top:10px;gap:14px;flex-wrap:wrap"><span><b>${sm.done}</b> done</span><span><b>${sm.total - sm.done - sm.blocked}</b> in progress or not started</span><span><b>${sm.blocked}</b> blocked</span><span><b>${sm.overdue}</b> overdue</span>${sm.high ? `<span><b>${sm.highDone}</b> of <b>${sm.high}</b> high-priority done</span>` : ""}</div>` : `<div class="muted small">No tasks for this selection yet.</div>`}</div></div>`;
-    const ceoCard = (() => {
-      const mk = (id, nm, tt) => assess({ name: nm, type: unitOf(id).type, tasks: leafTasks(tt), today: todayIso });
-      let rows;
-      if (f.unit) { const a = mk(f.unit, unitName(f.unit), scope); rows = a ? [a] : []; }
-      else { const by = new Map(); scope.forEach(t => { if (!by.has(t.unit)) by.set(t.unit, []); by.get(t.unit).push(t); }); rows = [...by].map(([id, tt]) => mk(id, unitName(id), tt)).filter(Boolean).sort((a, b) => a.score - b.score); }
-      if (!rows.length) return "";
-      const item = a => `<div class="ceo-i"><div class="ceo-h"><b>${esc(a.name)}</b><span class="pill ${a.score >= 75 ? "s-done" : a.score >= 50 ? "s-prog" : "s-bad"}">${esc(a.band.label)} · ${a.score}%</span><span class="small muted">${a.isBU ? "Business unit" : "Function"}${a.isBU && a.finPct != null ? ` · financial ${a.finPct}%` : ""}</span></div><ol class="ceo-l">${ceoActions(a).map(x => `<li>${esc(x)}</li>`).join("")}</ol></div>`;
-      return `<div class="panel ceo" style="margin-bottom:14px"><div class="panel-head"><div><h2>Action for the CEO</h2><div class="small muted">${esc(scopeName)} · ${esc(perLabel)}</div></div></div><div style="padding:4px 16px 14px">${rows.map(item).join("")}</div></div>`;
-    })();
     let body = "";
     if (f.group) {
       const byU = new Map(); list.forEach(t => { if (!byU.has(t.unit)) byU.set(t.unit, { name: t.unitName, d: new Map() }); const u = byU.get(t.unit), k = t.dept || ""; if (!u.d.has(k)) u.d.set(k, []); u.d.get(k).push(t); });
@@ -436,7 +466,7 @@ applyPlugin(jsPDF); window.jspdf = { jsPDF }; window.XLSX = XLSX;
         });
       });
     } else body = list.map(readRows).join("");
-    return `${overall}${ceoCard}<div class="panel">
+    return `${overall}<div class="panel">
       ${f.from === "monthly" ? `<div class="toolbar" style="padding:12px 16px;border-bottom:1px solid var(--line)"><button class="btn" id="backMonthly">‹ Back to monthly report</button><span class="small muted">Showing the tasks behind the number you selected.</span></div>` : ""}
       ${chips.length ? `<div class="chipset" style="padding:12px 16px;border-bottom:1px solid var(--line)">${chips.map(([k, l]) => `<span class="chip">${esc(l)}<button data-chip="${k}" aria-label="Remove filter">×</button></span>`).join("")}</div>` : ""}
       <div class="panel-head">
@@ -581,9 +611,9 @@ applyPlugin(jsPDF); window.jspdf = { jsPDF }; window.XLSX = XLSX;
   function unitName(id){ const u = state.units.find(x => x.id===id); return u ? u.name : id; }
   function sortedUnits(){ return [...state.units].sort((a,b) => (a.type||"").localeCompare(b.type||"") || (a.order??99)-(b.order??99) || a.name.localeCompare(b.name)); }
 
-  const GROUPS = { dashboard: ["dashboard"], plans: ["update", "plan", "mplan", "approvals"], delivery: ["support", "fb"], reports: ["tasks", "monthly"] };
-  const SUB_LABEL = { update: "Progress update", plan: "Next plan", mplan: "Monthly plan", approvals: "Approvals", support: "Business support", fb: "Feedback", tasks: "Weekly report", monthly: "Monthly report" };
-  const PAGE_TITLE = { dashboard: ["Dashboards", "How every unit and function is doing this week."], update: ["Plans", "Update progress on this week's tasks."], plan: ["Plans", "Plan the tasks for next week."], mplan: ["Plans", "Plan the month once and split it across its weeks."], approvals: ["Plans", "Changes waiting for approval."], support: ["Delivery", "Support requested from group functions."], fb: ["Delivery", "Feedback and corrective actions."], tasks: ["Reports", "Every task, filtered and downloadable."], monthly: ["Reports", "Consolidated by Ethiopian calendar month."], follow: ["Follow-up", ""], activity: ["Activity log", "Who changed what, and when."], units: ["Settings · Units", "Group Strategy only."], people: ["Settings · People", "Group Strategy only."] };
+  const GROUPS = { dashboard: ["dashboard"], plans: ["update", "plan", "mplan", "approvals"], delivery: ["support", "fb"], reports: ["tasks", "monthly", "ceo"] };
+  const SUB_LABEL = { update: "Progress update", plan: "Next plan", mplan: "Monthly plan", approvals: "Approvals", support: "Business support", fb: "Feedback", tasks: "Weekly report", monthly: "Monthly report", ceo: "Actions for the CEO" };
+  const PAGE_TITLE = { dashboard: ["Dashboards", "How every unit and function is doing this week."], update: ["Plans", "Update progress on this week's tasks."], plan: ["Plans", "Plan the tasks for next week."], mplan: ["Plans", "Plan the month once and split it across its weeks."], approvals: ["Plans", "Changes waiting for approval."], support: ["Delivery", "Support requested from group functions."], fb: ["Delivery", "Feedback and corrective actions."], tasks: ["Reports", "Every task, filtered and downloadable."], monthly: ["Reports", "Consolidated by Ethiopian calendar month."], ceo: ["Reports", "What the CEO should do about each unit."], follow: ["Follow-up", ""], activity: ["Activity log", "Who changed what, and when."], units: ["Settings · Units", "Group Strategy only."], people: ["Settings · People", "Group Strategy only."] };
   const groupOf = t => Object.keys(GROUPS).find(g => GROUPS[g].includes(t)) || "";
   const SM = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
   const weekShort = w => { const a = parse(w), b = parse(weekEndOf(w)); return a.getMonth() === b.getMonth() ? `${SM[a.getMonth()]} ${a.getDate()} – ${b.getDate()}` : `${SM[a.getMonth()]} ${a.getDate()} – ${SM[b.getMonth()]} ${b.getDate()}`; };
@@ -1238,6 +1268,7 @@ applyPlugin(jsPDF); window.jspdf = { jsPDF }; window.XLSX = XLSX;
     else if (state.tab==="plan") html += renderUpdate() + `<details class="panel imp-det" id="impDet" ${(state.impOpen || state.imp) ? "open" : ""}><summary><b>Import or export with Excel</b> <span class="small muted">download the template, fill it in, upload it</span></summary>${renderImport()}</details>`;
     else if (state.tab==="mplan") html += renderMplan();
     else if (state.tab==="tasks") html += renderTasks();
+    else if (state.tab==="ceo") html += renderCeo();
     else if (state.tab==="follow") html += renderFollow();
     else if (state.tab==="monthly") html += renderMonthly();
     else if (state.tab==="support") html += X.renderSupport();
@@ -1621,9 +1652,12 @@ applyPlugin(jsPDF); window.jspdf = { jsPDF }; window.XLSX = XLSX;
     const mm = document.querySelector("details.more[open]"); if (mm && (!e.target.closest("details.more") || e.target.closest(".more-menu button"))) mm.open = false;
     const row = e.target.closest("tr.task-row");
     if (row && !e.target.closest("input, select, textarea, button, label, a, summary") && (state.tab === "update" || state.tab === "plan") && row.dataset.id) { openPanel(row.dataset.u + "|" + row.dataset.id); return; }
-    const t = e.target.closest("button, tr[data-open-unit], tr[data-tgl], .hbar-row[data-open-unit]");
+    const t = e.target.closest("button, tr[data-open-unit], tr[data-tgl], tr[data-ceotgl], .hbar-row[data-open-unit]");
     if (!t) return;
     if (t.id === "pfClear") { state.pf = { q: "", pri: "", st: "", dep: "", lvl: pf().lvl, kind: pf().kind }; render(); return; }
+    if (t.dataset.ceotype !== undefined && t.closest(".seg")) { state.ceoType = t.dataset.ceotype; render(); return; }
+    { const tr = t.closest("[data-ceotgl]"); if (tr && t.tagName === "TR") { const k = tr.dataset.ceotgl; state.ceoOpen.has(k) ? state.ceoOpen.delete(k) : state.ceoOpen.add(k); render(); return; } }
+    if (t.dataset.ceosend) { ceoSend(t.dataset.ceosend, t.dataset.u); return; }
     if (t.dataset.acttab) { state.actTab = t.dataset.acttab; render(); return; }
     if (t.dataset.lvl) { pf().lvl = t.dataset.lvl; render(); return; }
     if (t.dataset.kind) { pf().kind = t.dataset.kind; render(); return; }
@@ -1830,7 +1864,7 @@ applyPlugin(jsPDF); window.jspdf = { jsPDF }; window.XLSX = XLSX;
   function renderNav(){
     const g = groupOf(state.tab);
     document.querySelectorAll("#mainNav button").forEach(b => b.setAttribute("aria-current", String(b.dataset.group === g)));
-    const subs = (GROUPS[g] || []).filter(t => t !== "approvals" || isAppr() || pendingFor().length);
+    const subs = (GROUPS[g] || []).filter(t => (t !== "approvals" || isAppr() || pendingFor().length) && (t !== "ceo" || canFeedback(me)));
     const nb = X.badgeCount();
     $("#subNav").innerHTML = subs.length > 1 ? subs.map(t => `<button role="tab" data-sub="${t}" aria-selected="${t === state.tab}">${SUB_LABEL[t]}${t === "fb" && nb ? ` <span class="badge">${nb}</span>` : ""}${t === "approvals" && pendingFor().length ? ` <span class="badge">${pendingFor().length}</span>` : ""}</button>`).join("") : "";
     $("#subNav").hidden = !subs.length || subs.length < 2;

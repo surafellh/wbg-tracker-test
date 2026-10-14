@@ -28,35 +28,39 @@ export function assess({ name, type, tasks, today }) {
   return { name, isBU, score, band, overall, finPct, finN: fin.length, opsPct, blocked: blocked.length, overdue: overdue.length, highOpen: highOpen.length, total: t.length };
 }
 
-export function actions(a) {
-  const n = a.name, out = [], head = a.isBU ? "the unit head" : "the function head";
-  const fin = a.isBU && a.finPct != null && a.finPct < 75 ? `Revenue and profit are at ${a.finPct}% of target, the main reason for this rating.` : "";
+// period: "week" (a check-in, light touch) or "month" (firmer: written plans and notices). Leadership changes and
+// restructuring are quarterly decisions and are not proposed here.
+export function actions(a, period) {
+  const n = a.name, out = [], head = a.isBU ? "the unit head" : "the function head", wk = period !== "month";
+  const fin = a.isBU && a.finPct != null && a.finPct < 75 ? `Revenue and profit stand at ${a.finPct}% of target.` : "";
   switch (a.band.id) {
     case "outstanding": case "veryhigh":
-      out.push(`Recognise ${n} formally under the Incentive System and have ${head} present what is working to the Management Committee.`);
-      out.push(a.isBU ? `Raise ${n}'s next revenue and profit targets and assign it a stretch growth mandate.` : `Hold ${n} up as the standard for on-time delivery and response to business units, and extend its practice to other functions.`);
+      out.push(wk ? `Acknowledge ${n}'s week to ${head}.` : `Recognise ${n} formally under the Incentive System and have ${head} present what is working to the Management Committee.`);
+      if (!wk) out.push(a.isBU ? `Raise ${n}'s next revenue and profit targets and assign it a stretch growth mandate.` : `Hold ${n} up as the standard for on-time delivery and response to business units, and extend its practice to other functions.`);
       break;
     case "high":
-      out.push(`Keep ${n} on its current plan. No intervention.`);
-      out.push(`Instruct ${head} to close the remaining gaps (${plural(a.highOpen, "high-priority item")} still open) before the next review.`);
+      out.push(wk ? `No intervention needed.` : `Keep ${n} on its current plan.`);
+      out.push(wk ? `Ask ${head} to close the ${plural(a.highOpen, "open high-priority item")}.` : `Instruct ${head} to close the remaining gaps (${plural(a.highOpen, "high-priority item")} still open) before the next review.`);
       break;
     case "satisfactory":
-      out.push(`Instruct ${head} to name the tasks that will lift ${n} above 80% and fix the date of the next review in writing.`);
-      if (fin) out.push(fin + ` Require a revenue catch-up plan.`);
+      out.push(wk ? `Ask ${head} which tasks will be closed next week, and by whom.` : `Instruct ${head} to name the tasks that will lift ${n} above 80% and fix the date of the next review in writing.`);
+      if (fin) out.push(wk ? fin + ` Ask how the gap will be closed.` : fin + ` Require a revenue catch-up plan.`);
       break;
     case "needs":
-      out.push(`Hold a performance meeting with ${head} now. Agree an improvement plan and the next review date in writing at the same meeting.`);
-      out.push(`Have the root causes identified and recorded before the plan is signed.`);
-      if (fin) out.push(fin + ` Order a revenue recovery plan with weekly figures.`);
-      else if (!a.isBU) out.push(`Require ${n} to show the support it delivered to business units this period and what it will deliver on time from now.`);
+      out.push(wk ? `Call ${head} this week and ask for a catch-up plan with dates for the open tasks.` : `Hold a performance meeting with ${head}. Agree an improvement plan and the next review date in writing at the same meeting.`);
+      if (!wk) out.push(`Have the root causes identified and recorded before the plan is signed.`);
+      if (fin) out.push(wk ? fin + ` Ask for the plan to close it.` : fin + ` Order a revenue recovery plan with weekly figures.`);
+      else if (!a.isBU && !wk) out.push(`Require ${n} to show the support it delivered to business units this period and what it will deliver on time from now.`);
       break;
     default:
-      out.push(`Issue a written notice to ${head} with the improvement plan required, and record it in the Performance Portal.`);
-      out.push(`Confirm that the support promised (resources, budget, staffing, systems) has actually been provided, and that root causes are identified.`);
-      if (fin) out.push(fin);
-      out.push(`If ${n} stays in the Low band for three consecutive months, decide on a leadership change, restructuring, consolidation or a scale-down of its mandate.`);
+      if (wk) { out.push(`Meet ${head} this week. Ask for the reasons and a recovery plan for next week.`); if (fin) out.push(fin); }
+      else {
+        out.push(`Issue a written notice to ${head} with the improvement plan required, and record it in the Performance Portal.`);
+        out.push(`Confirm that the support promised (resources, budget, staffing, systems) has actually been provided, and that root causes are identified.`);
+        if (fin) out.push(fin);
+      }
   }
-  if (a.blocked) out.push(`Remove the blockers: ${plural(a.blocked, "task")} blocked. Decide who clears each one this week.`);
-  if (a.overdue >= 3 || (a.total && a.overdue / a.total >= 0.2)) out.push(`${plural(a.overdue, "task")} past due. Require ${head} to re-date or close them and report the reasons.`);
+  if (a.blocked) out.push(wk ? `Ask who clears the ${plural(a.blocked, "blocked task")}.` : `Remove the blockers: ${plural(a.blocked, "task")} blocked. Decide who clears each one.`);
+  if (a.overdue >= 3 || (a.total && a.overdue / a.total >= 0.2)) out.push(wk ? `${plural(a.overdue, "task")} past due. Ask ${head} to re-date or close them.` : `${plural(a.overdue, "task")} past due. Require ${head} to re-date or close them and report the reasons.`);
   return out;
 }
