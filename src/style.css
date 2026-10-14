@@ -787,3 +787,5 @@ details.dd[open] .dd-btn{border-color:var(--brand)}
 .ceo-l li{padding:3px 0}
 .ceo-draft{margin:10px 0 6px;padding:12px;border:1px solid var(--line);border-radius:10px;display:grid;gap:6px;background:var(--bg,#fff)}
 .ceo-draft input[type=text],.ceo-draft input:not([type]),.ceo-draft textarea{width:100%}
+
+.req-decide{display:grid;gap:8px;min-width:280px;max-width:420px}.req-decide textarea{width:100%;resize:vertical}.req-decide .toolbar{justify-content:flex-end}
