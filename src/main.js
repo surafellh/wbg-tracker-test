@@ -6,7 +6,7 @@ import { createData, configError, planFromRow, EVIDENCE, fileType } from "./data
 import { startGate } from "./gate.js";
 import { groupTasks, rollupOf, rolledPlan, leafPlan, leafTasks, parentChoices, weightOf } from "./rollup.js";
 import { ROLES, ROLE_LABEL, ROLE_HELP, isAdmin, unitMember, deptOk, canUndo, canFeedback, canEditDepartments, roleText } from "./access.js";
-import { assess, actions as ceoActions } from "./ceoaction.js";
+import { assess, actions as ceoActions, letter as ceoLetter, INTERNAL, fmtD, addDaysIso } from "./ceoaction.js";
 import { WEEK_CUTOVER, LOCKED, planOps, needsApproval, applyOps, addisToday, addisWeekStart, calcPct, CATEGORIES, weekStartOf, weekEndOf, nextWeekOf, prevWeekOf } from "./rules.js";
 import { unitAlerts, levelRank, BLOCKED_DAYS } from "./alerts.js";
 import { renderDashboard } from "./dashboard.js";
@@ -404,14 +404,13 @@ applyPlugin(jsPDF); window.jspdf = { jsPDF }; window.XLSX = XLSX;
     return c;
   }
   // ---------- Actions for the CEO (Group Strategy, CEO and DCEO only) ----------
-  state.ceoType = ""; state.ceoOpen = new Set();
+  state.ceoType = ""; state.ceoOpen = new Set(); state.ceoDraft = null; state.ceoSent = new Set();
   function ceoRows(){
     const month = state.filter.period === "month";
     if (month && !state.monthData) return null;
     const by = new Map(); poolTasks().forEach(t => { if (!by.has(t.unit)) by.set(t.unit, []); by.get(t.unit).push(t); });
     return sortedUnits().filter(u => !state.ceoType || u.type === state.ceoType).map(u => ({ id: u.id, a: assess({ name: u.name, type: u.type, tasks: leafTasks(by.get(u.id) || []), today: todayIso }) })).filter(r => r.a).sort((x, y) => x.a.score - y.a.score);
   }
-  const ceoText = (r, per) => ceoActions(r.a, per).map((x, i) => `${i + 1}. ${x}`).join("\n");
   function renderCeo(){
     if (!canFeedback(me)) return `<div class="panel"><div class="empty"><b>Not available</b>This page is for Group Strategy, the CEO and the DCEO.</div></div>`;
     const month = state.filter.period === "month", per = month ? "month" : "week", perLabel = month ? ethName(state.eth) : weekLabel(state.week);
@@ -426,21 +425,49 @@ applyPlugin(jsPDF); window.jspdf = { jsPDF }; window.XLSX = XLSX;
     const body = rows.map(r => {
       const a = r.a, acts = ceoActions(a, per), open = state.ceoOpen.has(r.id);
       const pill = `<span class="pill ${a.score >= 75 ? "s-done" : a.score >= 50 ? "s-prog" : "s-bad"}">${esc(a.band.label)} · ${a.score}%</span>`;
-      return `<tr class="clickable" data-ceotgl="${esc(r.id)}" tabindex="0"><td><b>${open ? "▾" : "▸"} ${esc(a.name)}</b></td><td class="small">${a.isBU ? "Business unit" : "Function"}</td><td>${pill}</td><td class="small num">${a.isBU && a.finPct != null ? a.finPct + "%" : "–"}</td><td class="small">${esc(acts[0] || "")}${acts.length > 1 ? ` <span class="muted">+${acts.length - 1}</span>` : ""}</td></tr>`
-        + (open ? `<tr class="ceo-open"><td colspan="5"><ol class="ceo-l">${acts.map(x => `<li>${esc(x)}</li>`).join("")}</ol><div class="toolbar" style="margin-top:10px"><button class="btn small primary" type="button" data-ceosend="fb" data-u="${esc(r.id)}">Send as feedback</button>${isAppr() ? `<button class="btn small" type="button" data-ceosend="act" data-u="${esc(r.id)}">Log as corrective action</button>` : ""}</div></td></tr>` : "");
+      return `<tr class="clickable" data-ceotgl="${esc(r.id)}" tabindex="0"><td><b>${open ? "▾" : "▸"} ${esc(a.name)}</b></td><td class="small">${a.isBU ? "Business unit" : "Function"}</td><td>${pill}</td><td class="small num">${a.isBU && a.finPct != null ? a.finPct + "%" : "–"}</td><td class="small">${esc(acts[0] ? acts[0].text : "")}${acts.length > 1 ? ` <span class="muted">+${acts.length - 1}</span>` : ""}</td></tr>`
+        + (open ? `<tr class="ceo-open"><td colspan="5"><ol class="ceo-l">${acts.map((x, i) => ceoItem(r, x, i, per)).join("")}</ol></td></tr>` : "");
     }).join("");
     return `<div class="panel">${bar}${chips}<div class="scroll"><table><thead><tr><th>Unit</th><th>Type</th><th>Rating</th><th>Financial</th><th>First action</th></tr></thead><tbody>${body}</tbody></table></div></div>`;
   }
-  async function ceoSend(kind, id){
-    const rows = ceoRows(); const r = rows && rows.find(x => x.id === id); if (!r) return;
-    const month = state.filter.period === "month", per = month ? "month" : "week", perLabel = month ? ethName(state.eth) : weekLabel(state.week), text = ceoText(r, per);
+  const ceoCtx = per => ({ sender: me.name || "", senderTitle: roleText(me), perLabel: per === "month" ? ethName(state.eth) : weekLabel(state.week), period: per, today: todayIso });
+  const ceoKey = (r, x) => `${r.id}|${state.filter.period}|${x.k}`;
+  function ceoItem(r, x, i, per){
+    const dr = state.ceoDraft && state.ceoDraft.key === ceoKey(r, x) ? state.ceoDraft : null, sent = state.ceoSent.has(ceoKey(r, x));
+    let btn = "";
+    if (sent) btn = `<span class="pill s-done">Done</span>`;
+    else if (x.k === "none") btn = "";
+    else if (INTERNAL.includes(x.k)) btn = isAppr() ? `<button class="btn small" type="button" data-ceoprep="${i}" data-u="${esc(r.id)}">Log follow-up</button>` : "";
+    else btn = `<button class="btn small${dr ? "" : " primary"}" type="button" data-ceoprep="${i}" data-u="${esc(r.id)}">${dr ? "Close draft" : "Prepare letter"}</button>`;
+    const box = dr ? `<div class="ceo-draft"><label class="small muted" for="ceoSub">Subject</label><input id="ceoSub" value="${esc(dr.subject)}"><label class="small muted" for="ceoBody">Letter</label><textarea id="ceoBody" rows="12">${esc(dr.body)}</textarea>
+      ${dr.needsReply ? `<div class="toolbar" style="margin:8px 0"><label class="small" for="ceoDue">Written reply due</label><input type="date" id="ceoDue" value="${esc(dr.due)}"></div>` : ""}
+      <div class="toolbar"><button class="btn small primary" type="button" data-ceodo="send" data-u="${esc(r.id)}" data-i="${i}">${dr.needsReply && isAppr() ? "Send and track the reply" : "Send to " + esc(r.a.name)}</button><button class="btn small" type="button" data-ceodo="cancel">Cancel</button></div>
+      <div class="small muted">${dr.needsReply && isAppr() ? "It is sent to the unit as feedback and a corrective action is opened with the reply date." : "It is sent to the unit as feedback."}</div></div>` : "";
+    return `<li><div class="ceo-line"><span>${esc(x.text)}</span>${btn}</div>${box}</li>`;
+  }
+  function ceoPrep(id, i){
+    const rows = ceoRows(), r = rows && rows.find(y => y.id === id); if (!r) return;
+    const per = state.filter.period === "month" ? "month" : "week", x = ceoActions(r.a, per)[i]; if (!x) return;
+    const key = ceoKey(r, x);
+    if (INTERNAL.includes(x.k)) { ceoSend(r, x, { subject: x.text, body: "", needsReply: false, due: "" }, true); return; }
+    if (state.ceoDraft && state.ceoDraft.key === key) { state.ceoDraft = null; render(); return; }
+    const l = ceoLetter(x, r.a, ceoCtx(per)); if (!l) return;
+    state.ceoDraft = { key, ...l }; render();
+  }
+  async function ceoSend(r, x, l, internal){
+    const per = state.filter.period === "month" ? "month" : "week", perLabel = ceoCtx(per).perLabel, key = ceoKey(r, x);
     try {
       let res;
-      if (kind === "fb") res = await api.saveFeedback(auth(), { unit: id, from: isAppr() ? "Group Strategy" : (auth().title || "CEO"), week: state.week, body: `${r.a.band.label} (${r.a.score}%) for ${perLabel}.\n${text}`, taskRef: "" });
-      else res = await api.saveAction(auth(), { unit: id, source: "Group Strategy", issue: `${r.a.band.label} (${r.a.score}%) for ${perLabel}.`, action: text, owner: "", due: "", status: "Open", taskTitle: "", notes: "", week: state.week, taskRef: "" });
+      if (internal) res = await api.saveAction(auth(), { unit: r.id, source: "Group Strategy", issue: `${r.a.band.label} (${r.a.score}%) for ${perLabel}.`, action: x.text, owner: "", due: "", status: "Open", taskTitle: "", notes: "", week: state.week, taskRef: "" });
+      else {
+        res = await api.saveFeedback(auth(), { unit: r.id, from: isAppr() ? "Group Strategy" : (auth().title || "CEO"), week: state.week, body: `${l.subject}\n\n${l.body}`, taskRef: "" });
+        if (!(res && res.error) && l.needsReply && isAppr()) res = await api.saveAction(auth(), { unit: r.id, source: "Group Strategy", issue: l.subject, action: `Written reply required from the head of ${r.a.name}.`, owner: "", due: l.due || "", status: "Open", taskTitle: "", notes: "", week: state.week, taskRef: "" });
+      }
       if (res && res.error) { toast(errText(res)); return; }
-      toast(kind === "fb" ? "Sent to " + r.a.name + " as feedback" : "Logged as a corrective action for " + r.a.name);
+      state.ceoSent.add(key); state.ceoDraft = null;
+      toast(internal ? "Logged for follow-up" : (l.needsReply && isAppr() ? "Sent to " + r.a.name + ". Reply tracked." : "Sent to " + r.a.name));
     } catch (e) { toast(errText(e)); }
+    render();
   }
   function renderTasks(){
     const f = state.filter, month = f.period === "month";
@@ -1657,7 +1684,15 @@ applyPlugin(jsPDF); window.jspdf = { jsPDF }; window.XLSX = XLSX;
     if (t.id === "pfClear") { state.pf = { q: "", pri: "", st: "", dep: "", lvl: pf().lvl, kind: pf().kind }; render(); return; }
     if (t.dataset.ceotype !== undefined && t.closest(".seg")) { state.ceoType = t.dataset.ceotype; render(); return; }
     { const tr = t.closest("[data-ceotgl]"); if (tr && t.tagName === "TR") { const k = tr.dataset.ceotgl; state.ceoOpen.has(k) ? state.ceoOpen.delete(k) : state.ceoOpen.add(k); render(); return; } }
-    if (t.dataset.ceosend) { ceoSend(t.dataset.ceosend, t.dataset.u); return; }
+    if (t.dataset.ceoprep) { ceoPrep(t.dataset.u, Number(t.dataset.ceoprep)); return; }
+    if (t.dataset.ceodo === "cancel") { state.ceoDraft = null; render(); return; }
+    if (t.dataset.ceodo === "send") {
+      const rows = ceoRows(), r = rows && rows.find(y => y.id === t.dataset.u), per = state.filter.period === "month" ? "month" : "week", x = r && ceoActions(r.a, per)[Number(t.dataset.i)], d = state.ceoDraft;
+      if (!r || !x || !d) return;
+      const sub = ($("#ceoSub") || {}).value || d.subject, body = ($("#ceoBody") || {}).value || d.body, due = ($("#ceoDue") || {}).value || d.due;
+      if (!body.trim()) { toast("The letter is empty"); return; }
+      ceoSend(r, x, { subject: sub, body, needsReply: d.needsReply, due }); return;
+    }
     if (t.dataset.acttab) { state.actTab = t.dataset.acttab; render(); return; }
     if (t.dataset.lvl) { pf().lvl = t.dataset.lvl; render(); return; }
     if (t.dataset.kind) { pf().kind = t.dataset.kind; render(); return; }
@@ -1811,6 +1846,7 @@ applyPlugin(jsPDF); window.jspdf = { jsPDF }; window.XLSX = XLSX;
     else if (el.id==="mpFile") { const f = el.files && el.files[0]; el.value = ""; if (f) mpUpload(f); }
     else if (el.id==="impMode") { state.imp.mode = el.value; state.imp.needConfirm = false; state.imp.confirmed = false; render(); }
     else if (el.id==="impDepts") { state.imp.newDepts = el.checked; }
+    else if (el.id==="ceoDue" && state.ceoDraft) { const ta = $("#ceoBody"), old = fmtD(state.ceoDraft.due); state.ceoDraft.due = el.value; if (ta && el.value) ta.value = ta.value.split(old).join(fmtD(el.value)); }
     else if (el.id==="aWeek") { state.actWeek = el.value === thisMonday() ? "" : el.value; render(); }
     else if (el.id==="aUnit") { state.actFilter.unit = el.value; render(); }
     else if (el.id==="aWho") { state.actFilter.who = el.value; render(); }

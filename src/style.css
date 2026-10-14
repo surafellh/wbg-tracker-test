@@ -783,3 +783,7 @@ details.dd[open] .dd-btn{border-color:var(--brand)}
 .ceo-i{padding:12px 0;border-top:1px solid var(--line)}.ceo-i:first-child{border-top:0}
 .ceo-h{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-bottom:6px}
 .ceo-l{margin:0;padding-left:20px;display:grid;gap:4px;font-size:14px}
+.ceo-line{display:flex;gap:12px;align-items:flex-start;justify-content:space-between}.ceo-line .btn{flex:none}
+.ceo-l li{padding:3px 0}
+.ceo-draft{margin:10px 0 6px;padding:12px;border:1px solid var(--line);border-radius:10px;display:grid;gap:6px;background:var(--bg,#fff)}
+.ceo-draft input[type=text],.ceo-draft input:not([type]),.ceo-draft textarea{width:100%}
