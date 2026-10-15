@@ -819,3 +819,12 @@ details.dd[open] .dd-btn{border-color:var(--brand)}
   body.printing-dash .dh::before{content:"WBG STRATEGY OFFICE · WEEKLY ACTIVITY TRACKING";display:block;font-size:9px;letter-spacing:.12em;color:#6b5f3a;margin-bottom:4px}
 }
 @media print{body.printing-dash button.bul-row:not(.x):not(.y):not(.z){display:grid!important;break-inside:avoid}body.printing-dash .bul{max-height:none!important;overflow:visible!important}}
+/* Print layout: fixed A4 landscape "report page", no browser header/footer, keeps the two-column dashboard grid */
+@media print{
+  @page{size:A4 landscape;margin:0}
+  body.printing-dash{zoom:.74;padding:10mm 11mm!important}
+  body.printing-dash .wrap,body.printing-dash main{max-width:none!important;padding:0!important}
+  body.printing-dash .dgrid{grid-template-columns:minmax(0,1fr) minmax(0,1fr)!important}
+  body.printing-dash .dgrid-b{grid-template-columns:minmax(0,3fr) minmax(0,2fr)!important}
+  body.printing-dash .kpis{grid-template-columns:repeat(4,minmax(0,1fr))!important}
+}
