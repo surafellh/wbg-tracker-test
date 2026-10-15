@@ -789,3 +789,10 @@ details.dd[open] .dd-btn{border-color:var(--brand)}
 .ceo-draft input[type=text],.ceo-draft input:not([type]),.ceo-draft textarea{width:100%}
 
 .req-decide{display:grid;gap:8px;min-width:280px;max-width:420px}.req-decide textarea{width:100%;resize:vertical}.req-decide .toolbar{justify-content:flex-end}
+
+.bell-menu{max-height:min(75vh,640px);overflow-y:auto}
+.bm-head{display:flex;justify-content:space-between;align-items:center;padding:8px 12px 4px;border-top:1px solid var(--line)}
+.bm-head .lnk{font-size:12px}
+.bm-i.bm-read{opacity:.72}
+.bm-i.bm-new{background:var(--brand-soft)}
+.bm-dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--brand,#0a6);margin-right:6px;vertical-align:middle}
