@@ -1838,6 +1838,7 @@ applyPlugin(jsPDF); window.jspdf = { jsPDF }; window.XLSX = XLSX;
     else if (t.dataset.delYes !== undefined) { const [u, i] = t.dataset.delYes.split("|"); planFor(u).tasks.splice(Number(i),1); state.confirmDelete = null; state.dirty = true; state.dirtyUnits.add(u); render(); }
     else if (t.hasAttribute("data-del-no")) { state.confirmDelete = null; render(); }
     else if (t.id==="exportBtn") exportCsv();
+    else if (t.id==="printDashBtn") printDashboard();
     else if (t.id==="pdfBtn") { if (state.tab === "dashboard") exportDashboardPdf(); else exportPdf(); }
     else if (t.id==="xlsxAllBtn") exportXlsxAll();
     else if (t.id==="unitPdfBtn") exportUnitPdf();
@@ -2366,6 +2367,14 @@ applyPlugin(jsPDF); window.jspdf = { jsPDF }; window.XLSX = XLSX;
 
   // ---------- PDF report ----------
   // The dashboard as it looks on screen (cards, bars, charts), cut into landscape A4 pages between sections
+  function printDashboard(){
+    const opened = [...document.querySelectorAll("details.more:not([open])")];
+    opened.forEach((d) => d.setAttribute("open", ""));
+    document.body.classList.add("printing-dash");
+    const done = () => { document.body.classList.remove("printing-dash"); opened.forEach((d) => d.removeAttribute("open")); window.removeEventListener("afterprint", done); };
+    window.addEventListener("afterprint", done);
+    setTimeout(() => window.print(), 150);
+  }
   async function exportDashboardPdf(){
     if (!window.jspdf || !downloads) { toast("The report tool did not load. Reload the page and try again."); return; }
     const main = document.getElementById("main"); if (!main || !main.querySelector(".kpis")) { toast("Open the dashboard first"); return; }
