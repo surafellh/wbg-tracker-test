@@ -1987,9 +1987,15 @@ applyPlugin(jsPDF); window.jspdf = { jsPDF }; window.XLSX = XLSX;
     if (document.getElementById("vaBar") || !viewAs) return;
     const bar = document.createElement("div"); bar.id = "vaBar"; bar.className = "va-bar";
     const where = [ROLE_LABEL[viewAs.role] || viewAs.role, viewAs.unit ? unitName(viewAs.unit) : "", (viewAs.departments || []).join(", ")].filter(Boolean).join(" · ");
-    bar.innerHTML = `<span><b>Viewing as</b> <span id="vaWhere">${esc(where)}</span>${IS_TEST_ENV ? "" : " · read-only"}</span><button type="button" id="vaChange" class="btn small">Change</button><button type="button" id="vaExit" class="btn small primary">Exit</button>`;
+    bar.innerHTML = `<span><b>Viewing as</b> <span id="vaWhere">${esc(where)}</span>${IS_TEST_ENV ? "" : " · read-only"}</span><button type="button" id="vaChange" class="btn small">Change</button>${api && api.viewAsStop ? `<button type="button" id="vaUndo" class="btn small" title="Leave and put the data back the way it was when you started viewing">Exit and undo my changes</button>` : ""}<button type="button" id="vaExit" class="btn small primary">Exit</button>`;
     document.body.append(bar);
-    bar.querySelector("#vaExit").onclick = () => { try { sessionStorage.removeItem(VIEWAS_KEY); } catch (e) {} location.reload(); };
+    const leave = async restore => {
+      try { if (api && api.viewAsStop) { const r = await api.viewAsStop(restore); if (r && r.error) { toast("Could not leave View as: " + errText(r)); return; } } } catch (e) { toast("Could not leave View as: " + (e.message || "try again")); return; }
+      try { sessionStorage.removeItem(VIEWAS_KEY); } catch (e) {}
+      location.reload();
+    };
+    bar.querySelector("#vaExit").onclick = () => leave(false);
+    const un = bar.querySelector("#vaUndo"); if (un) un.onclick = () => { if (confirm("Put the data back the way it was when you started viewing? Everything changed since then is removed.")) leave(true); };
     bar.querySelector("#vaChange").onclick = openViewAs;
     setTimeout(() => { const w = document.getElementById("vaWhere"); if (w && viewAs) w.textContent = [ROLE_LABEL[viewAs.role] || viewAs.role, viewAs.unit ? unitName(viewAs.unit) : "", (viewAs.departments || []).join(", ")].filter(Boolean).join(" · "); }, 2500);
   }
@@ -2014,9 +2020,10 @@ applyPlugin(jsPDF); window.jspdf = { jsPDF }; window.XLSX = XLSX;
     box.addEventListener("change", e => { if (e.target.id === "vaRole" || e.target.id === "vaUnit") fill(); });
     fill();
     box.querySelector("#vaCancel").onclick = () => box.remove();
-    box.querySelector("#vaGo").onclick = () => {
+    box.querySelector("#vaGo").onclick = async () => {
       const role = box.querySelector("#vaRole").value, unit = role === "executive" ? "" : box.querySelector("#vaUnit").value, d = box.querySelector("#vaDept").value;
       if (["manager", "staff"].includes(role) && !d) { toast("This unit has no departments yet. Pick another unit, or add departments first."); return; }
+      try { if (api && api.viewAsStart) { const r = await api.viewAsStart(role, unit, d ? [d] : []); if (r && r.error) { toast("Could not start View as: " + errText(r)); return; } } } catch (e) { toast("Could not start View as: " + (e.message || "try again")); return; }
       try { sessionStorage.setItem(VIEWAS_KEY, JSON.stringify({ role, unit, departments: d ? [d] : [] })); } catch (e) { toast("Could not start View as in this browser."); return; }
       location.reload();
     };
@@ -3202,6 +3209,9 @@ applyPlugin(jsPDF); window.jspdf = { jsPDF }; window.XLSX = XLSX;
     if (cfgErr) { bannerMsg = cfgErr; state.unitsLoaded = state.plansLoaded = true; render(); return; }
     const data = createData(); ({ db, api, downloads } = data); dataMode = data.mode;
     let cur = null; try { cur = await api.session(); } catch (e) { cur = null; }
+    if (api.viewAsState && cur && canViewAs(cur)) {   // the database remembers an active View as, even in a new tab
+      try { const vs = await api.viewAsState(); if (vs && vs.active) sessionStorage.setItem(VIEWAS_KEY, JSON.stringify({ role: vs.role, unit: vs.unit, departments: vs.departments || [] })); else if (vs && !vs.unavailable) sessionStorage.removeItem(VIEWAS_KEY); } catch (e) {}
+    }
     const p = await startGate(api, cur && cur.status === "active" && cur.setupDone ? cur : cur);
     startApp(p);
   })();

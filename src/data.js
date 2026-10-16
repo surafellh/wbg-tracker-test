@@ -186,6 +186,10 @@ function createSupabaseData() {
     mode: "supabase",
     // ----- sign-in (Supabase Auth, one-time code sent to the email) -----
     async session() { const { data } = await sb.auth.getSession(); return data.session ? this.me() : null; },
+    // ----- View as (test project only): the database itself treats Surafel as the chosen role, and can undo what was changed -----
+    async viewAsState() { const { data, error } = await sb.rpc("wbg_viewas_state"); return error ? { active: false, unavailable: true } : data; },
+    viewAsStart(role, unit, departments) { return rpcq("wbg_viewas_start", { p_role: role, p_unit: unit || "", p_depts: departments || [] }); },
+    viewAsStop(restore) { return rpcq("wbg_viewas_stop", { p_restore: !!restore }); },
     async me() { const { data, error } = await sb.rpc("wbg_me"); if (error) fail(error); roleNow = (data && data.status === "active" && data.setupDone) ? data.role : ""; return data; },
     setProfile(p) { roleNow = p && p.status === "active" && p.setupDone ? p.role : ""; },
     async checkEmail(email) { const { data, error } = await sb.rpc("wbg_check_email", { p_email: email }); if (error) return { allowed: false, error: error.message }; return data; },
