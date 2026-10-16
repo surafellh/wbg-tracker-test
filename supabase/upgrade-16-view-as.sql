@@ -14,7 +14,7 @@ alter table public.viewas_snapshot enable row level security;
 create or replace function public.wbg_auth() returns jsonb
 language sql stable security definer set search_path to 'public' as $$
   select coalesce((select jsonb_build_object('uid', p.user_id, 'name', trim(p.full_name), 'email', p.email,
-                          'role', coalesce(v.as_role, p.role), 'title', p.title,
+                          'role', coalesce(v.as_role, public.wbg_base_role(p.role)), 'title', p.title,
                           'unit', case when v.user_id is null then p.unit_id else nullif(v.as_unit,'') end,
                           'departments', case when v.user_id is null then p.departments else v.as_departments end)
                    from public.profiles p left join public.viewas_session v on v.user_id = p.user_id and p.role = 'super_admin'
