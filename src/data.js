@@ -25,6 +25,7 @@ const COLLECTIONS = {
   support: { table: "support_requests", map: { ref: "ref", function: "function_id", requester: "requester", category: "category", description: "description", priority: "priority", requested: "date_requested", status: "status", responded: "response_date", action: "action_taken", respondedBy: "responded_by", evidence: "evidence_ref", followUp: "follow_up", remarks: "remarks", createdBy: "created_by", createdAt: "created_at", updatedBy: "updated_by", updatedAt: "updated_at" }, ts: ["createdAt", "updatedAt"], nullText: ["requested", "responded"] },
   feedback: { table: "feedback", map: { unit: "unit_id", week: "week", from: "from_role", by: "by_name", body: "body", taskRef: "task_ref", createdAt: "created_at", ackBy: "ack_by", ackAt: "ack_at", toLead: "to_lead" }, ts: ["createdAt", "ackAt"], nullText: ["week", "ackAt"] },
   actions: { table: "corrective_actions", map: { unit: "unit_id", week: "week", source: "source", issue: "issue", action: "action", owner: "owner", due: "due", status: "status", taskTitle: "task_title", taskRef: "task_ref", notes: "notes", createdBy: "created_by", createdAt: "created_at", updatedBy: "updated_by", updatedAt: "updated_at", closedAt: "closed_at" }, ts: ["createdAt", "updatedAt", "closedAt"], nullText: ["week", "due", "closedAt"] },
+  projects: { table: "projects", map: { code: "code", name: "name", type: "type", unit: "unit_id", directorate: "directorate", sponsor: "sponsor", manager: "manager", budget: "budget", start: "start_date", end: "end_date", strategicLink: "strategic_link", status: "status", rag: "rag", mode: "mode", involved: "involved", phases: "phases", updates: "updates", risks: "risks", decisions: "decisions", notes: "notes", createdBy: "created_by", createdAt: "created_at", updatedBy: "updated_by", updatedAt: "updated_at" }, ts: ["createdAt", "updatedAt"], nullText: ["start", "end"] },
   history: { table: "row_history", map: { tbl: "tbl", rowId: "row_id", op: "op", old: "old_row", at: "changed_at", by: "changed_by" }, ts: ["at"] },
 };
 // A history row stores the database row; turn it back into a plan document.
@@ -104,6 +105,7 @@ function scopeRows(a, c, items) {
   const own = (u) => ["super_admin", "executive"].includes(a.role) || (["leader", "planning", "manager"].includes(a.role) && a.unit === u);
   if (c === "feedback") return items.filter((x) => ["super_admin", "executive"].includes(a.role) || (x.toLead ? ["leader", "planning"].includes(a.role) && a.unit === x.unit : own(x.unit)));
   if (c === "actions") return items.filter((x) => own(x.unit));
+  if (c === "projects") return items.filter((x) => ["super_admin", "executive"].includes(a.role) || (["leader", "planning", "manager"].includes(a.role) && (a.unit === x.unit || a.unit === "pmo" || (x.involved || []).includes(a.unit))));
   if (c === "requests") return items.filter((x) => U(x.unit));
   if (c === "support") return items.filter((x) => U(x.function));
   if (c === "history") return items.filter((x) => U(x.tbl === "plans" ? x.old.unit_id : x.rowId));
@@ -121,7 +123,7 @@ function createSupabaseData() {
   let roleNow = "", viewProfile = null;   // employees read plans through a function that hides other departments; viewProfile is the role Group Strategy is viewing as
   const live = new Map();
   const bump = (table) => (live.get(table) || new Set()).forEach((f) => f());
-  const bumpAll = () => ["plans", "units", "activity", "change_requests", "row_history", "support_requests", "feedback", "corrective_actions"].forEach(bump);
+  const bumpAll = () => ["plans", "units", "activity", "change_requests", "row_history", "support_requests", "feedback", "corrective_actions", "projects"].forEach(bump);
 
   const fromRow = (cfg, row) => {
     const doc = {};
@@ -276,6 +278,8 @@ function createSupabaseData() {
     ackFeedback: (auth, id) => rpc("wbg_ack_feedback", { p_auth: auth, p_id: id }),
     saveAction: (auth, row) => rpc("wbg_save_action", { p_auth: auth, p_row: row }),
     deleteAction: (auth, id) => rpc("wbg_delete_action", { p_auth: auth, p_id: id }),
+    saveProject: (auth, row) => rpc("wbg_save_project", { p_auth: auth, p_row: row }),
+    deleteProject: (auth, id) => rpc("wbg_delete_project", { p_auth: auth, p_id: id }),
     async uploadEvidence(file, path) {
       const { error } = await sb.storage.from("evidence").upload(path, file, { contentType: fileType(file), upsert: false });
       if (error) fail({ code: "upload_failed", message: error.message });
@@ -302,9 +306,9 @@ function createSupabaseData() {
 // Local mode: everything lives in this browser. Same rules as the database, for trying the app on localhost.
 // ---------------------------------------------------------------------------
 function createLocalData() {
-  const KEYS = { units: "wbg_local_units", plans: "wbg_local_plans", activity: "wbg_local_activity", requests: "wbg_local_requests", history: "wbg_local_history", support: "wbg_local_support", feedback: "wbg_local_feedback", actions: "wbg_local_actions" };
+  const KEYS = { units: "wbg_local_units", plans: "wbg_local_plans", activity: "wbg_local_activity", requests: "wbg_local_requests", history: "wbg_local_history", support: "wbg_local_support", feedback: "wbg_local_feedback", actions: "wbg_local_actions", projects: "wbg_local_projects" };
   const DOMAINS = ["wagwagoelectric.com", "geezinstitute.com", "wanzalogistics.com", "niyatconsultancy.com", "niyatconsultnacy.com", "trucksload.net"];
-  const SEEDS = { units: SEED_UNITS, plans: SEED_PLANS, activity: SEED_ACTIVITY, requests: [], history: [], support: SEED_SUPPORT, feedback: [], actions: [] };
+  const SEEDS = { units: SEED_UNITS, plans: SEED_PLANS, activity: SEED_ACTIVITY, requests: [], history: [], support: SEED_SUPPORT, feedback: [], actions: [], projects: [] };
   const listeners = new Map();
   const getStore = (c) => {
     try {
@@ -550,6 +554,21 @@ function createLocalData() {
       return ok({ id: rec.id });
     },
     deleteAction(auth, id) { if (!isAppr(auth)) return err("not_allowed"); del("actions", id); return ok(); },
+    saveProject(auth, row) {
+      const unit = row.unit || ""; if (!unit || !String(row.name || "").trim()) return err("bad_request");
+      const w = (u) => auth.role === "super_admin" || (["leader", "planning", "manager"].includes(auth.role) && (auth.unit === u || auth.unit === "pmo"));
+      if (!w(unit)) return err("not_allowed");
+      const old = row.id ? getStore("projects").find((x) => x.id === row.id) : null;
+      if (old && !w(old.unit)) return err("not_allowed");
+      if (old && row.updatedAt && old.updatedAt && row.updatedAt !== old.updatedAt) return err("conflict");
+      const name = (auth.name || "").trim(), now = new Date().toISOString();
+      const rec = { code: "", directorate: "", sponsor: "", manager: "", budget: null, start: "", end: "", strategicLink: "", status: "In progress", rag: "Green", mode: "phases", involved: [], phases: [], updates: [], risks: [], decisions: [], notes: "", ...(old || {}), ...row,
+        id: old ? old.id : (row.id || Date.now().toString(36) + Math.random().toString(36).slice(2, 8)), unit, createdBy: old ? old.createdBy : name, createdAt: old ? old.createdAt : now, updatedBy: name, updatedAt: now };
+      put("projects", rec);
+      addActivity(name, unit, "", { action: "project", summary: (old ? "Updated project: " : "Added project: ") + String(rec.name).slice(0, 120) });
+      return ok({ id: rec.id, updatedAt: now });
+    },
+    deleteProject(auth, id) { const o = getStore("projects").find((x) => x.id === id); if (!o) return ok(); if (!(auth.role === "super_admin" || (["leader", "planning", "manager"].includes(auth.role) && (auth.unit === o.unit || auth.unit === "pmo")))) return err("not_allowed"); del("projects", id); return ok(); },
     // ----- sign-in (test mode: pick a person) -----
     async session() { const p = prof(); return p ? meOut(p) : null; },
     async me() { return meOut(prof()); },
