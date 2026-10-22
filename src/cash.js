@@ -14,8 +14,8 @@ const bucketOf = (v) => { const x = parseInt(String(v).trim(), 10); return x ===
 
 export function createCash(c) {
   const { state, esc } = c;
-  const S = (state.cf = { items: [], types: [], bank: [], log: [], plan: [], settings: {}, loaded: 0, view: "summary", asOf: c.todayIso, scope: "all", bk: { 1: true, 2: true, 3: true }, typeOn: {}, mode: "month", day: c.todayIso, range: 60, dr: {}, bd: {}, dq: { kind: "", q: "", show: 30 }, busy: false, m: null,
-    lf: { kind: "", type: "", status: "open", q: "", show: 40 }, pf: { from: "", unit: "all" } });
+  const S = (state.cf = { items: [], itemsAll: [], logAll: [], undo: null, calOpen: false, calMonth: "", types: [], bank: [], log: [], plan: [], settings: {}, loaded: 0, view: "summary", asOf: c.todayIso, scope: "all", bk: { 1: true, 2: true, 3: true }, typeOn: {}, mode: "month", day: c.todayIso, range: 60, dr: {}, bd: {}, dq: { kind: "", q: "", show: 30 }, busy: false, m: null,
+    lf: { kind: "", type: "", status: "active", q: "", show: 40 }, pf: { from: "", unit: "all" } });
   const A = () => c.auth() || {};
   const finDept = () => (A().departments || []).some((d) => /^fin/i.test(String(d)));
   const full = () => ["super_admin", "executive"].includes(A().role) || A().unit === "group-finance-function";
@@ -41,7 +41,7 @@ export function createCash(c) {
   let subs = [];
   function subscribe() {
     if (!c.db() || subs.length || !canSee()) return;
-    const on = (col, key, order, fn) => c.db().collection(col).orderBy(order).limit(10000).onSnapshot((snap) => { S[key] = fn ? fn(snap) : snap.docs.map((d) => ({ id: d.id, ...d.data() })); S.loaded++; if (state.tab === "cashflow" && !S.m && !S.busy) c.render(); }, () => { S.loaded++; });
+    const on = (col, key, order, fn) => c.db().collection(col).orderBy(order).limit(10000).onSnapshot((snap) => { const arr = fn ? fn(snap) : snap.docs.map((d) => ({ id: d.id, ...d.data() })); if (key === "items" || key === "log") { S[key + "All"] = arr; S[key] = arr.filter((x) => !x.deletedAt); } else S[key] = arr; S.loaded++; if (state.tab === "cashflow" && !S.m && !S.busy) c.render(); }, () => { S.loaded++; });
     subs = [on("cftypes", "types", "sort"), on("cfitems", "items", "createdAt"), on("cfbank", "bank", "day"), on("cflog", "log", "day"), on("cfplan", "plan", "month"),
       on("cfsettings", "settings", "updatedAt", (snap) => Object.fromEntries(snap.docs.map((d) => [d.id, d.data().value])))];
   }
@@ -104,6 +104,26 @@ export function createCash(c) {
   const stat = (k, v, sub, cls) => `<div class="cf-stat ${cls || ""}"><div class="k">${k}</div><div class="v">${v}</div>${sub ? `<div class="s">${sub}</div>` : ""}</div>`;
   const excelBar = () => `<span class="cf-group"><button class="btn small" data-cf="xl-down" title="A workbook with dropdowns and checks, filled with the current data">Download Excel</button><label class="btn small" title="Fill the workbook, then upload it here">Upload Excel<input type="file" id="cfUpload" accept=".xlsx,.xls" hidden></label></span>`;
 
+  // One day for the whole page: the Summary, Report, Daily log and the lines all show that day.
+  function setDay(d) { if (!d) return; S.asOf = S.day = d; S.calOpen = false; S.calMonth = monthOf(d); c.render(); }
+  // Days when cash moved (for the dots on the calendar): the daily log, and lines settled before the log existed.
+  function movesByDay(units) {
+    const m = {}, add = (day, kind, v) => { (m[day] = m[day] || { in: 0, out: 0 })[kind] += v; }, withLog = new Set(S.log.map((l) => l.itemId));
+    for (const l of S.log) if (units.includes(l.unit)) add(l.day, l.kind, etb(l, fx()));
+    for (const i of S.items) if (units.includes(i.unit) && i.status === "settled" && i.settledOn && !withLog.has(i.id)) add(i.settledOn, i.kind, etb(i, fx()));
+    return m;
+  }
+  function calendar() {
+    const ym = S.calMonth || monthOf(S.day), [y, mo] = ym.split("-").map(Number), first = new Date(Date.UTC(y, mo - 1, 1)).getUTCDay(), lead = (first + 6) % 7, days = new Date(Date.UTC(y, mo, 0)).getUTCDate(), mv = movesByDay(scopeUnits());
+    const cells = []; for (let i = 0; i < lead; i++) cells.push('<span></span>');
+    for (let d = 1; d <= days; d++) { const iso = `${ym}-${String(d).padStart(2, "0")}`, x = mv[iso], tip = x ? `${x.in ? "Collected " + plain(x.in) : ""}${x.in && x.out ? " · " : ""}${x.out ? "Paid " + plain(x.out) : ""}` : "";
+      cells.push(`<button type="button" class="cf-cal-d${iso === S.day ? " sel" : ""}${iso === c.todayIso ? " today" : ""}" data-cf="cal-pick" data-v="${iso}" ${tip ? `title="${esc(tip)}"` : ""}>${d}<span class="cf-dots">${x && x.in ? '<i class="dot in"></i>' : ""}${x && x.out ? '<i class="dot out"></i>' : ""}</span></button>`); }
+    return `<div class="cf-cal" role="dialog" aria-label="Choose a day"><div class="cf-cal-h"><button class="btn small" data-cf="cal-month" data-v="-1" aria-label="Previous month">‹</button><b>${esc(periodLabel(ym, "month"))}</b><button class="btn small" data-cf="cal-month" data-v="1" aria-label="Next month">›</button></div>
+      <div class="cf-cal-g">${["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].map((x) => `<small>${x}</small>`).join("")}${cells.join("")}</div>
+      <div class="cf-cal-k small muted"><i class="dot in"></i> collected <i class="dot out"></i> paid</div></div>`;
+  }
+  const dayBar = () => `<div class="cf-daybar"><span class="cf-lab">Day</span><button class="btn small" data-cf="day-shift" data-v="-1" aria-label="Previous day">‹</button><span class="cf-calwrap"><button class="btn cf-daybtn" data-cf="cal-toggle" aria-expanded="${S.calOpen}">${esc(dShort(S.day))} ▾</button>${S.calOpen ? calendar() : ""}</span><button class="btn small" data-cf="day-shift" data-v="1" aria-label="Next day">›</button>${S.day !== c.todayIso ? `<button class="btn small" data-cf="day-today">Today</button><span class="small muted">${S.day < c.todayIso ? "Looking back: everything on this page shows the position at the end of this day." : "A future day."}</span>` : '<span class="small muted">Today. Pick another day to see its position, or the dots for days when cash moved.</span>'}</div>`;
+  const undoBar = () => (S.undo ? `<div class="cf-note cf-undo">${esc(S.undo.label)} was deleted. <button class="btn small" data-cf="undo">Undo</button> <button class="btn small ghost" data-cf="undo-x">Dismiss</button></div>` : "");
   // ---------------- page shell ----------------
   function renderCash() {
     if (!canSee()) return `<div class="cf"><div class="empty"><b>Cash flow</b>Cash flow is shown to Group Finance, the Finance departments of the business units, Group Strategy and the executive.</div></div>`;
@@ -112,7 +132,7 @@ export function createCash(c) {
     const tab = (t) => `<button class="cf-tab${S.view === t[0] ? " on" : ""}" data-cf="view" data-v="${t[0]}">${t[1]}</button>`;
     const nav = `<div class="cf-nav"><div class="cf-tabs"><span class="cf-lab">See</span>${seeTabs.map(tab).join("")}</div><div class="cf-tabs"><span class="cf-lab">Enter</span>${enterTabs.map(tab).join("")}</div></div>`;
     const body = { summary: renderSummary, report: renderReport, log: renderLog, items: renderItems, plan: renderPlan, setup: renderSetup }[S.view]();
-    return `<div class="cf">${nav}${S.loaded < 3 ? `<div class="small muted cf-pad">Loading…</div>` : ""}${body}</div>`;
+    return `<div class="cf">${dayBar()}${undoBar()}${nav}${S.loaded < 3 ? `<div class="small muted cf-pad">Loading…</div>` : ""}${body}</div>`;
   }
 
   // ---------------- Summary ----------------
@@ -130,7 +150,7 @@ export function createCash(c) {
       : `<p class="lead"><b>No deficit.</b> Every unit stays above zero in the steps shown.</p>`;
     const fundDetail = !hasData || !(fu.short.length || fu.rich.length) ? "" : `${fu.short.length ? `<div class="small">Short: ${fu.short.map((r) => `<b>${esc(ushort(r.unit))}</b> needs ${plain(r.need)}`).join(" · ")}</div>` : ""}${fu.rich.length ? `<div class="small">Spare cash: ${fu.rich.map((r) => `<b>${esc(ushort(r.unit))}</b> ${plain(r.spare)}`).join(" · ")}</div>` : ""}${fu.short.length ? `<div class="small">Covered inside the group: <b>${plain(Math.min(fu.internal, fu.spare))}</b>. Needs outside financing or later payment dates: <b class="${fu.external > 0 ? "neg" : ""}">${plain(fu.external)}</b>.</div>` : ""}`;
     return `<div class="cf-body">
-      <div class="cf-filters"><label class="small muted">As of <input type="date" data-cfc="asOf" value="${esc(asOf)}"></label><button class="btn small" data-cf="today">Today</button>${allUnits().length > 1 ? unitSel(S.scope) : ""}${urgencyChips()}${typeToggles()}</div>
+      <div class="cf-filters">${allUnits().length > 1 ? unitSel(S.scope) : ""}${urgencyChips()}${typeToggles()}</div>
       ${usdWarn()}
       <div class="cf-stats">${stat("Bank balance", compact(t.bank), last ? "as of " + dShort(last) : "none entered")}${stat("To collect", compact(sum(sel, (b) => t.c[b - 1])), sel.map((b) => `${b}: ${compact(t.c[b - 1])}`).join(" · ") || "no urgency chosen", "good")}${stat("To pay", compact(sum(sel, (b) => t.p[b - 1])), sel.map((b) => `${b}${b}: ${compact(t.p[b - 1])}`).join(" · ") || "no urgency chosen", "warn")}${stat("Balance at the end", `<span class="${endBal < 0 ? "neg" : ""}">${compact(endBal)}</span>`, sel.length ? `after ${lastB} − ${lastB}${lastB}` : "bank only")}${stat("Financing needed", t.need > 0 ? `<span class="neg">${compact(t.need)}</span>` : "None", "from outside the group", t.need > 0 ? "bad" : "")}</div>
       <section class="cf-card"><h3>Position, step by step</h3><div class="small muted">The bank balance, plus what is collected, minus what is paid. <b>1 − 11</b> within a month, <b>2 − 22</b> within two months, <b>3 − 33</b> long term. Use the 1 · 2 · 3 buttons above to focus.</div>
@@ -198,7 +218,7 @@ export function createCash(c) {
     // by bank, for the month to date
     const from = asOf.slice(0, 8) + "01", bankRows = {}; for (const l of S.log) if (units.includes(l.unit) && l.day >= from && l.day <= asOf) { const k = l.unit + "|" + (l.bank || "No bank"); (bankRows[k] = bankRows[k] || { unit: l.unit, bank: l.bank || "No bank", in: 0, out: 0 })[l.kind] += etb(l, fx()); }
     const bkList = Object.values(bankRows).sort((a, b) => a.unit.localeCompare(b.unit) || a.bank.localeCompare(b.bank));
-    return `<div class="cf-body"><div class="cf-filters"><label class="small muted">As of <input type="date" data-cfc="asOf" value="${esc(asOf)}"></label><button class="btn small" data-cf="today">Today</button>${allUnits().length > 1 ? unitSel(S.scope) : ""}${urgencyChips()}${typeToggles()}<span class="cf-group">${mb("day", "Daily")}${mb("month", "Monthly")}${mb("quarter", "Quarterly")}</span><button class="btn small" data-cf="xl-report" style="margin-left:auto">Download Excel</button></div>
+    return `<div class="cf-body"><div class="cf-filters">${allUnits().length > 1 ? unitSel(S.scope) : ""}${urgencyChips()}${typeToggles()}<span class="cf-group">${mb("day", "Daily")}${mb("month", "Monthly")}${mb("quarter", "Quarterly")}</span><button class="btn small" data-cf="xl-report" style="margin-left:auto">Download Excel</button></div>
       ${usdWarn()}
       <section class="cf-card"><h3>Planned against done</h3><div class="small muted">Planned: collections and payments due in the period (the remaining amount of each line when it was entered). Done: cash recorded in the daily log against those lines. “Not in plan” is cash that moved without a line.${rIn !== null || rOut !== null ? ` In the last ${past.length} period${past.length > 1 ? "s" : ""}, <b>${rIn === null ? "–" : Math.round(rIn * 100) + "%"}</b> of planned collections arrived and <b>${rOut === null ? "–" : Math.round(rOut * 100) + "%"}</b> of planned payments went out. The forecast below uses this.` : ""}</div>
         <div class="scroll"><table class="cf-table"><thead><tr><th>${label}</th><th>Collect: planned</th><th>done</th><th>%</th><th>Pay: planned</th><th>done</th><th>%</th><th>Not in plan (net)</th></tr></thead><tbody>${body}</tbody></table></div></section>
@@ -253,10 +273,10 @@ export function createCash(c) {
         <td class="num"><input type="text" inputmode="decimal" class="cf-bk" data-bd="out" data-key="${esc(b.key)}" value="${esc(String(b.out))}" placeholder="0" ${w ? "" : "disabled"} aria-label="Total out">${trace(b.out, restOut)}</td>
         <td class="num"><input type="number" step="any" class="cf-bk" data-bd="close" data-key="${esc(b.key)}" value="${esc(String(b.close))}" ${w ? "" : "disabled"} aria-label="Closing balance"><div class="small cf-bkchk">${Math.abs(num(b.close) - b.calc) > 0.5 ? `<span class="neg">opening + in − out is ${plain(b.calc)}</span>` : b.saved ? '<span class="ok">saved</span>' : '<span class="muted">not saved</span>'}</div></td></tr>`; }).join("");
     const bkTot = { open: sum(bkRows, (b) => b.opening), inn: sum(bkRows, (b) => b.nIn), out: sum(bkRows, (b) => b.nOut), close: sum(bkRows, (b) => num(b.close)) };
-    const other = rows.filter((l) => !l.itemId);
+    const liveIds = new Set(S.items.map((i) => i.id)), other = rows.filter((l) => !l.itemId || !liveIds.has(l.itemId));
     const otherHtml = other.map((l) => `<tr class="clickable" data-cf="log-open" data-id="${esc(l.id)}" tabindex="0"><td class="small">${esc(ushort(l.unit))}</td><td><span class="pill ${l.kind === "in" ? "s-done" : "s-not"}">${l.kind === "in" ? "In" : "Out"}</span></td><td>${esc(l.bank || "")}</td><td><b>${esc(l.party || l.description || "")}</b>${l.party && l.description ? `<div class="small muted">${esc(l.description)}</div>` : ""}</td><td class="num">${money(l.amount, false)}</td></tr>`).join("");
     const w = writableUnits().length > 0;
-    return `<div class="cf-body"><div class="cf-filters"><label class="small muted">Day <input type="date" data-cfc="day" value="${esc(day)}"></label><button class="btn small" data-cf="day-shift" data-v="-1" aria-label="Previous day">‹</button><button class="btn small" data-cf="day-shift" data-v="1" aria-label="Next day">›</button><button class="btn small" data-cf="day-today">Today</button>${allUnits().length > 1 ? unitSel(S.scope) : ""}<span style="margin-left:auto" class="cf-group">${excelBar()}</span></div>
+    return `<div class="cf-body"><div class="cf-filters">${allUnits().length > 1 ? unitSel(S.scope) : ""}<span style="margin-left:auto" class="cf-group">${excelBar()}</span></div>
       <section class="cf-card"><div class="cf-split"><div><h3>Bank movements, ${esc(dShort(day))}</h3><div class="small muted">Per bank: what the account held at the start, the total that came in, the total that went out, and the closing. Enter the day's totals from the bank report, now or the next morning. To add several amounts, type them with a plus, for example <b>500000+250000</b>. Opening is yesterday's closing.</div></div>${w ? `<span class="cf-group"><button class="btn" data-cf="bank-new">+ Bank account</button><button class="btn primary" data-cf="bk-save" ${bkRows.length ? "" : "disabled"}>Save day</button></span>` : ""}</div>
         ${bkRows.length ? `<div class="scroll"><table class="cf-table cf-bktable"><thead><tr><th>Unit</th><th>Bank</th><th>Opening</th><th>In</th><th>Out</th><th>Closing</th></tr></thead><tbody>${bkHtml}<tr class="tot"><td colspan="2"><b>Total</b></td><td class="num">${plain(bkTot.open)}</td><td class="num" id="cfTotIn">${plain(bkTot.inn)}</td><td class="num" id="cfTotOut">${plain(bkTot.out)}</td><td class="num" id="cfTotClose">${plain(bkTot.close)}</td></tr></tbody></table></div>` : `<div class="empty"><b>No bank accounts yet</b>${w ? `Press “+ Bank account” to add the first balance.` : ""}</div>`}</section>
       <section class="cf-card"><div class="cf-split"><div><h3>Trace the cash to collections and payments</h3><div class="small muted">The bank totals above cannot show who paid or was paid. Itemize them here: type the amount next to the line and choose the bank. Do it in as many rounds as you need; each save adds entries. Several movements on the same line: save, then enter again.</div></div>${w ? `<button class="btn primary" data-cf="dr-save" ${n ? "" : "disabled"} id="cfDrSave">${n ? `Save ${n} entr${n > 1 ? "ies" : "y"}` : "Save entries"}</button>` : ""}</div>
@@ -268,35 +288,44 @@ export function createCash(c) {
   }
 
   // ---------------- Collections and payments ----------------
+  // A line as it stood at the end of the chosen day: what was collected or paid that day, to date, and what was left.
+  function viewOf(i, D) {
+    const lg = S.log.filter((l) => l.itemId === i.id), legacy = !lg.length && i.status === "settled" && i.settledOn;
+    const to = lg.length ? sum(lg.filter((l) => l.day <= D), (l) => l.amount) : legacy && i.settledOn <= D ? num(i.amount) : 0;
+    const onDay = lg.length ? sum(lg.filter((l) => l.day === D), (l) => l.amount) : legacy && i.settledOn === D ? num(i.amount) : 0;
+    const wo = i.status === "written_off" && i.settledOn && i.settledOn <= D, left = wo ? 0 : Math.max(0, num(i.amount) - to), exists = (i.enteredOn || "0000") <= D || to > 0;
+    return { to, onDay, left, wo, exists, open: left > 0.005 };
+  }
   function filteredItems() {
-    const f = S.lf, q = f.q.trim().toLowerCase(), units = scopeUnits();
-    return S.items.filter((i) => units.includes(i.unit) && S.bk[i.bucket] && (!f.kind || i.kind === f.kind) && (f.type === "" || (f.type === "__none" ? !i.typeCode : i.typeCode === f.type)) && (f.status === "all" || i.status === f.status)
+    const f = S.lf, q = f.q.trim().toLowerCase(), units = scopeUnits(), D = S.day;
+    return S.items.map((i) => ({ i, v: viewOf(i, D) })).filter(({ i, v }) => v.exists && units.includes(i.unit) && S.bk[i.bucket] && (!f.kind || i.kind === f.kind) && (f.type === "" || (f.type === "__none" ? !i.typeCode : i.typeCode === f.type))
+      && (f.status === "all" || (f.status === "active" ? v.open || v.onDay > 0 : f.status === "open" ? v.open : f.status === "day" ? v.onDay > 0 : f.status === "settled" ? !v.open && !v.wo : v.wo))
       && (!q || `${i.code} ${i.party} ${i.description} ${i.ref} ${i.typeCode} ${i.note}`.toLowerCase().includes(q)))
-      .sort((a, b) => a.kind.localeCompare(b.kind) * -1 || a.bucket - b.bucket || (PRI_RANK[a.priority] ?? 1) - (PRI_RANK[b.priority] ?? 1) || etb(b, fx()) - etb(a, fx()));
+      .sort((a, b) => (b.v.onDay > 0) - (a.v.onDay > 0) || a.i.kind.localeCompare(b.i.kind) * -1 || a.i.bucket - b.i.bucket || (PRI_RANK[a.i.priority] ?? 1) - (PRI_RANK[b.i.priority] ?? 1) || etb(b.i, fx()) - etb(a.i, fx()));
   }
   const typeOptions = (kind, cur, withNew) => { const list = S.types.filter((t) => t.active && (!kind || t.kind === "both" || t.kind === kind)); if (cur && !list.some((t) => t.code === cur)) list.push({ code: cur, label: cur });
     return `<option value="">No type</option>${list.map((t) => `<option value="${esc(t.code)}" ${t.code === cur ? "selected" : ""}>${esc(t.code)}${t.label && t.label !== t.code ? " – " + esc(t.label) : ""}</option>`).join("")}${withNew && canWriteAny() ? `<option value="__new__">+ Add a new type…</option>` : ""}`; };
   function renderItems() {
-    const f = S.lf, list = filteredItems(), shown = list.slice(0, f.show), noType = S.items.filter((i) => i.status === "open" && scopeUnits().includes(i.unit) && !i.typeCode).length;
-    const rem = (i) => Math.max(0, num(i.amount) - doneOf(i));
-    const totIn = sum(list.filter((i) => i.kind === "in" && i.status === "open"), (i) => etb({ ...i, amount: rem(i) }, fx())), totOut = sum(list.filter((i) => i.kind === "out" && i.status === "open"), (i) => etb({ ...i, amount: rem(i) }, fx()));
-    const rows = shown.map((i) => { const w = canWrite(i.unit), closed = i.status !== "open", t = typeByCode(i.typeCode), done = doneOf(i), left = Math.max(0, num(i.amount) - done);
-      return `<tr class="${closed ? "dim" : ""}"><td><span class="tag">${esc(i.code || "")}</span></td><td class="small">${esc(ushort(i.unit))}</td>
+    const f = S.lf, D = S.day, list = filteredItems(), shown = list.slice(0, f.show), noType = S.items.filter((i) => viewOf(i, D).open && scopeUnits().includes(i.unit) && !i.typeCode).length;
+    const totIn = sum(list.filter((o) => o.i.kind === "in"), (o) => etb({ ...o.i, amount: o.v.left }, fx())), totOut = sum(list.filter((o) => o.i.kind === "out"), (o) => etb({ ...o.i, amount: o.v.left }, fx())), movedIn = sum(list.filter((o) => o.i.kind === "in"), (o) => etb({ ...o.i, amount: o.v.onDay }, fx())), movedOut = sum(list.filter((o) => o.i.kind === "out"), (o) => etb({ ...o.i, amount: o.v.onDay }, fx()));
+    const rows = shown.map(({ i, v }) => { const w = canWrite(i.unit), t = typeByCode(i.typeCode), cur = i.currency !== "ETB" ? ` <span class="tag">${esc(i.currency)}</span>` : "";
+      return `<tr class="${v.open ? "" : "dim"}"><td><span class="tag">${esc(i.code || "")}</span></td><td class="small">${esc(ushort(i.unit))}</td>
         <td><span class="pill ${i.kind === "in" ? "s-done" : "s-not"}">${i.kind === "in" ? "Collect" : "Pay"}</span> <b>${esc(i.party || "")}</b>${t && t.expected === false ? ' <span class="tag" title="This type is not counted in the summary and report. Change it in Setup, or under Counted types on the Summary.">not counted</span>' : ""}${i.description ? `<div class="small muted">${esc(i.description)}</div>` : ""}${i.ref ? `<div class="small muted">Ref ${esc(i.ref)}</div>` : ""}</td>
-        <td title="${esc(t ? (t.label && t.label !== t.code ? t.label + ". " : "") + (t.description || "") : "")}">${w && !closed ? `<select class="cf-sel" data-cfq="type" data-id="${esc(i.id)}" aria-label="Type">${typeOptions(i.kind, i.typeCode, true)}</select>` : esc(i.typeCode || "No type")}</td>
-        <td class="small" title="${esc(BUCKET_TEXT[i.bucket])}">${bucketCode(i.kind, i.bucket)}</td><td class="num">${num(i.total) > 0 ? `${money(i.total, false)}${i.currency !== "ETB" ? ` <span class="tag">${esc(i.currency)}</span>` : ""}` : '<span class="muted">–</span>'}</td>
-        <td class="num">${done ? `${money(done)}${num(i.total) > 0 ? `<div class="small muted">${pct(done, i.total)}</div>` : ""}` : '<span class="muted">–</span>'}</td>
-        <td class="num"><b>${closed ? '<span class="muted">–</span>' : money(left, false)}</b>${!closed && i.currency !== "ETB" ? ` <span class="tag">${esc(i.currency)}</span>` : ""}</td>
-        <td>${w && !closed ? `<input type="date" class="cf-date" data-cfq="expected" data-id="${esc(i.id)}" value="${esc(i.expected || "")}" aria-label="Expected date">` : esc(dShort(i.expected))}</td>
-        <td class="small cf-act">${closed ? `<span class="pill s-done">${i.status === "settled" ? (i.kind === "in" ? "Collected" : "Paid") : "Written off"}</span>` : done > 0 ? `<span class="pill s-not">Part ${i.kind === "in" ? "collected" : "paid"}</span>` : ""}${w ? `<div class="toolbar">${closed ? "" : `<button class="btn small" data-cf="rec" data-id="${esc(i.id)}">${i.kind === "in" ? "Collected" : "Paid"}</button>`}<button class="btn small ghost" data-cf="item-open" data-id="${esc(i.id)}">Edit</button></div>` : ""}</td></tr>`; }).join("");
+        <td title="${esc(t ? (t.label && t.label !== t.code ? t.label + ". " : "") + (t.description || "") : "")}">${w && v.open ? `<select class="cf-sel" data-cfq="type" data-id="${esc(i.id)}" aria-label="Type">${typeOptions(i.kind, i.typeCode, true)}</select>` : esc(i.typeCode || "No type")}</td>
+        <td class="small" title="${esc(BUCKET_TEXT[i.bucket])}">${bucketCode(i.kind, i.bucket)}</td><td class="num">${num(i.total) > 0 ? `${money(i.total, false)}${cur}` : '<span class="muted">–</span>'}</td>
+        <td class="num">${v.onDay ? `<b>${money(v.onDay, false)}</b>` : '<span class="muted">–</span>'}${v.to && v.to !== v.onDay ? `<div class="small muted">to date ${plain(v.to)}</div>` : ""}</td>
+        <td class="num"><b>${v.open ? money(v.left, false) : '<span class="muted">–</span>'}</b>${v.open ? cur : ""}</td>
+        <td>${w && v.open ? `<input type="date" class="cf-date" data-cfq="expected" data-id="${esc(i.id)}" value="${esc(i.expected || "")}" aria-label="Expected date">` : esc(dShort(i.expected))}</td>
+        <td class="small cf-act">${!v.open ? `<span class="pill s-done">${v.wo ? "Written off" : i.kind === "in" ? "Collected" : "Paid"}</span>` : v.to > 0 ? `<span class="pill s-not">Part ${i.kind === "in" ? "collected" : "paid"}</span>` : ""}${w ? `<div class="toolbar">${v.open ? `<button class="btn small" data-cf="rec" data-id="${esc(i.id)}">${i.kind === "in" ? "Collected" : "Paid"}</button>` : ""}<button class="btn small ghost" data-cf="item-open" data-id="${esc(i.id)}">Edit</button></div>` : ""}</td></tr>`; }).join("");
+    const opt = (v, l) => `<option value="${v}" ${f.status === v ? "selected" : ""}>${l}</option>`;
     return `<div class="cf-body"><div class="cf-filters">${allUnits().length > 1 ? unitSel(S.scope) : ""}<span class="cf-group">${chip(!f.kind, 'data-cf="lkind" data-v=""', "All")}${chip(f.kind === "in", 'data-cf="lkind" data-v="in"', "Collections")}${chip(f.kind === "out", 'data-cf="lkind" data-v="out"', "Payments")}</span>${urgencyChips()}
         <select data-cff="type" aria-label="Type"><option value="">All types</option><option value="__none" ${f.type === "__none" ? "selected" : ""}>No type (${noType})</option>${S.types.map((t) => `<option value="${esc(t.code)}" ${f.type === t.code ? "selected" : ""}>${esc(t.code)}</option>`).join("")}</select>
-        <select data-cff="status" aria-label="Status"><option value="open" ${f.status === "open" ? "selected" : ""}>Open</option><option value="settled" ${f.status === "settled" ? "selected" : ""}>Settled</option><option value="written_off" ${f.status === "written_off" ? "selected" : ""}>Written off</option><option value="all" ${f.status === "all" ? "selected" : ""}>All</option></select>
+        <select data-cff="status" aria-label="Show">${opt("active", "Open, or moved that day")}${opt("open", "Open at the end of the day")}${opt("day", "Moved that day")}${opt("settled", "Settled")}${opt("written_off", "Written off")}${opt("all", "All")}</select>
         <input type="search" data-cff="q" placeholder="Search party, code, reference" value="${esc(f.q)}" aria-label="Search"></div>
-      <div class="cf-filters"><span class="small muted">${list.length} line${list.length === 1 ? "" : "s"} · left to collect ${plain(totIn)} · left to pay ${plain(totOut)}</span><span style="margin-left:auto" class="cf-group">${excelBar()}${writableUnits().length ? `<button class="btn primary" data-cf="item-new">+ Add a line</button>` : ""}</span></div>
+      <div class="cf-filters"><span class="small muted">As at the end of <b>${esc(dShort(D))}</b>: ${list.length} line${list.length === 1 ? "" : "s"} · collected that day ${plain(movedIn)} · paid that day ${plain(movedOut)} · remaining to collect ${plain(totIn)} · remaining to pay ${plain(totOut)}</span><span style="margin-left:auto" class="cf-group">${excelBar()}${writableUnits().length ? `<button class="btn primary" data-cf="item-new">+ Add a line</button>` : ""}</span></div>
       ${usdWarn()}${noType ? `<div class="cf-note">${noType} open line${noType > 1 ? "s have" : " has"} no type. Choose one so it adds up in the report. <button class="btn small" data-cf="no-type">Show them</button></div>` : ""}
-      <section class="cf-card flush">${list.length ? `<div class="scroll"><table class="cf-table cf-items"><thead><tr><th>Code</th><th>Unit</th><th>Party</th><th>Type</th><th title="1 / 11 within a month, 2 / 22 within two months, 3 / 33 long term">Urgency</th><th title="The full invoice amount, when known">Total</th><th title="Collected for collections, paid for payments, as recorded here">Collected / paid</th><th title="What is still to be collected or paid">Remaining</th><th title="Blank: about 30, 60 or 120 days ahead, by urgency">Expected</th><th class="cf-act"></th></tr></thead><tbody>${rows}</tbody></table></div>
-      ${list.length > f.show ? `<div class="toolbar cf-pad"><button class="btn" data-cf="more">Show more</button></div>` : ""}` : `<div class="empty"><b>Nothing here</b>Change the filters, or add a line.</div>`}</section></div>`;
+      <section class="cf-card flush">${list.length ? `<div class="scroll"><table class="cf-table cf-items"><thead><tr><th>Code</th><th>Unit</th><th>Party</th><th>Type</th><th title="1 / 11 within a month, 2 / 22 within two months, 3 / 33 long term">Urgency</th><th title="The full invoice amount, when known">Total</th><th title="Collected for collections, paid for payments, on the chosen day only">Collected / paid ${D === c.todayIso ? "today" : "on " + esc(dShort(D))}</th><th title="What is still to be collected or paid at the end of the chosen day">Remaining</th><th title="Blank: about 30, 60 or 120 days ahead, by urgency">Expected</th><th class="cf-act"></th></tr></thead><tbody>${rows}</tbody></table></div>
+      ${list.length > f.show ? `<div class="toolbar cf-pad"><button class="btn" data-cf="more">Show more</button></div>` : ""}` : `<div class="empty"><b>Nothing here</b>Change the filters or the day, or add a line.</div>`}</section></div>`;
   }
 
   // ---------------- Plan ----------------
@@ -317,7 +346,10 @@ export function createCash(c) {
     const unconf = S.types.filter((t) => !t.confirmed).length;
     const rows = [...S.types].sort((a, b) => (a.kind === b.kind ? 0 : a.kind === "in" ? -1 : 1) || a.sort - b.sort).map((t) => `<tr class="${t.active ? "" : "dim"}"><td><b>${esc(t.code)}</b></td><td>${esc(t.label)}${!t.label || t.label === t.code ? ' <span class="small muted">no description yet</span>' : ""}<div class="small muted">${esc(t.description || "")}</div></td><td class="small">${t.kind === "in" ? "Collections" : t.kind === "out" ? "Payments" : "Both"}</td>
       <td class="small">${t.expected ? "Yes" : "No"}</td><td class="small">${t.confirmed ? '<span class="pill s-done">Confirmed</span>' : '<span class="pill s-not">To confirm</span>'}</td><td class="num small">${use[t.code] || 0}</td><td>${canWriteAny() ? `<button class="btn small ghost" data-cf="type-open" data-id="${esc(t.id)}">Edit</button>` : ""}</td></tr>`).join("");
-    return `<div class="cf-body">${admin() ? `<section class="cf-card"><h3>USD rate</h3><div class="toolbar"><label class="small">1 USD in ETB <input type="number" id="cfFx" min="0" step="any" value="${esc(S.settings.usd_etb || "")}" style="width:120px"></label><button class="btn small" data-cf="fx-save">Save rate</button><span class="small muted">Used to add USD lines and movements into the ETB totals.</span></div></section>` : ""}
+    const gone = [...S.itemsAll.filter((x) => x.deletedAt && canWrite(x.unit)).map((x) => ({ table: "cf_items", id: x.id, at: x.deletedAt, by: x.deletedBy, what: `Line ${x.code || ""}: ${x.party || x.description || ""} (${plain(x.amount)} ${x.currency})`, unit: x.unit })), ...S.logAll.filter((x) => x.deletedAt && canWrite(x.unit)).map((x) => ({ table: "cf_log", id: x.id, at: x.deletedAt, by: x.deletedBy, what: `${x.kind === "in" ? "Collected" : "Paid"} ${plain(x.amount)} ${x.currency} on ${dShort(x.day)}${x.bank ? ", " + x.bank : ""}${x.party ? " · " + x.party : ""}${x.itemCode ? " · " + x.itemCode : ""}`, unit: x.unit }))].sort((a, b) => String(b.at).localeCompare(String(a.at))).slice(0, 60);
+    const backupCard = `<section class="cf-card"><h3>Backup and deleted entries</h3><div class="toolbar"><button class="btn" data-cf="xl-backup">Download a backup (JSON)</button><span class="small muted">Everything in Cash flow that you can see: lines, movements, bank balances, plan and types, including deleted entries. Excel upload on the Enter screens can load lines, movements, balances and plan back.</span></div>
+      <h4>Recently deleted</h4>${gone.length ? `<div class="scroll"><table class="cf-table"><tbody>${gone.map((g) => `<tr><td>${esc(g.what)}<div class="small muted">${esc(ushort(g.unit))} · deleted ${esc(dShort(String(g.at).slice(0, 10)))}${g.by ? " by " + esc(g.by) : ""}</div></td><td><button class="btn small" data-cf="restore" data-table="${g.table}" data-id="${esc(g.id)}">Restore</button></td></tr>`).join("")}</tbody></table></div>` : '<div class="small muted">Nothing deleted.</div>'}</section>`;
+    return `<div class="cf-body">${backupCard}${admin() ? `<section class="cf-card"><h3>USD rate</h3><div class="toolbar"><label class="small">1 USD in ETB <input type="number" id="cfFx" min="0" step="any" value="${esc(S.settings.usd_etb || "")}" style="width:120px"></label><button class="btn small" data-cf="fx-save">Save rate</button><span class="small muted">Used to add USD lines and movements into the ETB totals.</span></div></section>` : ""}
       <section class="cf-card"><div class="cf-split"><h3>Types</h3><span class="cf-group"><button class="btn small" data-cf="xl-types">Download list for finance</button>${canWriteAny() ? `<button class="btn primary small" data-cf="type-new">+ Add type</button>` : ""}</span></div>
         <div class="small muted">The list behind the Type dropdown. ${unconf} of ${S.types.length} still to confirm with finance. “Counted” means the type is expected to be collected or paid, so it is included in the position.</div>
         <div class="scroll"><table class="cf-table"><thead><tr><th>Code</th><th>Meaning</th><th>For</th><th>Counted</th><th>Status</th><th>Lines</th><th></th></tr></thead><tbody>${rows}</tbody></table></div></section></div>`;
@@ -359,7 +391,7 @@ export function createCash(c) {
       ${field("ci-pri", "Priority", `<select id="ci-pri">${opt(PRIORITIES, r.priority)}</select>`)}${field("ci-exp", "Expected date (optional)", `<input type="date" id="ci-exp" value="${esc(r.expected || "")}">`)}
       ${m.isNew ? "" : field("ci-st", "Status", `<select id="ci-st"><option value="open" ${r.status === "open" ? "selected" : ""}>Open</option><option value="settled" ${r.status === "settled" ? "selected" : ""}>${r.kind === "in" ? "Collected" : "Paid"}</option><option value="written_off" ${r.status === "written_off" ? "selected" : ""}>Written off</option></select>`)}${m.isNew ? "" : field("ci-sdate", "Date settled", `<input type="date" id="ci-sdate" value="${esc(r.settledOn || "")}">`)}
       ${field("ci-note", "Note", `<textarea id="ci-note" rows="2">${esc(r.note)}</textarea>`, true)}</div>
-      ${logs.length ? `<div class="small" style="margin:8px 0 4px"><b>Cash recorded against this line</b></div><div class="scroll"><table class="cf-table"><tbody>${logs.map((l) => `<tr><td>${esc(dShort(l.day))}</td><td>${esc(l.bank || "")}</td><td class="num">${money(l.amount, false)}</td></tr>`).join("")}<tr class="tot"><td colspan="2"><b>Done</b></td><td class="num">${money(sum(logs, (l) => l.amount), false)}</td></tr></tbody></table></div>` : ""}
+      ${logs.length ? `<div class="small" style="margin:8px 0 4px"><b>Cash recorded against this line</b></div><div class="scroll"><table class="cf-table"><tbody>${logs.map((l) => `<tr><td>${esc(dShort(l.day))}</td><td>${esc(l.bank || "")}</td><td class="num">${money(l.amount, false)}</td><td class="cf-act2">${canWrite(l.unit) ? `<button class="btn small ghost" data-cf="log-open" data-id="${esc(l.id)}">Edit or delete</button>` : ""}</td></tr>`).join("")}<tr class="tot"><td colspan="2"><b>Done</b></td><td class="num">${money(sum(logs, (l) => l.amount), false)}</td><td></td></tr></tbody></table></div>` : ""}
       ${footer(m, "item-save", "item-del")}`;
   }
   // a cash movement
@@ -424,10 +456,21 @@ export function createCash(c) {
     if (!full && it.status === "settled") return c.api().saveCfItem(A(), itemRow({ ...it, status: "open", settledOn: "" }));
     return null;
   }
+  // Bring back a deleted line or cash movement. A restored movement may close its line again.
+  async function restoreEntry(table, id) {
+    const l = table === "cf_log" ? S.logAll.find((q) => q.id === id) : null;
+    await run(async () => { const res = await c.api().restoreCf(A(), table, id); if (res && res.error) return res;
+      if (l && l.itemId) { const e = await syncLine(l.itemId, num(l.amount), l.day); if (e && e.error) return e; } return res; }, "Restored");
+  }
+  // Everything in this screen as one JSON file, including what was deleted, as a safety copy.
+  function backupJson() {
+    const units = allUnits(), keep = (r) => units.includes(r.unit), data = { app: "WBG cash flow backup", made: new Date().toISOString(), by: A().name || "", asOf: c.todayIso, types: S.types, lines: S.itemsAll.filter(keep), movements: S.logAll.filter(keep), bank: S.bank.filter(keep), plan: S.plan.filter(keep), settings: S.settings };
+    const blob = new Blob([JSON.stringify(data, null, 1)], { type: "application/json" }), a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = `Cash flow backup ${c.todayIso}.json`; document.body.append(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 500); c.toast("Backup saved");
+  }
   async function onAction(el) {
     const x = el.dataset.cf, id = el.dataset.id, m = S.m, it = id ? S.items.find((q) => q.id === id) : null;
     if (x === "view") { S.view = el.dataset.v; c.render(); }
-    else if (x === "today") { S.asOf = c.todayIso; c.render(); }
+    else if (x === "today") setDay(c.todayIso);
     else if (x === "mode") { S.mode = el.dataset.v; c.render(); }
     else if (x === "range") { S.range = Number(el.dataset.v); c.render(); }
     else if (x === "bk") { const b = Number(el.dataset.v); S.bk[b] = !S.bk[b]; if (!S.bk[1] && !S.bk[2] && !S.bk[3]) S.bk[b] = true; c.render(); }
@@ -438,9 +481,16 @@ export function createCash(c) {
     else if (x === "no-type") { S.lf.type = "__none"; S.lf.status = "open"; c.render(); }
     else if (x === "cat-open") { S.lf.kind = el.dataset.kind; S.lf.type = el.dataset.code; S.lf.status = "open"; S.lf.q = ""; S.view = "items"; c.render(); }
     else if (x === "close") closeModal();
-    else if (x === "day-shift") { S.day = addDays(S.day, Number(el.dataset.v)); c.render(); }
-    else if (x === "day-today") { S.day = c.todayIso; c.render(); }
-    else if (x === "day-pick") { S.day = el.dataset.v; c.render(); }
+    else if (x === "day-shift") setDay(addDays(S.day, Number(el.dataset.v)));
+    else if (x === "day-today") setDay(c.todayIso);
+    else if (x === "cal-toggle") { S.calOpen = !S.calOpen; S.calMonth = monthOf(S.day); c.render(); }
+    else if (x === "cal-month") { S.calMonth = addMonths(S.calMonth || monthOf(S.day), Number(el.dataset.v)); c.render(); }
+    else if (x === "cal-pick") setDay(el.dataset.v);
+    else if (x === "undo") { const u = S.undo; S.undo = null; if (u) await restoreEntry(u.table, u.id); else c.render(); }
+    else if (x === "restore") { await restoreEntry(el.dataset.table, id); }
+    else if (x === "xl-backup") backupJson();
+    else if (x === "undo-x") { S.undo = null; c.render(); }
+    else if (x === "day-pick") setDay(el.dataset.v);
     // lines
     else if (x === "item-new") { S.m = { type: "item", isNew: true, row: todayRow(S.lf.kind || "in") }; drawModal(); }
     else if (x === "item-open" && it) { S.m = { type: "item", isNew: false, row: clone(it) }; drawModal(); }
@@ -449,8 +499,8 @@ export function createCash(c) {
       if (r.status !== "open" && !r.settledOn) r.settledOn = c.todayIso; if (r.status === "open") r.settledOn = "";
       if (await run(() => c.api().saveCfItem(A(), itemRow({ ...r, id: m.isNew ? undefined : r.id })), "Saved")) closeModal();
     }
-    else if (x === "item-del") { if (!m.confirmDel) { m.confirmDel = true; drawModal(); return; } if (await run(() => c.api().deleteCf(A(), "cf_items", m.row.id), "Deleted")) closeModal(); }
-    else if (x === "rec" && it) { const left = Math.max(0, num(it.amount) - loggedFor(it.id)); S.m = { type: "log", isNew: true, row: { unit: it.unit, day: c.todayIso, kind: it.kind, bank: lastBank(it.unit, it.kind), amount: "", currency: it.currency, party: it.party, description: it.description, typeCode: it.typeCode, itemId: it.id, itemCode: it.code, note: "" } }; drawModal(); }
+    else if (x === "item-del") { if (!m.confirmDel) { m.confirmDel = true; drawModal(); return; } const row = m.row; if (await run(() => c.api().deleteCf(A(), "cf_items", row.id), "Deleted. You can undo it.")) { S.undo = { table: "cf_items", id: row.id, label: `Line ${row.code || ""} ${row.party || ""}`.trim() }; closeModal(); } }
+    else if (x === "rec" && it) { const left = Math.max(0, num(it.amount) - loggedFor(it.id)); S.m = { type: "log", isNew: true, row: { unit: it.unit, day: S.day, kind: it.kind, bank: lastBank(it.unit, it.kind), amount: "", currency: it.currency, party: it.party, description: it.description, typeCode: it.typeCode, itemId: it.id, itemCode: it.code, note: "" } }; drawModal(); }
     // log
     else if (x === "dkind") { S.dq.kind = el.dataset.v; S.dq.show = 30; c.render(); }
     else if (x === "dmore") { S.dq.show += 30; c.render(); }
@@ -476,7 +526,7 @@ export function createCash(c) {
       if (ok) { S.day = r.day; closeModal(); }
     }
     else if (x === "log-del") { if (!m.confirmDel) { m.confirmDel = true; drawModal(); return; } const l = m.row;
-      if (await run(async () => { const res = await c.api().deleteCf(A(), "cf_log", l.id); if (res && res.error) return res; if (l.itemId) await syncLine(l.itemId, 0, null, l.id); return res; }, "Deleted")) closeModal(); }
+      if (await run(async () => { const res = await c.api().deleteCf(A(), "cf_log", l.id); if (res && res.error) return res; if (l.itemId) { const e = await syncLine(l.itemId, 0, null, l.id); if (e && e.error) return e; } return res; }, "Deleted. You can undo it.")) { S.undo = { table: "cf_log", id: l.id, label: `Cash movement of ${plain(l.amount)} (${l.party || l.itemCode || l.bank || ""})`, itemId: l.itemId }; closeModal(); } }
     else if (x === "bk-save") {
       const rows = [...document.querySelectorAll("tr[data-bkkey]")].map((tr) => { const [unit, bank, day] = tr.dataset.bkkey.split("|"), g = (k) => (tr.querySelector(`[data-bd="${k}"]`) || {}).value; return { unit, bank, day, tr, open: g("open"), inn: sumExpr(g("in")), out: sumExpr(g("out")), close: g("close") }; }).filter((r) => canWrite(r.unit));
       if (!rows.length) return;
@@ -530,7 +580,7 @@ export function createCash(c) {
   }
   function onControl(el) {
     const k = el.dataset.cfc;
-    if (k === "asOf") { if (el.value) S.asOf = el.value; } else if (k === "scope") S.scope = el.value; else if (k === "day") { if (el.value) S.day = el.value; } else if (k === "pfrom") S.pf.from = el.value;
+    if (k === "asOf" || k === "day") { if (el.value) { setDay(el.value); return; } } else if (k === "scope") S.scope = el.value; else if (k === "pfrom") S.pf.from = el.value;
     c.render();
   }
   function onFilter(el) { S.lf[el.dataset.cff] = el.value; S.lf.show = 40; c.render(); if (el.dataset.cff === "q") { const e = document.querySelector('[data-cff="q"]'); if (e) { e.focus(); e.setSelectionRange(e.value.length, e.value.length); } } }

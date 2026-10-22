@@ -10,7 +10,7 @@
 // Run  npm run check-help  after changing the app or this file: it lists guide wording that no longer matches the app.
 // "pages" uses the app's tab ids: dashboard, update, plan, mplan, approvals, support, fb, tasks, monthly, ceo, follow, activity, units, people.
 // Keep sentences short and name the buttons exactly as they appear on screen.
-export const GUIDES_VERSION = "2026-10-22.1";
+export const GUIDES_VERSION = "2026-10-22.2";
 
 export const GROUPS = [
   { id: "start", title: "Getting started", icon: "🚀", blurb: "Signing in, weeks, roles and finding your way around" },
@@ -923,6 +923,18 @@ export const GUIDES = [
       "**Planned against done** shows the planned collections and payments of each period, what was recorded against them, and the percentage.",
       "The **Forecast** applies the usual follow-through of the last periods to the expected amounts, so the balance is more realistic.",
       "Add the monthly plan lines under **Plan**. The report shows them against the cash that moved. Press **Download Excel** to take the report away.",
+    ],
+    go: [["Cash flow", "cashflow"]],
+  },
+  {
+    id: "cash-day", g: "cf", pages: ["cashflow"], title: "Looking at another day, undo and backup",
+    kw: "day calendar dot past review history position as of delete undo restore backup deleted entries",
+    intro: "The day at the top of Cash flow applies to every screen. Pick another day to see the position as it stood at the end of that day.",
+    steps: [
+      "Use the arrows or open the **calendar** at the top. A green dot marks a day when something was collected, an orange dot a day when something was paid. Hover a day to see the amounts.",
+      "On **Collections and payments**, the **Collected / paid** column shows only what moved on the chosen day, so it is empty the next day. **Remaining** is what was left at the end of that day.",
+      "To remove a movement, open the line with **Edit**, press **Edit or delete** on the movement, then **Delete**. A bar at the top offers **Undo**. Deleted lines and movements are kept under **Setup**, **Recently deleted**, with **Restore**.",
+      "Press **Download a backup (JSON)** in Setup for a safety copy of everything you can see in Cash flow.",
     ],
     go: [["Cash flow", "cashflow"]],
   },

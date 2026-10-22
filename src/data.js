@@ -28,9 +28,9 @@ const COLLECTIONS = {
   actions: { table: "corrective_actions", map: { unit: "unit_id", week: "week", source: "source", issue: "issue", action: "action", owner: "owner", due: "due", status: "status", taskTitle: "task_title", taskRef: "task_ref", notes: "notes", createdBy: "created_by", createdAt: "created_at", updatedBy: "updated_by", updatedAt: "updated_at", closedAt: "closed_at" }, ts: ["createdAt", "updatedAt", "closedAt"], nullText: ["week", "due", "closedAt"] },
   projects: { table: "projects", map: { code: "code", name: "name", type: "type", unit: "unit_id", directorate: "directorate", sponsor: "sponsor", manager: "manager", budget: "budget", start: "start_date", end: "end_date", revisedEnd: "revised_end", actualEnd: "actual_end", strategicLink: "strategic_link", status: "status", rag: "rag", mode: "mode", involved: "involved", phases: "phases", updates: "updates", risks: "risks", decisions: "decisions", notes: "notes", createdBy: "created_by", createdAt: "created_at", updatedBy: "updated_by", updatedAt: "updated_at" }, ts: ["createdAt", "updatedAt"], nullText: ["start", "end", "revisedEnd", "actualEnd"] },
   cftypes: { table: "cf_types", map: { code: "code", label: "label", kind: "kind", section: "section", group: "grp", description: "description", expected: "expected", confirmed: "confirmed", active: "active", sort: "sort", updatedAt: "updated_at", updatedBy: "updated_by" }, ts: ["updatedAt"] },
-  cfitems: { table: "cf_items", map: { code: "code", unit: "unit_id", kind: "kind", party: "party", description: "description", ref: "ref", typeCode: "type_code", bucket: "bucket", amount: "amount", total: "total_amount", currency: "currency", priority: "priority", expected: "expected", status: "status", settledOn: "settled_on", note: "note", enteredOn: "entered_on", createdBy: "created_by", createdAt: "created_at", updatedBy: "updated_by", updatedAt: "updated_at" }, ts: ["createdAt", "updatedAt"], nullText: ["expected", "settledOn"] },
+  cfitems: { table: "cf_items", map: { code: "code", unit: "unit_id", kind: "kind", party: "party", description: "description", ref: "ref", typeCode: "type_code", bucket: "bucket", amount: "amount", total: "total_amount", currency: "currency", priority: "priority", expected: "expected", status: "status", settledOn: "settled_on", note: "note", enteredOn: "entered_on", createdBy: "created_by", createdAt: "created_at", updatedBy: "updated_by", updatedAt: "updated_at", deletedAt: "deleted_at", deletedBy: "deleted_by" }, ts: ["createdAt", "updatedAt", "deletedAt"], nullText: ["expected", "settledOn", "deletedAt"] },
   cfbank: { table: "cf_bank", map: { unit: "unit_id", bank: "bank", day: "day", opening: "opening", inflow: "inflow", outflow: "outflow", closing: "closing", note: "note", updatedBy: "updated_by", updatedAt: "updated_at" }, ts: ["updatedAt"] },
-  cflog: { table: "cf_log", map: { unit: "unit_id", day: "day", kind: "kind", bank: "bank", amount: "amount", currency: "currency", party: "party", description: "description", typeCode: "type_code", itemId: "item_id", itemCode: "item_code", note: "note", createdBy: "created_by", createdAt: "created_at", updatedBy: "updated_by", updatedAt: "updated_at" }, ts: ["createdAt", "updatedAt"], nullText: ["itemId"] },
+  cflog: { table: "cf_log", map: { unit: "unit_id", day: "day", kind: "kind", bank: "bank", amount: "amount", currency: "currency", party: "party", description: "description", typeCode: "type_code", itemId: "item_id", itemCode: "item_code", note: "note", createdBy: "created_by", createdAt: "created_at", updatedBy: "updated_by", updatedAt: "updated_at", deletedAt: "deleted_at", deletedBy: "deleted_by" }, ts: ["createdAt", "updatedAt", "deletedAt"], nullText: ["itemId", "deletedAt"] },
   cfplan: { table: "cf_plan", map: { unit: "unit_id", month: "month", kind: "kind", section: "section", label: "label", amount: "amount", note: "note", updatedBy: "updated_by", updatedAt: "updated_at" }, ts: ["updatedAt"] },
   cfsettings: { table: "cf_settings", map: { value: "value", updatedAt: "updated_at" }, ts: ["updatedAt"] },
   history: { table: "row_history", map: { tbl: "tbl", rowId: "row_id", op: "op", old: "old_row", at: "changed_at", by: "changed_by" }, ts: ["at"] },
@@ -298,6 +298,7 @@ function createSupabaseData() {
     saveCfType: (auth, row) => rpc("wbg_cf_save_type", { p_auth: auth, p_row: row }),
     saveCfSetting: (auth, key, value) => rpc("wbg_cf_save_setting", { p_auth: auth, p_key: key, p_value: value }),
     deleteCf: (auth, table, id) => rpc("wbg_cf_delete", { p_auth: auth, p_table: table, p_id: id }),
+    restoreCf: (auth, table, id) => rpc("wbg_cf_restore", { p_auth: auth, p_table: table, p_id: id }),
     saveProject: (auth, row) => rpc("wbg_save_project", { p_auth: auth, p_row: row }),
     deleteProject: (auth, id) => rpc("wbg_delete_project", { p_auth: auth, p_id: id }),
     async uploadEvidence(file, path) {
@@ -619,7 +620,12 @@ function createLocalData() {
     saveCfSetting(auth, key, value) { if (!(auth.role === "super_admin" || auth.unit === "group-finance-function")) return err("not_allowed"); put("cfsettings", { id: key, value: String(value ?? ""), updatedAt: new Date().toISOString() }); return ok(); },
     deleteCf(auth, table, id) {
       const col = { cf_items: "cfitems", cf_plan: "cfplan", cf_bank: "cfbank", cf_log: "cflog" }[table]; if (!col) return err("bad_request");
-      const o = getStore(col).find((x) => x.id === id); if (!o) return ok(); if (!cfWrite(auth, o.unit)) return err("not_allowed"); del(col, id); return ok();
+      const o = getStore(col).find((x) => x.id === id); if (!o) return ok(); if (!cfWrite(auth, o.unit)) return err("not_allowed");
+      if (col === "cfitems" || col === "cflog") put(col, { ...o, deletedAt: new Date().toISOString(), deletedBy: (auth.name || "").trim() }); else del(col, id); return ok();
+    },
+    restoreCf(auth, table, id) {
+      const col = { cf_items: "cfitems", cf_log: "cflog" }[table]; if (!col) return err("bad_request");
+      const o = getStore(col).find((x) => x.id === id); if (!o) return err("bad_request"); if (!cfWrite(auth, o.unit)) return err("not_allowed"); put(col, { ...o, deletedAt: "", deletedBy: "" }); return ok();
     },
     saveProject(auth, row) {
       const unit = row.unit || ""; if (!unit || !String(row.name || "").trim()) return err("bad_request");

@@ -1067,3 +1067,17 @@ tr.dim td{opacity:.55}.fut td{opacity:.9}
 .cf-items .cf-date{width:118px}.cf-items .cf-sel{max-width:130px}
 .cf-items .cf-act{position:sticky;right:0;background:var(--bg);box-shadow:-8px 0 8px -8px rgba(0,0,0,.25);text-align:left;white-space:nowrap}
 .cf-items .cf-act .toolbar{flex-wrap:nowrap}
+.cf-daybar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;padding:0 16px 12px}
+.cf-calwrap{position:relative;display:inline-block}
+.cf-daybtn{font-weight:600}
+.cf-cal{position:absolute;top:calc(100% + 6px);left:0;z-index:40;width:290px;background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:12px;box-shadow:0 12px 32px rgba(0,0,0,.25)}
+.cf-cal-h{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}
+.cf-cal-g{display:grid;grid-template-columns:repeat(7,1fr);gap:2px;text-align:center}
+.cf-cal-g small{opacity:.5;font-size:11px;padding:2px 0}
+.cf-cal-d{border:0;background:transparent;color:inherit;font:inherit;font-size:13px;border-radius:8px;padding:5px 0 3px;cursor:pointer;position:relative}
+.cf-cal-d:hover{background:rgba(128,128,128,.15)}
+.cf-cal-d.today{outline:1px solid #f5c518}.cf-cal-d.sel{background:#f5c518;color:#2a2208;font-weight:700}
+.cf-dots{display:flex;justify-content:center;gap:2px;height:6px;margin-top:1px}
+.dot{display:inline-block;width:5px;height:5px;border-radius:50%}.dot.in{background:#1e9e5a}.dot.out{background:#d9822b}
+.cf-cal-k{margin-top:8px;display:flex;gap:10px;align-items:center}
+.cf-undo{margin:0 16px 12px}
