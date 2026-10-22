@@ -42,11 +42,18 @@ export const dateOf = (it, asOf) => (it.expected ? String(it.expected).slice(0, 
 
 // ---------- bank ----------
 export function bankAt(bank, unit, asOf) {
-  // the latest balance of each bank on or before the date, added up
-  const last = new Map(); let day = "";
-  for (const b of bank) { if (b.unit !== unit || b.day > asOf) continue; const k = b.bank, cur = last.get(k); if (!cur || b.day > cur.day) last.set(k, b); if (b.day > day) day = b.day; }
-  if (!last.size) return { day: "", total: 0, inflow: 0, outflow: 0, opening: 0, has: false };
-  const rows = [...last.values()], on = rows.filter((r) => r.day === day);
+  // The latest balance of each named bank on or before the date, added up. A unit may also report one "All banks" total per day;
+  // it is used only when it is at least as recent as every named bank (never both, or the money is counted twice).
+  const named = new Map(); let all = null, day = "";
+  for (const b of bank) {
+    if (b.unit !== unit || b.day > asOf) continue;
+    if (b.bank === "All banks") { if (!all || b.day > all.day) all = b; }
+    else { const cur = named.get(b.bank); if (!cur || b.day > cur.day) named.set(b.bank, b); }
+    if (b.day > day) day = b.day;
+  }
+  if (!all && !named.size) return { day: "", total: 0, inflow: 0, outflow: 0, opening: 0, has: false };
+  const maxNamed = [...named.values()].reduce((m, r) => (r.day > m ? r.day : m), "");
+  const rows = all && all.day >= maxNamed ? [all] : [...named.values()], on = rows.filter((r) => r.day === day);
   return { day, total: sum(rows, (r) => r.closing), inflow: sum(on, (r) => r.inflow), outflow: sum(on, (r) => r.outflow), opening: sum(on, (r) => r.opening), has: true };
 }
 export const bankDays = (bank, units) => [...new Set(bank.filter((b) => !units || units.includes(b.unit)).map((b) => b.day))].sort();

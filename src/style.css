@@ -1056,3 +1056,9 @@ tr.dim td{opacity:.55}.fut td{opacity:.9}
 .cf-tip{position:absolute;pointer-events:none;background:rgba(30,30,30,.92);color:#fff;border-radius:8px;padding:6px 10px;font-size:12px;line-height:1.4;min-width:96px}
 .cf-result p{margin:6px 0}
 #cfModalRoot .overlay{z-index:60}
+.cf-amt{width:130px;text-align:right}.cf-amt.over{border-color:#c0262d}
+.cf-bank{max-width:170px}
+.cf-fill td{background:rgba(245,197,24,.12)}
+.cf-pills{display:flex;flex-wrap:wrap;gap:4px;margin-top:4px}
+.cf-pill{border:0;border-radius:999px;background:rgba(30,126,74,.12);color:inherit;font:inherit;font-size:12px;padding:2px 9px;cursor:pointer}
+.cf-sheet td:nth-child(n+3):nth-child(-n+4){text-align:left}

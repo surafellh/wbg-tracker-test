@@ -14,7 +14,7 @@ const bucketOf = (v) => { const x = parseInt(String(v).trim(), 10); return x ===
 
 export function createCash(c) {
   const { state, esc } = c;
-  const S = (state.cf = { items: [], types: [], bank: [], log: [], plan: [], settings: {}, loaded: 0, view: "summary", asOf: c.todayIso, scope: "all", bk: { 1: true, 2: true, 3: true }, typeOn: {}, mode: "month", day: c.todayIso, range: 60, busy: false, m: null,
+  const S = (state.cf = { items: [], types: [], bank: [], log: [], plan: [], settings: {}, loaded: 0, view: "summary", asOf: c.todayIso, scope: "all", bk: { 1: true, 2: true, 3: true }, typeOn: {}, mode: "month", day: c.todayIso, range: 60, dr: {}, dq: { kind: "", q: "", show: 30 }, busy: false, m: null,
     lf: { kind: "", type: "", status: "open", q: "", show: 40 }, pf: { from: "", unit: "all" } });
   const A = () => c.auth() || {};
   const finDept = () => (A().departments || []).some((d) => /^fin/i.test(String(d)));
@@ -85,7 +85,9 @@ export function createCash(c) {
       const open = last[k] || 0, close = open + x.e.inn - x.e.out; rows.push({ id: "log|" + k + "|" + x.day, unit: x.unit, bank: x.bank, day: x.day, opening: open, inflow: x.e.inn, outflow: x.e.out, closing: close, synthetic: true }); last[k] = close; }
     return rows;
   }
-  const knownBanks = (unit) => [...new Set([...S.bank.filter((b) => b.unit === unit).map((b) => b.bank), ...S.log.filter((l) => l.unit === unit && l.bank).map((l) => l.bank)])].sort();
+  const knownBanks = (unit) => { const all = [...new Set([...S.bank.filter((b) => b.unit === unit).map((b) => b.bank), ...S.log.filter((l) => l.unit === unit && l.bank).map((l) => l.bank)])].sort(); const named = all.filter((b) => b !== "All banks"); return named.length ? named : all; };
+  // The bank a unit used last for money in or out: the default on the day sheet.
+  const lastBank = (unit, kind) => { const l = S.log.filter((q) => q.unit === unit && q.bank && q.kind === kind).sort((a, b) => b.day.localeCompare(a.day))[0]; return l ? l.bank : knownBanks(unit)[0] || ""; };
   const planDate = (it, asOf) => (it.expected ? String(it.expected).slice(0, 10) : addDays(it.enteredOn && it.enteredOn > "2000" ? it.enteredOn : asOf, IMPLIED_DAYS[it.bucket] || 30));
 
   // ---------------- shared pieces ----------------
@@ -215,26 +217,45 @@ export function createCash(c) {
       <tr class="tot"><td><b>Total</b></td><td class="num small">${tot.n}</td>${cell(tot)}</tr></tbody></table></div>`;
   }
 
-  // ---------------- Daily log ----------------
+  // ---------------- Daily log: one sheet for the day ----------------
+  // Enter the day's cash against the planned lines (amount + bank on the line itself), add anything that was not planned, check the bank closing, save.
+  const draftOf = (it) => { const d = S.dr[it.id] || {}; return { amt: d.amt ?? "", bank: d.bank ?? lastBank(it.unit, it.kind) }; };
+  const draftCount = () => Object.entries(S.dr).filter(([id, d]) => num(d.amt) > 0 && S.items.some((i) => i.id === id)).length;
   function renderLog() {
-    const units = scopeUnits(), day = S.day, rows = S.log.filter((l) => l.day === day && units.includes(l.unit)).sort((a, b) => a.unit.localeCompare(b.unit) || a.kind.localeCompare(b.kind) * -1 || (a.bank || "").localeCompare(b.bank || ""));
+    const units = scopeUnits(), day = S.day, q = S.dq.q.trim().toLowerCase(), kindF = S.dq.kind;
+    const rows = S.log.filter((l) => l.day === day && units.includes(l.unit)).sort((a, b) => a.unit.localeCompare(b.unit) || b.kind.localeCompare(a.kind) || (a.bank || "").localeCompare(b.bank || ""));
     const totIn = sum(rows.filter((r) => r.kind === "in"), (r) => etb(r, fx())), totOut = sum(rows.filter((r) => r.kind === "out"), (r) => etb(r, fx()));
-    // bank balances for the day: opening is the last closing before this day, in and out come from the log
-    const balRows = []; for (const u of units) { const banks = [...new Set([...knownBanks(u), ...rows.filter((r) => r.unit === u && r.bank).map((r) => r.bank)])]; for (const bk of banks) {
-      const prev = S.bank.filter((b) => b.unit === u && b.bank === bk && b.day < day).sort((a, b) => b.day.localeCompare(a.day))[0], saved = S.bank.find((b) => b.unit === u && b.bank === bk && b.day === day), opening = saved ? num(saved.opening) : prev ? num(prev.closing) : 0;
+    const todayOf = (id) => rows.filter((l) => l.itemId === id);
+    const lines = effItems(day).filter((it) => it.status === "open" && units.includes(it.unit) && canWrite(it.unit) && (!kindF || it.kind === kindF) && (!q || `${it.code} ${it.party} ${it.description} ${it.ref} ${it.typeCode}`.toLowerCase().includes(q)))
+      .sort((a, b) => (todayOf(b.id).length ? 1 : 0) - (todayOf(a.id).length ? 1 : 0) || (S.dr[b.id] && num(S.dr[b.id].amt) > 0 ? 1 : 0) - (S.dr[a.id] && num(S.dr[a.id].amt) > 0 ? 1 : 0) || a.bucket - b.bucket || etb(b, fx()) - etb(a, fx()));
+    const shown = lines.slice(0, S.dq.show), n = draftCount();
+    const bankSel = (it, d) => { const banks = knownBanks(it.unit), cur = d.bank && !banks.includes(d.bank) ? [d.bank, ...banks] : banks; return banks.length || d.bank ? `<select class="cf-bank" data-dr="bank" data-id="${esc(it.id)}" aria-label="Bank">${cur.map((b) => `<option ${b === d.bank ? "selected" : ""}>${esc(b)}</option>`).join("")}</select>` : `<span class="small muted">add a bank below</span>`; };
+    const sheet = shown.map((it) => { const d = draftOf(it), done = todayOf(it.id), over = num(d.amt) > num(it.amount) + 0.005;
+      return `<tr class="${num(d.amt) > 0 ? "cf-fill" : ""}"><td><span class="tag">${esc(it.code || "")}</span></td><td><b>${esc(it.party || it.description || "")}</b>${it.party && it.description ? `<div class="small muted">${esc(it.description)}</div>` : ""}
+        ${done.length ? `<div class="cf-pills">${done.map((l) => `<button type="button" class="cf-pill" data-cf="log-open" data-id="${esc(l.id)}" title="Recorded today. Click to edit">${it.kind === "in" ? "+" : "−"}${plain(l.amount)} · ${esc(l.bank || "")}</button>`).join("")}</div>` : ""}</td>
+        <td class="small" title="${esc(typeHint(it.typeCode))}">${esc(it.typeCode || "No type")}</td><td><span class="pill ${it.kind === "in" ? "s-done" : "s-not"}">${it.kind === "in" ? "Collect" : "Pay"}</span> <span class="small muted">${bucketCode(it.kind, it.bucket)}</span></td>
+        <td class="num">${money(it.amount, false)}${it.currency !== "ETB" ? ` <span class="tag">${esc(it.currency)}</span>` : ""}</td>
+        <td class="num"><input type="number" min="0" step="any" class="cf-amt${over ? " over" : ""}" data-dr="amt" data-id="${esc(it.id)}" value="${esc(String(d.amt))}" placeholder="0" aria-label="Cash today"></td><td>${bankSel(it, d)}</td></tr>`; }).join("");
+    // bank balances: opening is the last closing before this day, in and out come from the log
+    const eb = effBank(), balRows = []; for (const u of units) { const banks = [...new Set([...knownBanks(u), ...rows.filter((r) => r.unit === u && r.bank).map((r) => r.bank)])]; for (const bk of banks) {
+      const prev = eb.filter((b) => b.unit === u && b.bank === bk && b.day < day).sort((a, b) => b.day.localeCompare(a.day))[0], saved = S.bank.find((b) => b.unit === u && b.bank === bk && b.day === day), opening = saved ? num(saved.opening) : prev ? num(prev.closing) : 0;
       const inn = sum(rows.filter((r) => r.unit === u && r.bank === bk && r.kind === "in"), (r) => num(r.amount)), out = sum(rows.filter((r) => r.unit === u && r.bank === bk && r.kind === "out"), (r) => num(r.amount));
       if (!prev && !saved && !inn && !out) continue; balRows.push({ unit: u, bank: bk, opening, inn, out, calc: opening + inn - out, saved }); } }
     const balHtml = balRows.map((b, i) => `<tr><td>${esc(ushort(b.unit))}</td><td>${esc(b.bank)}</td><td class="num">${money(b.opening)}</td><td class="num">${money(b.inn)}</td><td class="num">${money(b.out)}</td>
       <td class="num"><input type="number" step="any" class="cf-close" data-bal="${i}" data-unit="${esc(b.unit)}" data-bank="${esc(b.bank)}" data-open="${b.opening}" data-in="${b.inn}" data-out="${b.out}" value="${b.saved ? num(b.saved.closing) : Math.round(b.calc * 100) / 100}" ${canWrite(b.unit) ? "" : "disabled"} aria-label="Closing balance"></td>
       <td class="small">${b.saved ? (Math.abs(num(b.saved.closing) - b.calc) > 0.5 ? `<span class="neg">differs from the log by ${plain(num(b.saved.closing) - b.calc)}</span>` : '<span class="ok">saved</span>') : '<span class="muted">not saved</span>'}</td></tr>`).join("");
-    const list = rows.map((l) => `<tr class="clickable" data-cf="log-open" data-id="${esc(l.id)}" tabindex="0"><td class="small">${esc(ushort(l.unit))}</td><td><span class="pill ${l.kind === "in" ? "s-done" : "s-not"}">${l.kind === "in" ? "In" : "Out"}</span></td><td>${esc(l.bank || "")}</td>
-      <td><b>${esc(l.party || l.description || "")}</b>${l.party && l.description ? `<div class="small muted">${esc(l.description)}</div>` : ""}</td><td class="small">${l.itemCode ? `<span class="tag">${esc(l.itemCode)}</span>` : '<span class="muted">not linked</span>'}</td><td class="num">${money(l.amount, false)}${l.currency !== "ETB" ? ` <span class="tag">${esc(l.currency)}</span>` : ""}</td></tr>`).join("");
-    const prevDay = S.log.map((l) => l.day).filter((d) => d < day).sort().pop();
-    return `<div class="cf-body"><div class="cf-filters"><label class="small muted">Day <input type="date" data-cfc="day" value="${esc(day)}"></label><button class="btn small" data-cf="day-shift" data-v="-1" aria-label="Previous day">‹</button><button class="btn small" data-cf="day-shift" data-v="1" aria-label="Next day">›</button><button class="btn small" data-cf="day-today">Today</button>${allUnits().length > 1 ? unitSel(S.scope) : ""}<span style="margin-left:auto" class="cf-group">${excelBar()}${writableUnits().length ? `<button class="btn primary" data-cf="log-new">+ Add cash movement</button>` : ""}</span></div>
-      <section class="cf-card"><h3>What moved on ${esc(dShort(day))}</h3><div class="small muted">Record each receipt and payment with the bank. Link it to a planned line with its code, so a part payment is traced to its line.</div>
-        ${rows.length ? `<div class="cf-stats slim">${stat("In", compact(totIn), "", "good")}${stat("Out", compact(totOut), "", "warn")}${stat("Net", `<span class="${totIn - totOut < 0 ? "neg" : ""}">${compact(totIn - totOut)}</span>`)}</div><div class="scroll"><table class="cf-table cf-list"><thead><tr><th>Unit</th><th></th><th>Bank</th><th>Party</th><th>Line</th><th>Amount</th></tr></thead><tbody>${list}</tbody></table></div>` : `<div class="empty"><b>Nothing recorded for this day</b>Press “+ Add cash movement”.${prevDay ? ` Last entry: <a href="#" data-cf="day-pick" data-v="${esc(prevDay)}">${esc(dShort(prevDay))}</a>.` : ""}</div>`}</section>
-      <section class="cf-card"><h3>Bank balances at the end of the day</h3><div class="small muted">Opening is yesterday's closing, plus the day's movements. Check the closing against the bank statement, then save.</div>
-        ${balRows.length ? `<div class="scroll"><table class="cf-table"><thead><tr><th>Unit</th><th>Bank</th><th>Opening</th><th>In</th><th>Out</th><th>Closing</th><th></th></tr></thead><tbody>${balHtml}</tbody></table></div><div class="toolbar">${writableUnits().length ? `<button class="btn primary" data-cf="bal-save">Save balances</button>` : ""}${writableUnits().length ? `<button class="btn" data-cf="bank-new">+ Bank account</button>` : ""}</div>` : `<div class="empty"><b>No bank accounts yet</b>${writableUnits().length ? `<button class="btn" data-cf="bank-new">+ Add a bank balance</button>` : ""}</div>`}</section></div>`;
+    const other = rows.filter((l) => !l.itemId);
+    const otherHtml = other.map((l) => `<tr class="clickable" data-cf="log-open" data-id="${esc(l.id)}" tabindex="0"><td class="small">${esc(ushort(l.unit))}</td><td><span class="pill ${l.kind === "in" ? "s-done" : "s-not"}">${l.kind === "in" ? "In" : "Out"}</span></td><td>${esc(l.bank || "")}</td><td><b>${esc(l.party || l.description || "")}</b>${l.party && l.description ? `<div class="small muted">${esc(l.description)}</div>` : ""}</td><td class="num">${money(l.amount, false)}</td></tr>`).join("");
+    const w = writableUnits().length > 0;
+    return `<div class="cf-body"><div class="cf-filters"><label class="small muted">Day <input type="date" data-cfc="day" value="${esc(day)}"></label><button class="btn small" data-cf="day-shift" data-v="-1" aria-label="Previous day">‹</button><button class="btn small" data-cf="day-shift" data-v="1" aria-label="Next day">›</button><button class="btn small" data-cf="day-today">Today</button>${allUnits().length > 1 ? unitSel(S.scope) : ""}<span style="margin-left:auto" class="cf-group">${excelBar()}</span></div>
+      <div class="cf-stats slim">${stat("Received", compact(totIn), "", "good")}${stat("Paid", compact(totOut), "", "warn")}${stat("Net", `<span class="${totIn - totOut < 0 ? "neg" : ""}">${compact(totIn - totOut)}</span>`)}</div>
+      <section class="cf-card"><div class="cf-split"><div><h3>Cash against planned lines</h3><div class="small muted">Type what was collected or paid on ${esc(dShort(day))} next to the line, choose the bank, then save. Fill several lines and save once. A second movement on the same line: save, then enter it again.</div></div>${w ? `<button class="btn primary" data-cf="dr-save" ${n ? "" : "disabled"} id="cfDrSave">${n ? `Save ${n} entr${n > 1 ? "ies" : "y"}` : "Save entries"}</button>` : ""}</div>
+        <div class="cf-filters" style="margin:8px 0"><span class="cf-group">${chip(!kindF, 'data-cf="dkind" data-v=""', "All")}${chip(kindF === "in", 'data-cf="dkind" data-v="in"', "Collections")}${chip(kindF === "out", 'data-cf="dkind" data-v="out"', "Payments")}</span><input type="search" data-cfd="q" placeholder="Search party, code, type" value="${esc(S.dq.q)}" aria-label="Search"><span class="small muted">${lines.length} open line${lines.length === 1 ? "" : "s"}</span></div>
+        ${shown.length ? `<div class="scroll"><table class="cf-table cf-list cf-sheet"><thead><tr><th>Code</th><th>Party</th><th>Type</th><th></th><th>Left</th><th>Cash today</th><th>Bank</th></tr></thead><tbody>${sheet}</tbody></table></div>${lines.length > shown.length ? `<div class="toolbar"><button class="btn" data-cf="dmore">Show more</button></div>` : ""}` : `<div class="empty"><b>No open lines${q ? " match" : ""}</b>${q ? "Clear the search." : "Add lines under Collections and payments."}</div>`}</section>
+      <section class="cf-card"><div class="cf-split"><div><h3>Other cash that moved</h3><div class="small muted">Money that was not in a planned line.</div></div>${w ? `<button class="btn" data-cf="log-new">+ Add cash movement</button>` : ""}</div>
+        ${other.length ? `<div class="scroll"><table class="cf-table"><thead><tr><th>Unit</th><th></th><th>Bank</th><th>Party</th><th>Amount</th></tr></thead><tbody>${otherHtml}</tbody></table></div>` : `<div class="small muted">Nothing.</div>`}</section>
+      <section class="cf-card"><h3>Bank balances at the end of the day</h3><div class="small muted">Opening is yesterday's closing, plus the day's movements. Check the closing against the bank statement, then save. It can be done the next morning.</div>
+        ${balRows.length ? `<div class="scroll"><table class="cf-table"><thead><tr><th>Unit</th><th>Bank</th><th>Opening</th><th>In</th><th>Out</th><th>Closing</th><th></th></tr></thead><tbody>${balHtml}</tbody></table></div><div class="toolbar">${w ? `<button class="btn primary" data-cf="bal-save">Save balances</button><button class="btn" data-cf="bank-new">+ Bank account</button>` : ""}</div>` : `<div class="empty"><b>No bank accounts yet</b>${w ? `<button class="btn" data-cf="bank-new">+ Add a bank balance</button>` : ""}</div>`}</section></div>`;
   }
 
   // ---------------- Collections and payments ----------------
@@ -420,6 +441,16 @@ export function createCash(c) {
     else if (x === "item-del") { if (!m.confirmDel) { m.confirmDel = true; drawModal(); return; } if (await run(() => c.api().deleteCf(A(), "cf_items", m.row.id), "Deleted")) closeModal(); }
     else if (x === "rec" && it) { const left = Math.max(0, num(it.amount) - loggedFor(it.id)); S.m = { type: "log", isNew: true, row: { unit: it.unit, day: c.todayIso, kind: it.kind, bank: knownBanks(it.unit)[0] || "", amount: left, currency: it.currency, party: it.party, description: it.description, typeCode: it.typeCode, itemId: it.id, itemCode: it.code, note: "" } }; drawModal(); }
     // log
+    else if (x === "dkind") { S.dq.kind = el.dataset.v; S.dq.show = 30; c.render(); }
+    else if (x === "dmore") { S.dq.show += 30; c.render(); }
+    else if (x === "dr-save") {
+      const ents = Object.entries(S.dr).map(([id, d]) => ({ it: S.items.find((q) => q.id === id), d })).filter((o) => o.it && num(o.d.amt) > 0 && canWrite(o.it.unit));
+      if (!ents.length) return; const noBank = ents.find((o) => !(o.d.bank || lastBank(o.it.unit, o.it.kind))); if (noBank) { c.toast("Choose the bank for " + (noBank.it.party || noBank.it.code)); return; }
+      const ok = await run(async () => { for (const { it, d } of ents) {
+        const res = await c.api().saveCfLog(A(), { unit: it.unit, day: S.day, kind: it.kind, bank: d.bank || lastBank(it.unit, it.kind), amount: num(d.amt), currency: it.currency, party: it.party, description: it.description, typeCode: it.typeCode, itemId: it.id, itemCode: it.code, note: "" });
+        if (res && res.error) return res; const e = await syncLine(it.id, num(d.amt), S.day); if (e && e.error) return e; } return { ok: true }; }, `${ents.length} entr${ents.length > 1 ? "ies" : "y"} saved`);
+      if (ok) { ents.forEach((o) => delete S.dr[o.it.id]); c.render(); }
+    }
     else if (x === "log-new") { const u = writableUnits().includes(S.scope) ? S.scope : writableUnits()[0]; S.m = { type: "log", isNew: true, row: { unit: u, day: S.day, kind: "in", bank: knownBanks(u)[0] || "", amount: "", currency: "ETB", party: "", description: "", typeCode: "", itemId: "", itemCode: "", note: "" } }; drawModal(); }
     else if (x === "log-open") { const l = S.log.find((q) => q.id === id); if (l && canWrite(l.unit)) { S.m = { type: "log", isNew: false, row: clone(l) }; drawModal(); } }
     else if (x === "log-save") {
@@ -492,8 +523,9 @@ export function createCash(c) {
   const main = document.getElementById("main");
   main.addEventListener("click", (e) => { if (e.target.closest("select,input,label")) return; const el = e.target.closest("[data-cf]"); if (el) { if (el.tagName === "A") e.preventDefault(); onAction(el); } });
   main.addEventListener("keydown", (e) => { const el = e.target.closest && e.target.closest("tr[data-cf]"); if (el && (e.key === "Enter" || e.key === " ") && !e.target.closest("select,input,button")) { e.preventDefault(); onAction(el); } });
-  main.addEventListener("change", (e) => { const t = e.target; if (t.id === "cfUpload") { if (t.files[0]) uploadFile(t.files[0]); t.value = ""; return; } if (!t.dataset) return; if (t.dataset.cfq) onQuick(t); else if (t.dataset.cfc) onControl(t); else if (t.dataset.cff && t.dataset.cff !== "q") onFilter(t); });
-  main.addEventListener("input", (e) => { const t = e.target; if (t.dataset && t.dataset.cff === "q") { clearTimeout(onFilter.t); onFilter.t = setTimeout(() => onFilter(t), 250); } });
+  main.addEventListener("change", (e) => { const t = e.target; if (t.id === "cfUpload") { if (t.files[0]) uploadFile(t.files[0]); t.value = ""; return; } if (!t.dataset) return; if (t.dataset.dr) { onDraft(t); return; } if (t.dataset.cfq) onQuick(t); else if (t.dataset.cfc) onControl(t); else if (t.dataset.cff && t.dataset.cff !== "q") onFilter(t); });
+  const onDraft = (t) => { const d = S.dr[t.dataset.id] || (S.dr[t.dataset.id] = {}); d[t.dataset.dr] = t.value; const b = document.getElementById("cfDrSave"), n = draftCount(); if (b) { b.disabled = !n; b.textContent = n ? `Save ${n} entr${n > 1 ? "ies" : "y"}` : "Save entries"; } const row = t.closest("tr"); if (row) row.classList.toggle("cf-fill", num(d.amt) > 0); };
+  main.addEventListener("input", (e) => { const t = e.target; if (t.dataset && t.dataset.dr) { onDraft(t); return; } if (t.dataset && t.dataset.cfd === "q") { clearTimeout(onFilter.d); onFilter.d = setTimeout(() => { S.dq.q = t.value; S.dq.show = 30; c.render(); const e2 = document.querySelector('[data-cfd="q"]'); if (e2) { e2.focus(); e2.setSelectionRange(e2.value.length, e2.value.length); } }, 250); return; } if (t.dataset && t.dataset.cff === "q") { clearTimeout(onFilter.t); onFilter.t = setTimeout(() => onFilter(t), 250); } });
   main.addEventListener("pointermove", hover); main.addEventListener("pointerleave", unhover, true); main.addEventListener("pointerdown", hover);
   document.addEventListener("keydown", (e) => { if (e.key === "Escape" && S.m) closeModal(); });
 
