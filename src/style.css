@@ -1063,3 +1063,7 @@ tr.dim td{opacity:.55}.fut td{opacity:.9}
 .cf-pill{border:0;border-radius:999px;background:rgba(30,126,74,.12);color:inherit;font:inherit;font-size:12px;padding:2px 9px;cursor:pointer}
 .cf-sheet td:nth-child(n+3):nth-child(-n+4){text-align:left}
 .cf-bk{width:130px;text-align:right}.cf-bktable td{vertical-align:top}.cf-bkchk{margin-top:2px}
+.cf-items th:nth-child(n+3):nth-child(-n+5),.cf-items td:nth-child(n+3):nth-child(-n+5){text-align:left}
+.cf-items .cf-date{width:118px}.cf-items .cf-sel{max-width:130px}
+.cf-items .cf-act{position:sticky;right:0;background:var(--bg);box-shadow:-8px 0 8px -8px rgba(0,0,0,.25);text-align:left;white-space:nowrap}
+.cf-items .cf-act .toolbar{flex-wrap:nowrap}
