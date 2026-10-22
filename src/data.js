@@ -28,8 +28,9 @@ const COLLECTIONS = {
   actions: { table: "corrective_actions", map: { unit: "unit_id", week: "week", source: "source", issue: "issue", action: "action", owner: "owner", due: "due", status: "status", taskTitle: "task_title", taskRef: "task_ref", notes: "notes", createdBy: "created_by", createdAt: "created_at", updatedBy: "updated_by", updatedAt: "updated_at", closedAt: "closed_at" }, ts: ["createdAt", "updatedAt", "closedAt"], nullText: ["week", "due", "closedAt"] },
   projects: { table: "projects", map: { code: "code", name: "name", type: "type", unit: "unit_id", directorate: "directorate", sponsor: "sponsor", manager: "manager", budget: "budget", start: "start_date", end: "end_date", revisedEnd: "revised_end", actualEnd: "actual_end", strategicLink: "strategic_link", status: "status", rag: "rag", mode: "mode", involved: "involved", phases: "phases", updates: "updates", risks: "risks", decisions: "decisions", notes: "notes", createdBy: "created_by", createdAt: "created_at", updatedBy: "updated_by", updatedAt: "updated_at" }, ts: ["createdAt", "updatedAt"], nullText: ["start", "end", "revisedEnd", "actualEnd"] },
   cftypes: { table: "cf_types", map: { code: "code", label: "label", kind: "kind", section: "section", group: "grp", description: "description", expected: "expected", confirmed: "confirmed", active: "active", sort: "sort", updatedAt: "updated_at", updatedBy: "updated_by" }, ts: ["updatedAt"] },
-  cfitems: { table: "cf_items", map: { unit: "unit_id", kind: "kind", party: "party", description: "description", ref: "ref", typeCode: "type_code", bucket: "bucket", amount: "amount", currency: "currency", priority: "priority", expected: "expected", status: "status", settledOn: "settled_on", note: "note", enteredOn: "entered_on", createdBy: "created_by", createdAt: "created_at", updatedBy: "updated_by", updatedAt: "updated_at" }, ts: ["createdAt", "updatedAt"], nullText: ["expected", "settledOn"] },
+  cfitems: { table: "cf_items", map: { code: "code", unit: "unit_id", kind: "kind", party: "party", description: "description", ref: "ref", typeCode: "type_code", bucket: "bucket", amount: "amount", currency: "currency", priority: "priority", expected: "expected", status: "status", settledOn: "settled_on", note: "note", enteredOn: "entered_on", createdBy: "created_by", createdAt: "created_at", updatedBy: "updated_by", updatedAt: "updated_at" }, ts: ["createdAt", "updatedAt"], nullText: ["expected", "settledOn"] },
   cfbank: { table: "cf_bank", map: { unit: "unit_id", bank: "bank", day: "day", opening: "opening", inflow: "inflow", outflow: "outflow", closing: "closing", note: "note", updatedBy: "updated_by", updatedAt: "updated_at" }, ts: ["updatedAt"] },
+  cflog: { table: "cf_log", map: { unit: "unit_id", day: "day", kind: "kind", bank: "bank", amount: "amount", currency: "currency", party: "party", description: "description", typeCode: "type_code", itemId: "item_id", itemCode: "item_code", note: "note", createdBy: "created_by", createdAt: "created_at", updatedBy: "updated_by", updatedAt: "updated_at" }, ts: ["createdAt", "updatedAt"], nullText: ["itemId"] },
   cfplan: { table: "cf_plan", map: { unit: "unit_id", month: "month", kind: "kind", section: "section", label: "label", amount: "amount", note: "note", updatedBy: "updated_by", updatedAt: "updated_at" }, ts: ["updatedAt"] },
   cfsettings: { table: "cf_settings", map: { value: "value", updatedAt: "updated_at" }, ts: ["updatedAt"] },
   history: { table: "row_history", map: { tbl: "tbl", rowId: "row_id", op: "op", old: "old_row", at: "changed_at", by: "changed_by" }, ts: ["at"] },
@@ -135,7 +136,7 @@ function createSupabaseData() {
   let roleNow = "", viewProfile = null;   // employees read plans through a function that hides other departments; viewProfile is the role Group Strategy is viewing as
   const live = new Map();
   const bump = (table) => (live.get(table) || new Set()).forEach((f) => f());
-  const bumpAll = () => ["plans", "units", "activity", "change_requests", "row_history", "support_requests", "feedback", "corrective_actions", "projects", "cf_types", "cf_items", "cf_bank", "cf_plan", "cf_settings"].forEach(bump);
+  const bumpAll = () => ["plans", "units", "activity", "change_requests", "row_history", "support_requests", "feedback", "corrective_actions", "projects", "cf_types", "cf_items", "cf_bank", "cf_log", "cf_plan", "cf_settings"].forEach(bump);
 
   const fromRow = (cfg, row) => {
     const doc = {};
@@ -292,6 +293,7 @@ function createSupabaseData() {
     deleteAction: (auth, id) => rpc("wbg_delete_action", { p_auth: auth, p_id: id }),
     saveCfItem: (auth, row) => rpc("wbg_cf_save_item", { p_auth: auth, p_row: row }),
     saveCfBank: (auth, row) => rpc("wbg_cf_save_bank", { p_auth: auth, p_row: row }),
+    saveCfLog: (auth, row) => rpc("wbg_cf_save_log", { p_auth: auth, p_row: row }),
     saveCfPlan: (auth, row) => rpc("wbg_cf_save_plan", { p_auth: auth, p_row: row }),
     saveCfType: (auth, row) => rpc("wbg_cf_save_type", { p_auth: auth, p_row: row }),
     saveCfSetting: (auth, key, value) => rpc("wbg_cf_save_setting", { p_auth: auth, p_key: key, p_value: value }),
@@ -324,9 +326,9 @@ function createSupabaseData() {
 // Local mode: everything lives in this browser. Same rules as the database, for trying the app on localhost.
 // ---------------------------------------------------------------------------
 function createLocalData() {
-  const KEYS = { units: "wbg_local_units", plans: "wbg_local_plans", activity: "wbg_local_activity", requests: "wbg_local_requests", history: "wbg_local_history", support: "wbg_local_support", feedback: "wbg_local_feedback", actions: "wbg_local_actions", projects: "wbg_local_projects", cftypes: "wbg_local_cftypes", cfitems: "wbg_local_cfitems", cfbank: "wbg_local_cfbank", cfplan: "wbg_local_cfplan", cfsettings: "wbg_local_cfsettings" };
+  const KEYS = { units: "wbg_local_units", plans: "wbg_local_plans", activity: "wbg_local_activity", requests: "wbg_local_requests", history: "wbg_local_history", support: "wbg_local_support", feedback: "wbg_local_feedback", actions: "wbg_local_actions", projects: "wbg_local_projects", cftypes: "wbg_local_cftypes", cfitems: "wbg_local_cfitems", cfbank: "wbg_local_cfbank", cflog: "wbg_local_cflog", cfplan: "wbg_local_cfplan", cfsettings: "wbg_local_cfsettings" };
   const DOMAINS = ["wagwagoelectric.com", "geezinstitute.com", "wanzalogistics.com", "niyatconsultancy.com", "niyatconsultnacy.com", "trucksload.net"];
-  const SEEDS = { units: SEED_UNITS, plans: SEED_PLANS, activity: SEED_ACTIVITY, requests: [], history: [], support: SEED_SUPPORT, feedback: [], actions: [], projects: [], cftypes: DEFAULT_TYPES, cfitems: [], cfbank: [], cfplan: [], cfsettings: [] };
+  const SEEDS = { units: SEED_UNITS, plans: SEED_PLANS, activity: SEED_ACTIVITY, requests: [], history: [], support: SEED_SUPPORT, feedback: [], actions: [], projects: [], cftypes: DEFAULT_TYPES, cfitems: [], cfbank: [], cflog: [], cfplan: [], cfsettings: [] };
   const listeners = new Map();
   const getStore = (c) => {
     try {
@@ -582,12 +584,19 @@ function createLocalData() {
       const old = row.id ? getStore("cfitems").find((x) => x.id === row.id) : null, name = (auth.name || "").trim(), now = new Date().toISOString();
       const rec = { party: "", description: "", ref: "", typeCode: "", currency: "ETB", priority: "Normal", expected: "", status: "open", settledOn: "", note: "", enteredOn: now.slice(0, 10), ...(old || {}), ...row, bucket: Number(row.bucket), amount: Number(row.amount) || 0,
         id: old ? old.id : (row.id || Date.now().toString(36) + Math.random().toString(36).slice(2, 8)), unit, createdBy: old ? old.createdBy : name, createdAt: old ? old.createdAt : now, updatedBy: name, updatedAt: now };
+      if (!rec.code) { const n = getStore("cfitems").length + 1; rec.code = "CF-" + String(n).padStart(5, "0"); }
       put("cfitems", rec); return ok({ id: rec.id });
     },
     saveCfBank(auth, row) {
       const unit = row.unit || "", day = row.day || ""; if (!unit || !day) return err("bad_request"); if (!cfWrite(auth, unit)) return err("not_allowed");
       const bank = (row.bank || "").trim() || "All banks", id = `${unit}|${bank}|${day}`;
       put("cfbank", { opening: 0, inflow: 0, outflow: 0, closing: 0, note: "", ...row, bank, id, unit, day, updatedBy: (auth.name || "").trim(), updatedAt: new Date().toISOString() }); return ok({ id });
+    },
+    saveCfLog(auth, row) {
+      const unit = row.unit || ""; if (!unit || !row.day || !["in", "out"].includes(row.kind)) return err("bad_request"); if (!cfWrite(auth, unit)) return err("not_allowed");
+      const old = row.id ? getStore("cflog").find((x) => x.id === row.id) : null, name = (auth.name || "").trim(), now = new Date().toISOString();
+      const rec = { bank: "", currency: "ETB", party: "", description: "", typeCode: "", itemId: "", itemCode: "", note: "", ...(old || {}), ...row, amount: Number(row.amount) || 0, id: old ? old.id : (row.id || Date.now().toString(36) + Math.random().toString(36).slice(2, 8)), unit, createdBy: old ? old.createdBy : name, createdAt: old ? old.createdAt : now, updatedBy: name, updatedAt: now };
+      put("cflog", rec); return ok({ id: rec.id });
     },
     saveCfPlan(auth, row) {
       const unit = row.unit || ""; if (!unit || !/^\d{4}-\d{2}$/.test(row.month || "") || !["in", "out"].includes(row.kind)) return err("bad_request"); if (!cfWrite(auth, unit)) return err("not_allowed");
@@ -609,7 +618,7 @@ function createLocalData() {
     },
     saveCfSetting(auth, key, value) { if (!(auth.role === "super_admin" || auth.unit === "group-finance-function")) return err("not_allowed"); put("cfsettings", { id: key, value: String(value ?? ""), updatedAt: new Date().toISOString() }); return ok(); },
     deleteCf(auth, table, id) {
-      const col = { cf_items: "cfitems", cf_plan: "cfplan", cf_bank: "cfbank" }[table]; if (!col) return err("bad_request");
+      const col = { cf_items: "cfitems", cf_plan: "cfplan", cf_bank: "cfbank", cf_log: "cflog" }[table]; if (!col) return err("bad_request");
       const o = getStore(col).find((x) => x.id === id); if (!o) return ok(); if (!cfWrite(auth, o.unit)) return err("not_allowed"); del(col, id); return ok();
     },
     saveProject(auth, row) {

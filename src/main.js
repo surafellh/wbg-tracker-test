@@ -1057,7 +1057,7 @@ applyPlugin(jsPDF); window.jspdf = { jsPDF }; window.XLSX = XLSX;
   const PJ = createProjects({ state, esc, fmt, sortedUnits: () => sortedUnits(), unitName: id => unitName(id), todayIso, toast: (...a) => toast(...a), errText: e => errText(e), render: () => render(), db: () => db, api: () => api, auth: () => auth(),
     libsReady: k => libsReady(k), sheetFromRows: (...a) => sheetFromRows(...a), writeXlsx: (...a) => writeXlsx(...a), XLSX: () => XLSX });
   const CF = createCash({ state, esc, fmt, sortedUnits: () => sortedUnits(), unitName: id => unitName(id), todayIso, toast: (...a) => toast(...a), errText: e => errText(e), render: () => render(), db: () => db, api: () => api, auth: () => auth(),
-    libsReady: k => libsReady(k), sheetFromRows: (...a) => sheetFromRows(...a), writeXlsx: (...a) => writeXlsx(...a), XLSX: () => XLSX });
+    libsReady: k => libsReady(k), sheetFromRows: (...a) => sheetFromRows(...a), writeXlsx: (...a) => writeXlsx(...a), saveFile: (...a) => save(...a), XLSX: () => XLSX });
   // counts follow the chosen level: deliverables (rolled up) or the individual tasks behind them
   const levelPlan = p => !p ? p : (state.level === "deliverables" ? rolledPlan(p) : leafPlan(p));
   const realTasks = p => ((p && levelPlan(p).tasks) || []).filter(t => t.kind !== "KPI / OKR" && t.status !== "Closed");

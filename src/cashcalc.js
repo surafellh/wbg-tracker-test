@@ -42,11 +42,12 @@ export const dateOf = (it, asOf) => (it.expected ? String(it.expected).slice(0, 
 
 // ---------- bank ----------
 export function bankAt(bank, unit, asOf) {
-  let day = "";
-  for (const b of bank) if (b.unit === unit && b.day <= asOf && b.day > day) day = b.day;
-  if (!day) return { day: "", total: 0, inflow: 0, outflow: 0, opening: 0, has: false };
-  const rows = bank.filter((b) => b.unit === unit && b.day === day);
-  return { day, total: sum(rows, (r) => r.closing), inflow: sum(rows, (r) => r.inflow), outflow: sum(rows, (r) => r.outflow), opening: sum(rows, (r) => r.opening), has: true };
+  // the latest balance of each bank on or before the date, added up
+  const last = new Map(); let day = "";
+  for (const b of bank) { if (b.unit !== unit || b.day > asOf) continue; const k = b.bank, cur = last.get(k); if (!cur || b.day > cur.day) last.set(k, b); if (b.day > day) day = b.day; }
+  if (!last.size) return { day: "", total: 0, inflow: 0, outflow: 0, opening: 0, has: false };
+  const rows = [...last.values()], on = rows.filter((r) => r.day === day);
+  return { day, total: sum(rows, (r) => r.closing), inflow: sum(on, (r) => r.inflow), outflow: sum(on, (r) => r.outflow), opening: sum(on, (r) => r.opening), has: true };
 }
 export const bankDays = (bank, units) => [...new Set(bank.filter((b) => !units || units.includes(b.unit)).map((b) => b.day))].sort();
 
