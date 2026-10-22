@@ -892,14 +892,13 @@ export const GUIDES = [
   },
   {
     id: "cash-enter", g: "cf", pages: ["cashflow"], title: "Entering the daily cash log",
-    kw: "daily log movement bank credited debited planned line code part payment collected paid closing balance",
+    kw: "daily log bank movement in out opening closing total itemize trace planned line code part payment collected paid next morning",
     intro: "Finance records what cash really moved each day, and in which bank. Link a movement to a planned line with its code, so a part payment is traced to its line.",
     steps: [
       "Open **Daily log** and pick the day. It can be filled at the end of the day or the next morning.",
-      "Next to each planned line type the amount collected or paid and choose the bank. Fill as many lines as you like, then press **Save entries**.",
-      "A second movement on the same line: save, then enter it again. The line shows each movement and how much is left.",
+      "In **Bank movements**, for each bank enter the total that came **In** and went **Out** that day, from the bank report. The opening is yesterday's closing and the closing is worked out. For several amounts type a sum such as 500000+250000. Press **Save day**.",
+      "To trace the cash, use **Trace the cash to collections and payments**: next to each line type the amount and choose the bank, then save. A second movement on the same line: save, then enter again. The bank rows show how much is not itemized yet.",
       "Cash that was not planned goes under **Other cash that moved**: press **+ Add cash movement**.",
-      "Check the closing balance of each bank against the statement and press **Save balances**.",
     ],
     go: [["Cash flow", "cashflow"]],
   },

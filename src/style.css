@@ -1062,3 +1062,4 @@ tr.dim td{opacity:.55}.fut td{opacity:.9}
 .cf-pills{display:flex;flex-wrap:wrap;gap:4px;margin-top:4px}
 .cf-pill{border:0;border-radius:999px;background:rgba(30,126,74,.12);color:inherit;font:inherit;font-size:12px;padding:2px 9px;cursor:pointer}
 .cf-sheet td:nth-child(n+3):nth-child(-n+4){text-align:left}
+.cf-bk{width:130px;text-align:right}.cf-bktable td{vertical-align:top}.cf-bkchk{margin-top:2px}
