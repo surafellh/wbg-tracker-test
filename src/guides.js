@@ -932,7 +932,7 @@ export const GUIDES = [
     intro: "The day at the top of Cash flow applies to every screen. Pick another day to see the position as it stood at the end of that day.",
     steps: [
       "Use the arrows or open the **calendar** at the top. A green dot marks a day when something was collected, an orange dot a day when something was paid. Hover a day to see the amounts.",
-      "On **Collections and payments**, the **Collected / paid** column shows only what moved on the chosen day, so it is empty the next day. **Remaining** is what was left at the end of that day.",
+      "On **Collections and payments**, the **Collected / paid** column shows only what moved on the chosen day, so it is empty the next day. **Collected / paid to date** is the running total. **Remaining** is what was left at the end of that day.",
       "To remove a movement, open the line with **Edit**, press **Edit or delete** on the movement, then **Delete**. A bar at the top offers **Undo**. Deleted lines and movements are kept under **Setup**, **Recently deleted**, with **Restore**.",
       "Press **Download a backup (JSON)** in Setup for a safety copy of everything you can see in Cash flow.",
     ],
