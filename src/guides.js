@@ -10,7 +10,7 @@
 // Run  npm run check-help  after changing the app or this file: it lists guide wording that no longer matches the app.
 // "pages" uses the app's tab ids: dashboard, update, plan, mplan, approvals, support, fb, tasks, monthly, ceo, follow, activity, units, people.
 // Keep sentences short and name the buttons exactly as they appear on screen.
-export const GUIDES_VERSION = "2026-10-21.1";
+export const GUIDES_VERSION = "2026-10-22.1";
 
 export const GROUPS = [
   { id: "start", title: "Getting started", icon: "🚀", blurb: "Signing in, weeks, roles and finding your way around" },
@@ -21,13 +21,14 @@ export const GROUPS = [
   { id: "rep", title: "Reports and dashboards", icon: "📊", blurb: "Dashboard, weekly and monthly reports, downloads" },
   { id: "del", title: "Business support and feedback", icon: "🤝", blurb: "Support requests, feedback and corrective actions" },
   { id: "prj", title: "Projects", icon: "🏗️", blurb: "Follow project status and progress, phases, monthly reports" },
+  { id: "cf", title: "Cash flow", icon: "💰", blurb: "Bank balances, collections and payments, forecast and financing" },
   { id: "adm", title: "Group Strategy tools", icon: "⚙️", blurb: "People, units, settings and the activity log" },
   { id: "fix", title: "When something goes wrong", icon: "🛠️", blurb: "Quick fixes for the most common problems" },
 ];
 
 export const TAB_NAMES = {
   dashboard: "Dashboard", update: "Progress update", plan: "Next plan", mplan: "Monthly plan", approvals: "Approvals",
-  support: "Business support", fb: "Feedback", tasks: "Weekly report", monthly: "Monthly report", ceo: "Actions for the CEO", projects: "Projects",
+  support: "Business support", fb: "Feedback", tasks: "Weekly report", monthly: "Monthly report", ceo: "Actions for the CEO", projects: "Projects", cashflow: "Cash flow",
   activity: "Activity log", units: "Units", people: "People",
 };
 
@@ -872,8 +873,45 @@ export const GUIDES = [
       "Write the key accomplishments, the main concern and the plan for next month. Add a decision you need from management if there is one.",
       "If nothing moved, press **No change since last update** to copy last month's figures forward.",
       "Record problems under **Risks and issues** and requests under **Decisions needed**. The list shows when a monthly update is due.",
+      "You can also type the progress % straight into the **Progress** column of the list. It is saved as this month's update. Projects that calculate progress from phases cannot be edited there. Set the contract start and end date when you edit the project; the list shows days left or past the end.",
     ],
     go: [["Projects", "projects"]],
+  },
+  {
+    id: "cash-position", g: "cf", pages: ["cashflow"], title: "Reading the cash position",
+    kw: "cash flow bank balance collections payables 1 11 2 22 3 33 deficit financing rolling as of",
+    intro: "The Position screen starts from the bank balance, then adds what is collected and subtracts what is paid, step by step. Code 1 and 11 are within a month, 2 and 22 within two months, 3 and 33 long term. Single digits are collections, double digits are payments.",
+    steps: [
+      "Open **Cash flow**. Pick the **As of** date (it rolls forward every day) and a unit, or leave all units.",
+      "Read each row: bank balance, then the balance after 1 − 11, after 2 − 22 and the ending balance after 3 − 33. Red means negative.",
+      "The **Financing need** column and the box below show how much is short, which units have spare cash, and what is left to finance from outside.",
+      "Related parties and similar types are not counted unless you tick **Include items not expected to be collected**.",
+    ],
+    go: [["Cash flow", "cashflow"]],
+  },
+  {
+    id: "cash-enter", g: "cf", pages: ["cashflow"], title: "Entering bank balances, collections and payments",
+    kw: "type dropdown add type settle collected paid part payment copy previous day usd rate expected date priority",
+    intro: "Finance of each unit keeps its own bank balances, collections and payments up to date. Group Finance can edit every unit.",
+    steps: [
+      "**Bank balances**: choose the day, press **Copy bank lines** from the previous day, then enter the in, out and closing balance.",
+      "**Collections and payments**: press **+ Add**. Choose the type from the dropdown. If it is missing choose **+ Add a new type**.",
+      "Choose the urgency code (1/11, 2/22 or 3/33) and the priority. An expected date is optional; without one the row is placed about 30, 60 or 120 days ahead.",
+      "When money moves press **Collected** or **Paid**. Enter less than the full amount to record a part payment; the rest stays open.",
+      "Rows without a type are listed in a banner. Fix them so the By type summary adds up. USD rows need the USD rate (Types screen, Group Finance).",
+    ],
+    go: [["Cash flow", "cashflow"]],
+  },
+  {
+    id: "cash-forecast", g: "cf", pages: ["cashflow"], title: "Forecast, plan and actuals",
+    kw: "daily monthly quarterly plan lines actual expected net closing capex loan",
+    intro: "The Forecast screen shows actual in and out from the bank report, the plan, and what is expected from open collections and payments, by day, month or quarter.",
+    steps: [
+      "Switch between **Daily**, **Monthly** and **Quarterly**. Past periods show actuals; coming periods show the expected net and closing balance.",
+      "Add the monthly plan under **Plan lines** (operating, investing, financing, inflow or outflow).",
+      "Use **Record a financing line in the plan** on the Position screen to plan borrowing for a deficit.",
+    ],
+    go: [["Cash flow", "cashflow"]],
   },
   {
     id: "task-thread", g: "del", pages: ["update", "plan", "tasks"], title: "Comments and @mentions on a task",

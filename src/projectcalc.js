@@ -107,3 +107,10 @@ export function latestTasks(planDocs) {
   }
   return out;
 }
+
+// Days left to the contract end (negative = overdue). Null when there is no contract end date or the project is finished.
+export function daysToEnd(p, today) {
+  if (["Completed", "Cancelled"].includes(p.status)) return null;
+  const b = d0(p.end), t = d0(today);
+  return Number.isNaN(b) || Number.isNaN(t) ? null : Math.round((b - t) / dayMs);
+}

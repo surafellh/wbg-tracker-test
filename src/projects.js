@@ -1,6 +1,6 @@
 // Projects: status and progress follow-up for business and capital (physical) projects.
 // Progress comes either from phases and activities (an activity can be linked to a weekly task) or from a cumulative physical % reported each month.
-import { TYPES, STATUSES, RAGS, ACT_STATUSES, isCapital, latestUpdate, sortedUpdates, activityState, phasePct, projectProgress, progressSource, timeElapsed, suggestRag, currentPeriod, monthChange, monthsSinceUpdate, needsUpdate, pendingDecisions, openRisks, latestTasks } from "./projectcalc.js";
+import { TYPES, STATUSES, RAGS, ACT_STATUSES, isCapital, latestUpdate, sortedUpdates, activityState, phasePct, projectProgress, progressSource, timeElapsed, daysToEnd, suggestRag, currentPeriod, monthChange, monthsSinceUpdate, needsUpdate, pendingDecisions, openRisks, latestTasks } from "./projectcalc.js";
 
 const RISK_TYPES = ["Risk", "Issue"];
 const RISK_CATS = ["Schedule", "Budget / cost", "Scope", "Quality", "Procurement / supply", "Contractor / vendor", "Land / permits", "Resources / people", "Technical", "Other"];
@@ -46,7 +46,7 @@ export function createProjects(c) {
   const refreshCaches = (p) => { for (const ph of p.phases || []) for (const a of ph.activities || []) if (a.link && a.link.ref) { const t = resolve(a.link); if (t) a.cache = { pct: t.pct, status: t.status, week: t.week, title: t.title }; } };
   const cacheStale = (p) => (p.phases || []).some((ph) => (ph.activities || []).some((a) => { if (!(a.link && a.link.ref)) return false; const t = resolve(a.link); return t && (!a.cache || a.cache.pct !== t.pct || a.cache.status !== t.status); }));
 
-  const toRow = (p) => ({ id: p.id, code: p.code || "", name: p.name, type: p.type, unit: p.unit, directorate: p.directorate || "", sponsor: p.sponsor || "", manager: p.manager || "", budget: num(p.budget), start: p.start || "", end: p.end || "", strategicLink: p.strategicLink || "", status: p.status, rag: p.rag, mode: p.mode, involved: p.involved || [], phases: p.phases || [], updates: p.updates || [], risks: p.risks || [], decisions: p.decisions || [], notes: p.notes || "", updatedAt: p.updatedAt });
+  const toRow = (p) => ({ id: p.id, code: p.code || "", name: p.name, type: p.type, unit: p.unit, directorate: p.directorate || "", sponsor: p.sponsor || "", manager: p.manager || "", budget: num(p.budget), start: p.start || "", end: p.end || "", revisedEnd: p.revisedEnd || "", actualEnd: p.actualEnd || "", strategicLink: p.strategicLink || "", status: p.status, rag: p.rag, mode: p.mode, involved: p.involved || [], phases: p.phases || [], updates: p.updates || [], risks: p.risks || [], decisions: p.decisions || [], notes: p.notes || "", updatedAt: p.updatedAt });
   // change a copy of the project, save it, and let the live subscription bring the saved version back
   async function commit(p, mutate, msg) {
     if (S.busy) return false;
@@ -59,10 +59,31 @@ export function createProjects(c) {
   // ---------------- small pieces ----------------
   const ragPill = (r) => (r ? `<span class="rag ${RAG_CLS[r] || ""}">${esc(r)}</span>` : '<span class="muted small">–</span>');
   const stCls = (s) => ({ "In progress": "s-prog", Completed: "s-done", Done: "s-done", "On hold": "s-none", Cancelled: "s-closed", "Not started": "s-not", Blocked: "s-bad" })[s] || "s-none";
+  const dueTag = (p) => { const dl = daysToEnd(p, c.todayIso); if (dl === null) return ""; return dl < 0 ? ` <span class="tag warn">${-dl} day${dl === -1 ? "" : "s"} past contract end</span>` : dl <= 30 ? ` <span class="tag">${dl} day${dl === 1 ? "" : "s"} left</span>` : ` <span class="small muted">${dl} days left</span>`; };
   const bar = (pct, cls) => `<div class="pc"><div class="bar"><i class="${cls || ""}" style="width:${Math.min(100, pct || 0)}%"></i></div><span class="num small">${pctTxt(pct)}</span></div>`;
   const field = (id, label, inner, wide) => `<div class="field${wide ? " wide" : ""}"><label for="${id}">${label}</label>${inner}</div>`;
   const opt = (list, cur, blank) => (blank ? `<option value="">${blank}</option>` : "") + list.map((x) => `<option ${x === cur ? "selected" : ""}>${esc(x)}</option>`).join("");
   const v = (id) => { const e = document.getElementById(id); return e ? e.value : ""; };
+
+  // progress in the list: a number that can be typed over, when it is set by hand; worked out from activities otherwise
+  const calcFromPhases = (p) => p.mode !== "manual" && (p.phases || []).some((ph) => (ph.activities || []).length);
+  function progressCell(p, pr) {
+    if (!canEditP(p) || p.status === "Completed" || calcFromPhases(p)) return `<div title="${p.status === "Completed" ? "Completed" : calcFromPhases(p) ? "Worked out from the activities. Open the project to change them." : ""}">${bar(pr)}</div>`;
+    return `<div class="pc"><div class="bar"><i style="width:${Math.min(100, pr || 0)}%"></i></div><input type="number" class="pj-pct" min="0" max="100" step="1" value="${pr ?? ""}" placeholder="–" data-pjpct="${esc(p.id)}" aria-label="Progress % of ${esc(p.name)}" title="Type the progress to date (cumulative %) and press Enter"><span class="small muted">%</span></div>`;
+  }
+  async function setProgress(el) {
+    const p = find(el.dataset.pjpct); if (!p || !canEditP(p)) return;
+    const raw = el.value.trim(), val = raw === "" ? null : Number(raw);
+    if (val !== null && (Number.isNaN(val) || val < 0 || val > 100)) { c.toast("Progress must be between 0 and 100"); c.render(); return; }
+    const per = currentPeriod(c.todayIso), lu = latestUpdate(p);
+    if (val === (progressOf(p) ?? null)) return;
+    await commit(p, (q) => {
+      const have = (q.updates || []).find((u) => u.period === per);
+      const row = have ? have : { id: uid(), period: per, rag: q.rag, financial: lu ? num(lu.financial) : null, accomplishments: "", concern: "", nextPlan: "", decisionNeeded: "" };
+      row.physical = val; row.timePct = timeElapsed(q, c.todayIso) ?? row.timePct ?? null; row.by = A().name || ""; row.at = new Date().toISOString();
+      if (!have) { q.updates = q.updates || []; q.updates.push(row); }
+    }, "Progress saved");
+  }
 
   // ---------------- portfolio ----------------
   function filtered() {
@@ -83,7 +104,7 @@ export function createProjects(c) {
       const pr = progressOf(p), te = timeElapsed(p, c.todayIso), lu = latestUpdate(p), late = needsUpdate(p, c.todayIso), dc = pendingDecisions(p).length;
       return `<tr class="clickable" data-pj="open" data-id="${esc(p.id)}" tabindex="0"><td><b>${esc(p.name)}</b><div class="small muted">${[p.code, p.directorate].filter(Boolean).map(esc).join(" · ")}</div></td>
         <td class="small">${esc(p.type)}</td><td class="small">${esc(c.unitName(p.unit))}</td><td><span class="pill ${stCls(p.status)}">${esc(p.status)}</span></td><td>${ragPill(p.status === "Completed" ? "Green" : p.rag)}</td>
-        <td style="min-width:130px">${bar(pr)}</td><td class="num small ${te !== null && te > 100 && p.status !== "Completed" ? "late" : ""}">${pctTxt(te)}</td>
+        <td style="min-width:150px">${progressCell(p, pr)}</td><td class="small">${p.end ? esc(fmt(p.end)) : '<span class="muted">–</span>'}${p.revisedEnd ? `<div class="muted">revised ${esc(fmt(p.revisedEnd))}</div>` : ""}${dueTag(p)}</td><td class="num small ${te !== null && te > 100 && p.status !== "Completed" ? "late" : ""}">${pctTxt(te)}</td>
         <td class="small">${lu ? esc(monthName(lu.period)) : '<span class="muted">none</span>'}${late ? ' <span class="tag warn">update due</span>' : ""}${dc ? ` <span class="tag">${dc} decision${dc > 1 ? "s" : ""}</span>` : ""}</td></tr>`;
     }).join("");
     return `<div class="panel"><div class="panel-head"><div><h2>Projects</h2><div class="small muted">Status and progress of business and capital projects. Update monthly; physical projects move slowly.</div></div>
@@ -96,7 +117,7 @@ export function createProjects(c) {
         <select data-pjf="rag" aria-label="Status colour"><option value="">Any colour</option>${RAGS.map((r) => `<option ${f.rag === r ? "selected" : ""}>${r}</option>`).join("")}</select>
         <select data-pjf="status" aria-label="Status"><option value="active" ${f.status === "active" ? "selected" : ""}>Active</option><option value="all" ${f.status === "all" ? "selected" : ""}>All</option>${STATUSES.map((s) => `<option ${f.status === s ? "selected" : ""}>${s}</option>`).join("")}</select>
         <span class="small muted">${list.length} project${list.length === 1 ? "" : "s"}</span></div>
-      ${list.length ? `<div class="scroll"><table class="pj-table"><thead><tr><th>Project</th><th>Type</th><th>Owner</th><th>Status</th><th>Colour</th><th>Progress</th><th title="Share of the planned period that has passed">Time used</th><th>Last update</th></tr></thead><tbody>${rows}</tbody></table></div>`
+      ${list.length ? `<div class="scroll"><table class="pj-table"><thead><tr><th>Project</th><th>Type</th><th>Owner</th><th>Status</th><th>Colour</th><th>Progress %</th><th>Contract end</th><th title="Share of the contract period that has passed">Time used</th><th>Last update</th></tr></thead><tbody>${rows}</tbody></table></div>`
         : `<div class="empty"><b>${all.length ? "No projects match" : S.loaded ? "No projects yet" : "Loading projects…"}</b>${all.length ? "Change the filters above." : canCreate() ? "Use “Add project” to start following one." : "Projects of your unit appear here once they are added."}</div>`}</div>`;
   }
 
@@ -115,7 +136,7 @@ export function createProjects(c) {
         <div class="pj-big"><div class="small muted">Overall progress</div>${bar(pr, "")}<div class="small muted">${esc(progressSource(p))}</div></div>
         <div class="pj-grid">
           ${kv("Status", sel("status", STATUSES, p.status))}${kv("Colour", ed ? `<select data-pjset="rag" aria-label="Colour">${opt(RAGS, p.rag)}</select> ${sug && sug !== p.rag ? `<span class="small muted">suggested: ${ragPill(sug)}</span>` : ""}` : ragPill(p.rag))}
-          ${kv("Time used", pctTxt(te) + (p.start && p.end ? ` <span class="small muted">${esc(fmt(p.start))} – ${esc(fmt(p.end))}</span>` : ""))}${kv("Budget", money(p.budget))}
+          ${kv("Contract period", p.start || p.end ? `${p.start ? esc(fmt(p.start)) : "?"} – ${p.end ? esc(fmt(p.end)) : "?"}` : "")}${kv("Time used", pctTxt(te) + dueTag(p))}${kv("Revised end", p.revisedEnd ? esc(fmt(p.revisedEnd)) : "")}${kv("Actual end", p.actualEnd ? esc(fmt(p.actualEnd)) : "")}${kv("Budget / contract value", money(p.budget))}
           ${kv("Sponsor", esc(p.sponsor))}${kv("Project manager", esc(p.manager))}${kv("Strategic link", esc(p.strategicLink))}${kv("Also involved", (p.involved || []).map((u) => `<span class="tag">${esc(c.unitName(u))}</span>`).join(" "))}
           ${isCapital(p) && lu ? kv("Financial spent", pctTxt(num(lu.financial))) : ""}
         </div>
@@ -194,8 +215,10 @@ export function createProjects(c) {
       ${field("pf-spon", "Sponsor", `<input type="text" id="pf-spon" value="${esc(r.sponsor)}">`)}
       ${field("pf-mgr", "Project manager", `<input type="text" id="pf-mgr" value="${esc(r.manager)}">`)}
       ${field("pf-bud", "Approved budget / contract amount (ETB)", `<input type="number" id="pf-bud" min="0" step="any" value="${r.budget ?? ""}">`)}
-      ${field("pf-start", "Start date", `<input type="date" id="pf-start" value="${esc(r.start)}">`)}
-      ${field("pf-end", "Planned completion", `<input type="date" id="pf-end" value="${esc(r.end)}">`)}
+      ${field("pf-start", "Contract start date", `<input type="date" id="pf-start" value="${esc(r.start)}">`)}
+      ${field("pf-end", "Contract end date", `<input type="date" id="pf-end" value="${esc(r.end)}">`)}
+      ${field("pf-rev", "Revised end date (new plan, if the contract end moved)", `<input type="date" id="pf-rev" value="${esc(r.revisedEnd || "")}">`)}
+      ${field("pf-act", "Actual end date (when finished)", `<input type="date" id="pf-act" value="${esc(r.actualEnd || "")}">`)}
       ${field("pf-link", "Strategic link (optional)", `<input type="text" id="pf-link" value="${esc(r.strategicLink)}">`, true)}
       ${field("pf-mode", "Progress comes from", `<select id="pf-mode"><option value="phases" ${r.mode === "phases" ? "selected" : ""}>Phases and activities</option><option value="manual" ${r.mode === "manual" ? "selected" : ""}>Physical % reported each month</option></select>`)}
       ${field("pf-st", "Status", `<select id="pf-st">${opt(STATUSES, r.status)}</select>`)}
@@ -291,10 +314,11 @@ export function createProjects(c) {
     else if (x === "close") closeModal();
     else if (x === "xlsx") exportXlsx();
     else if (x === "proj-save") {
-      const r = m.row, row = { ...r, name: v("pf-name").trim(), code: v("pf-code").trim(), type: v("pf-type"), unit: v("pf-unit") || r.unit, directorate: v("pf-dir").trim(), sponsor: v("pf-spon").trim(), manager: v("pf-mgr").trim(), budget: num(v("pf-bud")), start: v("pf-start"), end: v("pf-end"), strategicLink: v("pf-link").trim(), mode: v("pf-mode"), status: v("pf-st"), notes: v("pf-notes").trim(),
+      const r = m.row, row = { ...r, name: v("pf-name").trim(), code: v("pf-code").trim(), type: v("pf-type"), unit: v("pf-unit") || r.unit, directorate: v("pf-dir").trim(), sponsor: v("pf-spon").trim(), manager: v("pf-mgr").trim(), budget: num(v("pf-bud")), start: v("pf-start"), end: v("pf-end"), revisedEnd: v("pf-rev"), actualEnd: v("pf-act"), strategicLink: v("pf-link").trim(), mode: v("pf-mode"), status: v("pf-st"), notes: v("pf-notes").trim(),
         involved: [...document.querySelectorAll("#pjModalRoot [data-inv]:checked")].map((e) => e.dataset.inv).filter((u) => u !== (v("pf-unit") || r.unit)) };
       if (!row.name) { c.toast("Give the project a name"); return; }
-      if (row.start && row.end && row.end < row.start) { c.toast("The planned completion is before the start date"); return; }
+      if (row.start && row.end && row.end < row.start) { c.toast("The contract end is before the contract start"); return; }
+      if (row.revisedEnd && row.start && row.revisedEnd < row.start) { c.toast("The revised end is before the contract start"); return; }
       if (m.isNew) { const res = await c.api().saveProject(A(), toRow({ id: undefined, phases: [], updates: [], risks: [], decisions: [], ...row })); if (ok(res, "Project added")) { closeModal(); S.view = "detail"; S.id = res.id; c.render(); window.scrollTo(0, 0); } }
       else if (await commit(p, (q) => Object.assign(q, row), "Project saved")) closeModal();
     }
@@ -368,9 +392,10 @@ export function createProjects(c) {
   function onFilter(el) { S.f[el.dataset.pjf] = el.value; c.render(); const e = document.querySelector('[data-pjf="q"]'); if (el.dataset.pjf === "q" && e) { e.focus(); e.setSelectionRange(e.value.length, e.value.length); } }
 
   const main = document.getElementById("main");
-  main.addEventListener("click", (e) => { const el = e.target.closest("[data-pj]"); if (el) onAction(el); });
-  main.addEventListener("keydown", (e) => { const el = e.target.closest && e.target.closest("tr[data-pj]"); if (el && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); onAction(el); } });
-  main.addEventListener("change", (e) => { const t = e.target; if (t.dataset && t.dataset.pjset) onSet(t); else if (t.dataset && t.dataset.pjf && t.dataset.pjf !== "q") onFilter(t); });
+  main.addEventListener("click", (e) => { if (e.target.closest("[data-pjpct]")) return; const el = e.target.closest("[data-pj]"); if (el) onAction(el); });
+  main.addEventListener("keydown", (e) => { if (e.target.dataset && e.target.dataset.pjpct && e.key === "Enter") { e.preventDefault(); e.target.blur(); } });
+  main.addEventListener("keydown", (e) => { if (e.target.dataset && e.target.dataset.pjpct) return; const el = e.target.closest && e.target.closest("tr[data-pj]"); if (el && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); onAction(el); } });
+  main.addEventListener("change", (e) => { const t = e.target; if (t.dataset && t.dataset.pjpct) setProgress(t); else if (t.dataset && t.dataset.pjset) onSet(t); else if (t.dataset && t.dataset.pjf && t.dataset.pjf !== "q") onFilter(t); });
   main.addEventListener("input", (e) => { const t = e.target; if (t.dataset && t.dataset.pjf === "q") { clearTimeout(onFilter.t); onFilter.t = setTimeout(() => onFilter(t), 250); } });
   document.addEventListener("keydown", (e) => { if (e.key === "Escape" && S.m) closeModal(); });
 
@@ -379,8 +404,8 @@ export function createProjects(c) {
     if (!c.libsReady("xlsx")) return;
     const list = filtered(), X = c.XLSX(), wb = X.utils.book_new();
     const sheet = (rows, widths, name) => X.utils.book_append_sheet(wb, c.sheetFromRows(rows, widths), name);
-    sheet([["Project", "Code", "Type", "Owner unit", "Directorate", "Sponsor", "Manager", "Approved budget (ETB)", "Start", "Planned completion", "Status", "Colour", "Progress %", "Time used %", "Last update", "Key accomplishments", "Key concern", "Decision required"],
-      ...list.map((p) => { const lu = latestUpdate(p); return [p.name, p.code, p.type, c.unitName(p.unit), p.directorate, p.sponsor, p.manager, num(p.budget) ?? "", p.start, p.end, p.status, p.rag, progressOf(p) ?? "", timeElapsed(p, c.todayIso) ?? "", lu ? lu.period : "", lu ? lu.accomplishments : "", lu ? lu.concern : "", lu ? lu.decisionNeeded : ""]; })], [40, 12, 18, 26, 22, 20, 20, 20, 12, 14, 13, 9, 11, 11, 11, 50, 40, 36], "Portfolio");
+    sheet([["Project", "Code", "Type", "Owner unit", "Directorate", "Sponsor", "Manager", "Approved budget (ETB)", "Contract start", "Contract end", "Revised end", "Actual end", "Status", "Colour", "Progress %", "Time used %", "Last update", "Key accomplishments", "Key concern", "Decision required"],
+      ...list.map((p) => { const lu = latestUpdate(p); return [p.name, p.code, p.type, c.unitName(p.unit), p.directorate, p.sponsor, p.manager, num(p.budget) ?? "", p.start, p.end, p.revisedEnd || "", p.actualEnd || "", p.status, p.rag, progressOf(p) ?? "", timeElapsed(p, c.todayIso) ?? "", lu ? lu.period : "", lu ? lu.accomplishments : "", lu ? lu.concern : "", lu ? lu.decisionNeeded : ""]; })], [40, 12, 18, 26, 22, 20, 20, 20, 13, 13, 13, 13, 13, 9, 11, 11, 11, 50, 40, 36], "Portfolio");
     sheet([["Project", "Month", "Colour", "Physical % (cum.)", "Financial % (cum.)", "Time used %", "Key accomplishments", "Key concern", "Plan for next month", "Decision required", "By"],
       ...list.flatMap((p) => sortedUpdates(p).map((u) => [p.name, u.period, u.rag, num(u.physical) ?? "", num(u.financial) ?? "", num(u.timePct) ?? "", u.accomplishments, u.concern, u.nextPlan, u.decisionNeeded, u.by]))], [40, 10, 9, 14, 14, 11, 50, 40, 40, 36, 18], "Monthly status");
     sheet([["Project", "Phase", "Activity", "Linked task", "Owner", "Due", "Weight", "Status", "% complete"],

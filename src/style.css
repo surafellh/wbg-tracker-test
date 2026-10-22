@@ -1004,3 +1004,23 @@ body:has(.save-bar:not([hidden])) .help-fab{bottom:calc(84px + env(safe-area-ins
 .chk{display:inline-flex;align-items:center;gap:5px;font-size:13px;padding:3px 9px;border:1px solid var(--line);border-radius:999px}
 #pjModalRoot .overlay{position:fixed;inset:0;background:rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center;padding:16px;z-index:60}
 body[data-tab="projects"] .weeknav{display:none}
+.pj-pct{width:62px;text-align:right;padding:4px 6px}
+
+/* Cash flow */
+body[data-tab="cashflow"] .weeknav{display:none}
+.cf-controls{padding:0 16px 12px;align-items:center}
+.cf-table td.num,.cf-table th,.cf-list td.num{text-align:right;white-space:nowrap}
+.cf-table th:first-child,.cf-table td:first-child{text-align:left}
+.cf-table tr.tot td{font-weight:600;border-top:2px solid var(--line)}
+.cf-table tr.sub td{background:var(--soft,rgba(128,128,128,.07))}
+.cf-bad td{background:rgba(220,38,38,.07)}
+.cf-now td{background:rgba(37,99,235,.08)}
+tr.dim td{opacity:.6}
+.neg{color:#c0262d}
+.muted{opacity:.6}
+.cf-sel{max-width:140px}
+.cf-date{width:130px}
+.cf-fund{background:var(--soft,rgba(128,128,128,.07));border-radius:8px;padding:12px 14px}
+.cf-two{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:16px;padding:8px 16px}
+.cf-spark{width:100%;max-width:720px;height:auto}
+#cfModalRoot .overlay{z-index:60}
