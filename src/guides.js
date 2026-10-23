@@ -10,7 +10,7 @@
 // Run  npm run check-help  after changing the app or this file: it lists guide wording that no longer matches the app.
 // "pages" uses the app's tab ids: dashboard, update, plan, mplan, approvals, support, fb, tasks, monthly, ceo, follow, activity, units, people.
 // Keep sentences short and name the buttons exactly as they appear on screen.
-export const GUIDES_VERSION = "2026-10-23.4";
+export const GUIDES_VERSION = "2026-10-23.5";
 
 export const GROUPS = [
   { id: "start", title: "Getting started", icon: "🚀", blurb: "Signing in, weeks, roles and finding your way around" },
@@ -900,6 +900,7 @@ export const GUIDES = [
       "Lines still open from earlier weeks appear in the banner that lists the open lines not yet in the week. **Roll in with what is left** brings only the lines that are still open, with the amount left. Lines paid in full are not brought.",
       "Add a new line with **+ Add a line**. For a USD line choose USD and write the **exchange rate** for that week. It is kept with the week, so a new rate never changes earlier weeks.",
       "Use the **⋯** menu on a line to trace it, edit it or take it out of the week. The **⋯** menu at the top downloads or uploads the weekly Excel template and downloads what you see.",
+      "Some lines are the same line with a different value in another week, for example a part payment. Use **Link to a line…** in the ⋯ menu of a line to join it to a line with a code. Tick the box to link the other weeks with the same name too. If no line fits, **create a new one**.",
       "Actual comes from the daily Collections & payments. Weeks imported from the old weekly workbooks keep the actual that was reported then.",
     ],
     go: [["Cash flow", "cashflow"]],

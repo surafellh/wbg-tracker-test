@@ -46,7 +46,7 @@ export function createWeek(h) {
     const lineRow = (l) => { const wr = h.canWrite(l.w.unit), cur = l.cur !== "ETB" ? ` <span class="tag" title="Rate used: ${esc(String(l.rate))}">${esc(l.cur)}</span>` : "";
       return `<tr class="cf-sub"><td><span class="tag">${esc((l.it && l.it.code) || l.w.itemCode || "")}</span> <b>${esc(l.party || l.description)}</b>${l.party && l.description ? `<span class="small muted"> · ${esc(l.description)}</span>` : ""}${l.w.rolled ? ' <span class="tag" title="Carried over from an earlier week">rolled</span>' : ""}${cur}${l.due ? `<span class="small muted"> · due ${esc(dMini(l.due))}</span>` : ""}${l.remark ? `<div class="small muted">${esc(l.remark)}</div>` : ""}</td>
         <td class="num">${mny(l.plan, false)}</td><td class="num">${l.started === false ? "" : l.actual ? mny(l.actual, false) : '<span class="muted">–</span>'}</td><td></td><td></td><td></td>
-        <td class="cf-act">${h.menu([l.it ? [`data-cf="w-trace" data-id="${esc(l.it.id)}"`, "Trace this line"] : null, wr ? [`data-cf="w-edit" data-id="${esc(l.w.id)}"`, "Edit"] : null, wr ? [`data-cf="w-remove" data-id="${esc(l.w.id)}"`, "Take out of this week"] : null])}</td></tr>`; };
+        <td class="cf-act">${h.menu([l.it ? [`data-cf="w-trace" data-id="${esc(l.it.id)}"`, "Trace this line"] : null, wr ? [`data-cf="w-edit" data-id="${esc(l.w.id)}"`, "Edit"] : null, wr && !l.it ? [`data-cf="w-link" data-id="${esc(l.w.id)}"`, "Link to a line…"] : null, wr ? [`data-cf="w-remove" data-id="${esc(l.w.id)}"`, "Take out of this week"] : null])}</td></tr>`; };
     const block = (b, title, sub) => {
       const shown = b.rows.filter((r) => r.lines.length || r.next || r.actual || r.plan);
       const groups = ["operating", "investing", "financing", ""].map((s) => ({ s, rows: shown.filter((r) => r.section === s) })).filter((g) => g.rows.length);
@@ -126,6 +126,37 @@ export function createWeek(h) {
       <div class="scroll"><table class="cf-table"><thead><tr><th>Day</th><th>Bank</th><th>Amount</th><th>Note</th></tr></thead><tbody>${logs.map((l) => `<tr><td>${esc(dShort(l.day))}</td><td>${esc(l.bank || "")}</td><td class="num">${plain(l.amount)}</td><td class="small">${esc(l.note || "")}</td></tr>`).join("") || `<tr><td colspan="4" class="small muted">Nothing ${it.kind === "in" ? "collected" : "paid"} yet.</td></tr>`}</tbody></table></div>
       <div class="small muted" style="margin-top:8px">Left when entered: <b>${plain(it.amount)}</b> · ${it.kind === "in" ? "collected" : "paid"} so far: <b>${plain(sum(logs, (l) => l.amount))}</b> · left now: <b>${plain(h.viewOf(it, "9999-12-31").left)}</b></div>
       <div class="save-bar"><div></div><div class="toolbar"><button class="btn" data-cf="close">Close</button></div></div>`;
+  }
+
+  // ---------------- link a plan line to a line (same line, different value in another week, for example a part payment) ----------------
+  const STOP = new Set("and the for from month plan payment pay collection service services plc".split()), toks = (s) => new Set((String(s || "").toLowerCase().match(/[a-z0-9]{3,}/g) || []).filter((x) => !STOP.has(x)));
+  const sim = (a, b) => { const x = toks(a), y = toks(b); if (!x.size || !y.size) return 0; let n = 0; x.forEach((t) => { if (y.has(t)) n++; }); return n / (x.size + y.size - n); };
+  const wText = (w) => `${w.party || ""} ${w.description || ""}`;
+  const sameLines = (w) => S.week.filter((q) => q.id !== w.id && !q.itemId && q.unit === w.unit && q.kind === w.kind && sim(wText(q), wText(w)) >= 0.6);
+  function linkForm(m) {
+    const w = S.week.find((q) => q.id === m.weekId); if (!w) return `<div class="panel-head"><h2>Line not found</h2></div><div class="save-bar"><div></div><button class="btn" data-cf="close">Close</button></div>`;
+    const cands = S.items.filter((i) => i.unit === w.unit && i.kind === w.kind).map((i) => ({ i, s: sim(wText(w), `${i.party} ${i.description}`) + (Math.abs(num(i.amount) - num(w.planned)) < 1 ? 0.5 : 0) })).sort((a, b) => b.s - a.s).slice(0, 80), others = sameLines(w);
+    return `<div class="panel-head"><div><h2>Link to a line</h2><div class="small muted">${esc(w.party || w.description)} · ${plain(w.planned)} · week of ${esc(dShort(w.week))}. Linking makes this week's amount part of that line, so its code follows it through the weeks. The amount can differ from week to week, for example a part payment.</div></div></div>
+      <div class="xgrid">${h.field("lk-code", "Line", `<input type="text" id="lk-code" list="lk-lines" value="${esc(m.code || (cands[0] && cands[0].s >= 0.6 ? cands[0].i.code : ""))}" placeholder="Type or pick a code, e.g. CF-00012" autocomplete="off"><datalist id="lk-lines">${cands.map((x) => `<option value="${esc(x.i.code)}" label="${esc((x.i.party || x.i.description || "") + " · " + plain(x.i.amount) + " " + x.i.currency)}"></option>`).join("")}</datalist>`, true)}
+      <div class="field wide"><label><input type="checkbox" id="lk-all" ${others.length ? "checked" : ""} ${others.length ? "" : "disabled"}> Also link the ${others.length} other week${others.length === 1 ? "" : "s"} with the same name${others.length ? ": " + others.slice(0, 6).map((o) => esc(dMini(o.week)) + " " + plain(o.planned)).join(", ") + (others.length > 6 ? "…" : "") : ""}</label></div></div>
+      <div class="save-bar"><div class="toolbar"><button class="btn" data-cf="w-link-new" title="Make a new line (with a code) from this one, and link it">No line fits: create a new one</button></div><div class="toolbar"><button class="btn" data-cf="close">Cancel</button><button class="btn primary" data-cf="w-link-save">Link</button></div></div>`;
+  }
+  async function linkLines(weeks, item) {
+    let n = 0, skipped = 0;
+    const res = await h.run(async () => { for (const w of weeks) {
+      if (S.week.some((q) => q.itemId === item.id && q.week === w.week)) { skipped++; continue; }
+      const r = await c.api().saveCfWeek(A(), { unit: w.unit, week: w.week, itemId: item.id, kind: item.kind, planned: w.planned, due: w.due || "", rolled: !!w.rolled, note: w.note || "", stmt: w.stmt || "", section: w.section, party: w.party, description: w.description, ref: w.ref, currency: w.currency, rate: w.rate === "" || w.rate == null ? "" : w.rate, remark: w.remark || "", actual: w.actual === "" || w.actual == null ? "" : w.actual });
+      if (r && r.error) return r; const d = await c.api().deleteCf(A(), "cf_week_lines", w.id); if (d && d.error) return d; n++; } return { ok: true }; }, "");
+    if (res) c.toast(`${n} week line${n === 1 ? "" : "s"} linked to ${item.code}${skipped ? `, ${skipped} skipped (that line is already planned that week)` : ""}`);
+    return !!res;
+  }
+  async function onLinkSave(create) {
+    const w = S.week.find((q) => q.id === S.m.weekId); if (!w) return; const all = !!(document.getElementById("lk-all") || {}).checked, weeks = [w, ...(all ? sameLines(w) : [])]; let item;
+    if (create) { const first = weeks.map((x) => x.week).sort()[0], last = weeks.slice().sort((a, b) => b.week.localeCompare(a.week))[0], out = num(last.planned);
+      const r = await h.run(() => c.api().saveCfItem(A(), { unit: w.unit, kind: w.kind, party: w.party, description: w.description, ref: w.ref, typeCode: "", bucket: 1, amount: out, total: out, currency: w.currency || "ETB", priority: "Normal", expected: w.due || "", status: "open", enteredOn: c.todayIso, section: w.section, firstWeek: first, note: "" }), "");
+      if (!r || !r.id) return; item = { id: r.id, code: r.code || "the new line", kind: w.kind }; }
+    else { const code = h.v("lk-code").trim().toUpperCase(); item = S.items.find((i) => i.unit === w.unit && i.code && i.code.toUpperCase() === code); if (!item) { c.toast("No line has that code. Pick one from the list."); return; } if (item.kind !== w.kind) { c.toast("That line is a " + (item.kind === "in" ? "collection" : "payment") + ". Pick a line of the same kind."); return; } }
+    if (await linkLines(weeks, item)) h.closeModal();
   }
 
   // ---------------- reconcile ----------------
@@ -272,6 +303,9 @@ export function createWeek(h) {
     else if (x === "w-remove") { const w = S.week.find((q) => q.id === id); if (!w) return; await h.run(() => c.api().deleteCf(A(), "cf_week_lines", id), "Taken out of this week"); }
     else if (x === "w-roll-all") await rollIn(buildStmt(h.scopeUnits(), S.wk).cand);
     else if (x === "w-roll-one") await rollIn(buildStmt(h.scopeUnits(), S.wk).cand.filter((q) => q.it.id === id));
+    else if (x === "w-link") { S.m = { type: "linkline", weekId: id }; h.drawModal(); }
+    else if (x === "w-link-save") await onLinkSave(false);
+    else if (x === "w-link-new") await onLinkSave(true);
     else if (x === "w-trace") { S.m = { type: "trace", itemId: id }; h.drawModal(); }
     else if (x === "w-xl-down") await weekTemplate();
     else if (x === "w-pick-week") { const i = document.getElementById("cwUploadWeek"); if (i) i.click(); }
@@ -280,5 +314,5 @@ export function createWeek(h) {
     else if (x === "w-rcall") { S.rc.all = el.dataset.v === "1"; c.render(); }
     else if (x === "w-goday") { S.scope = el.dataset.unit || S.scope; S.view = "coll"; h.setDay(el.dataset.day); }
   }
-  return { renderWeek, renderReconcile, lineForm, traceView, onAction, onModalChange, uploadWeek, download, weekStart, buildStmt };
+  return { renderWeek, renderReconcile, lineForm, traceView, linkForm, onAction, onModalChange, uploadWeek, download, weekStart, buildStmt };
 }

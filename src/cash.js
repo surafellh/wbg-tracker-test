@@ -307,7 +307,7 @@ export function createCash(c) {
   }
   function drawModal() {
     const root = ensureRoot(), m = S.m; if (!m) { root.innerHTML = ""; return; }
-    const body = { item: itemForm, log: logForm, bank: bankForm, plan: planForm, type: typeForm, result: resultView, weekline: (q) => W.lineForm(q), trace: (q) => W.traceView(q) }[m.type](m);
+    const body = { item: itemForm, log: logForm, bank: bankForm, plan: planForm, type: typeForm, result: resultView, weekline: (q) => W.lineForm(q), trace: (q) => W.traceView(q), linkline: (q) => W.linkForm(q) }[m.type](m);
     root.innerHTML = `<div class="overlay"><div class="modal wide xmodal" role="dialog" aria-modal="true">${body}</div></div>`;
     const first = root.querySelector("input[type=text], input[type=number]"); if (first && m.isNew && !m.focused) { m.focused = true; first.focus(); }
   }

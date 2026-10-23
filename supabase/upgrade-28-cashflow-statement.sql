@@ -35,13 +35,13 @@ begin
     select * into v_old from public.cf_week_lines where id = v_id;
     if v_old.id is not null and not public.wbg_cf_write(v_old.unit_id) then return jsonb_build_object('error','not_allowed'); end if;
   end if;
-  insert into public.cf_week_lines (id, unit_id, week, item_id, item_code, kind, planned, due, rolled, note, stmt, section, party, description, ref, currency, rate, remark, created_by, updated_by)
+  insert into public.cf_week_lines (id, unit_id, week, item_id, item_code, kind, planned, due, rolled, note, stmt, section, party, description, ref, currency, rate, remark, actual, created_by, updated_by)
   values (v_id, v_unit, v_week, v_iid, coalesce(v_item.code, ''), v_kind, coalesce(nullif(p_row->>'planned','')::numeric, 0), nullif(p_row->>'due','')::date,
     coalesce((p_row->>'rolled')::boolean, false), coalesce(p_row->>'note',''), coalesce(p_row->>'stmt',''), coalesce(nullif(p_row->>'section',''), v_item.section, 'operating'),
     coalesce(nullif(p_row->>'party',''), v_item.party, ''), coalesce(nullif(p_row->>'description',''), v_item.description, ''), coalesce(nullif(p_row->>'ref',''), v_item.ref, ''),
-    coalesce(nullif(p_row->>'currency',''), v_item.currency, 'ETB'), nullif(p_row->>'rate','')::numeric, coalesce(p_row->>'remark',''), v_name, v_name)
+    coalesce(nullif(p_row->>'currency',''), v_item.currency, 'ETB'), nullif(p_row->>'rate','')::numeric, coalesce(p_row->>'remark',''), nullif(p_row->>'actual','')::numeric, v_name, v_name)
   on conflict (id) do update set planned = excluded.planned, due = excluded.due, rolled = excluded.rolled, note = excluded.note, stmt = excluded.stmt, section = excluded.section,
-    party = excluded.party, description = excluded.description, ref = excluded.ref, currency = excluded.currency, rate = excluded.rate, remark = excluded.remark, updated_by = excluded.updated_by, updated_at = now();
+    party = excluded.party, description = excluded.description, ref = excluded.ref, currency = excluded.currency, rate = excluded.rate, remark = excluded.remark, actual = coalesce(excluded.actual, public.cf_week_lines.actual), updated_by = excluded.updated_by, updated_at = now();
   return jsonb_build_object('ok', true, 'id', v_id);
 end $$;
 
