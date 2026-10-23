@@ -151,3 +151,36 @@ export const DEFAULT_TYPES = [
   ["Pension", "Pension", "out", "operating"], ["Inc Tax", "Income tax", "out", "operating"], ["VAT", "VAT", "out", "operating"], ["purchase", "Purchase", "out", "operating"], ["Salary", "Salary", "out", "operating"],
   ["Rental C", "Rental car", "out", "operating"], ["Rental HO", "Rent, head office", "out", "operating"], ["Utility", "Utilities", "out", "operating"], ["LC RM", "LC, raw materials", "out", "operating"], ["Custom G", "Customs", "out", "operating"], ["Construction", "Construction", "out", "investing"],
 ].map(([code, label, kind, section, expected], i) => ({ id: "def-" + code, code, label, kind, section, group: "", description: "", expected: expected !== false, confirmed: false, active: true, sort: (i + 1) * 10 }));
+
+// ---------- weeks (Saturday to Friday, like the rest of the tracker) ----------
+export const weekStart = (iso) => { const d = new Date(D(iso)).getUTCDay(); return addDays(String(iso).slice(0, 10), -((d + 1) % 7)); };
+export const weekEnd = (w) => addDays(w, 6);
+export const weekLabel = (w) => { const a = String(w).slice(0, 10), b = weekEnd(a), [ya, ma, da] = a.split("-").map(Number), [yb, mb, db] = b.split("-").map(Number); return `${da} ${MONTHS[ma - 1]}${ya !== yb ? " " + ya : ""} to ${db} ${MONTHS[mb - 1]} ${yb}`; };
+// Money in a day range for one planned line, from the movements (rows with a day and an amount).
+export const movedIn = (log, itemId, from, to) => sum(log.filter((l) => l.itemId === itemId && l.day >= from && l.day <= to), (l) => l.amount);
+// Reconcile one bank on one day: what the bank says came in and went out against what the collections and payments add up to.
+export const TOLERANCE = 1;
+export function reconcileRows(bank, log, units, from, to, fxRate) {
+  const keys = new Map(), put = (u, b, d) => { const k = u + "|" + b + "|" + d; if (!keys.has(k)) keys.set(k, { unit: u, bank: b, day: d, bank_in: 0, bank_out: 0, opening: null, closing: null, has_bank: false, m_in: 0, m_out: 0, n: 0 }); return keys.get(k); };
+  for (const r of bank) if (units.includes(r.unit) && r.day >= from && r.day <= to) { const x = put(r.unit, r.bank, r.day); x.has_bank = true; x.bank_in = n(r.inflow); x.bank_out = n(r.outflow); x.opening = n(r.opening); x.closing = n(r.closing); }
+  for (const l of log) if (units.includes(l.unit) && l.day >= from && l.day <= to) { const x = put(l.unit, l.bank || "(no bank)", l.day); x.n++; x[l.kind === "in" ? "m_in" : "m_out"] += n(l.amount) * (l.currency === "USD" ? n(fxRate) : 1); }
+  const rows = [...keys.values()].sort((a, b) => a.day.localeCompare(b.day) || a.unit.localeCompare(b.unit) || a.bank.localeCompare(b.bank));
+  // opening against the previous closing of the same bank
+  const last = {}; const all = bank.filter((r) => units.includes(r.unit)).sort((a, b) => a.day.localeCompare(b.day));
+  const prevClose = new Map(); for (const r of all) { const k = r.unit + "|" + r.bank; if (last[k]) prevClose.set(r.unit + "|" + r.bank + "|" + r.day, last[k]); last[k] = r.closing; }
+  for (const x of rows) {
+    const flags = [];
+    if (x.bank === "(no bank)") flags.push("Cash was itemized without a bank");
+    else if (!x.has_bank) flags.push("Collections or payments recorded but no bank report");
+    else {
+      const dIn = x.bank_in - x.m_in, dOut = x.bank_out - x.m_out;
+      if (Math.abs(dIn) > TOLERANCE) flags.push(dIn > 0 ? "Bank in is more than the collections itemized" : "Collections itemized are more than the bank in");
+      if (Math.abs(dOut) > TOLERANCE) flags.push(dOut > 0 ? "Bank out is more than the payments itemized" : "Payments itemized are more than the bank out");
+      if (Math.abs(x.opening + x.bank_in - x.bank_out - x.closing) > TOLERANCE) flags.push("Opening + in − out does not equal the closing balance");
+      const pc = prevClose.get(x.unit + "|" + x.bank + "|" + x.day); if (pc !== undefined && Math.abs(pc - x.opening) > TOLERANCE) flags.push("Opening is not the previous closing");
+      x.diff_in = dIn; x.diff_out = dOut;
+    }
+    x.flags = flags;
+  }
+  return rows;
+}

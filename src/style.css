@@ -1081,3 +1081,11 @@ tr.dim td{opacity:.55}.fut td{opacity:.9}
 .dot{display:inline-block;width:5px;height:5px;border-radius:50%}.dot.in{background:#1e9e5a}.dot.out{background:#d9822b}
 .cf-cal-k{margin-top:8px;display:flex;gap:10px;align-items:center}
 .cf-undo{margin:0 16px 12px}
+.cf-sec td{background:var(--soft,#faf6e6);padding-top:8px}
+.cf-sec2 td{padding-left:18px;color:var(--muted,#777)}
+.cf-roll{border-left:4px solid #f5c518}
+.cf-reports{display:grid;gap:8px;margin-top:10px}
+.cf-rep{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:10px 12px;border:1px solid var(--line,#ddd);border-radius:8px;flex-wrap:wrap}
+.cf-items td.cf-act{white-space:nowrap}
+.cf-table tr.dim{opacity:.6}
+.cf-table tr.strong td{font-size:1.05em}

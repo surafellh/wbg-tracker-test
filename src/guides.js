@@ -10,7 +10,7 @@
 // Run  npm run check-help  after changing the app or this file: it lists guide wording that no longer matches the app.
 // "pages" uses the app's tab ids: dashboard, update, plan, mplan, approvals, support, fb, tasks, monthly, ceo, follow, activity, units, people.
 // Keep sentences short and name the buttons exactly as they appear on screen.
-export const GUIDES_VERSION = "2026-10-23.2";
+export const GUIDES_VERSION = "2026-10-23.3";
 
 export const GROUPS = [
   { id: "start", title: "Getting started", icon: "🚀", blurb: "Signing in, weeks, roles and finding your way around" },
@@ -903,14 +903,51 @@ export const GUIDES = [
     go: [["Cash flow", "cashflow"]],
   },
   {
-    id: "cash-lines", g: "cf", pages: ["cashflow"], title: "Collections and payments, and Excel",
+    id: "cash-lines", g: "cf", pages: ["cashflow"], title: "Collections and payments lines",
     kw: "collections payments lines type dropdown add type urgency expected date excel upload download template validation",
     intro: "Each line is something expected to be collected or paid. Every line has a code the daily log can point to.",
     steps: [
-      "Open **Collections and payments** and press **+ Add a line**. Choose the type from the dropdown, or **+ Add a new type** if it is missing.",
+      "Open **Lines** and press **+ Add a line**. Choose the type from the dropdown, or **+ Add a new type** if it is missing.",
       "Choose the urgency (1 / 11, 2 / 22 or 3 / 33) and the planned amount. The expected date is optional; without it the line is placed about 30, 60 or 120 days ahead.",
       "When money moves press **Collected** or **Paid**. This opens the daily log entry with the bank to choose.",
-      "To work in Excel press **Download Excel**. The workbook has dropdowns and checks for unit, type, urgency, currency, bank and dates. Fill it and press **Upload Excel**. Rows that cannot be read are listed; the rest are saved.",
+      "Lines are normally created from the **Weekly plan** (see the guide on the weekly plan). This screen is for looking at every line, fixing one, or closing and writing it off.",
+    ],
+    go: [["Cash flow", "cashflow"]],
+  },
+  {
+    id: "cash-week", g: "cf", pages: ["cashflow"], title: "The weekly cash flow plan",
+    kw: "weekly plan week saturday friday roll carry over unpaid uncollected code history trace template upload excel unplanned",
+    intro: "Once a week each business unit plans what it expects to collect and pay. A week runs Saturday to Friday. Every line has a code that stays with it for life, and that code links the plan to the daily collections and payments.",
+    steps: [
+      "Open **Weekly plan** and pick the week. Lines still open from earlier weeks show under **open lines not in this week's plan**: press **Roll all** to carry them in with what is left, or **Plan this week** for one line.",
+      "Add new lines with **+ Add a line**. Change the planned amount of a rolled line with **Edit**. **Remove** takes a line out of this week only.",
+      "To work in Excel press **Download weekly plan template**. It lists the open lines with their codes. Change the Planned this week column, add new rows (leave Code empty) and press **Upload plan**. Upload never deletes anything.",
+      "**Trace** on a line shows every week it was planned, from the first, and every day cash moved against it.",
+      "The page shows planned against actual for the week. The full Plan / Actual / Variance report is in **Reports**.",
+    ],
+    go: [["Cash flow", "cashflow"]],
+  },
+  {
+    id: "cash-daily-upload", g: "cf", pages: ["cashflow"], title: "Daily collections, payments and bank in Excel",
+    kw: "daily template upload moved column bank sheet remaining unplanned reconcile mismatch flag",
+    intro: "Each day the unit downloads the daily sheet, types only what was collected or paid, adds the bank report, and uploads it. The system works out what is left.",
+    steps: [
+      "On **Daily log** pick the day and press **Download daily template**. The Coll-Pay sheet lists every open line with its code and what was left at the start of the day.",
+      "Type the amount in **Moved today** and choose the bank. Remaining after today is worked out. For a payment from two banks add a second row with the same code.",
+      "Cash that was not planned goes in the rows at the bottom, without a code.",
+      "On the Bank sheet enter the opening, total in, total out and closing from the bank report. The check column should be 0.",
+      "Press **Upload day**. Uploading the same day again updates the amounts. Then open **Reconcile**: for each bank and day it compares the bank report with the collections and payments and lists every mismatch.",
+    ],
+    go: [["Cash flow", "cashflow"]],
+  },
+  {
+    id: "cash-reports", g: "cf", pages: ["cashflow"], title: "Cash flow reports and downloads",
+    kw: "reports download weekly report summary history open lines daily movements bank balances reconciliation excel",
+    intro: "Each download on the Reports page is only what its name says, so a summary is a summary, not every line.",
+    steps: [
+      "Open **Reports**, choose the unit and the period start.",
+      "Pick the report: weekly cash flow (plan, actual, variance), summary by business unit, weekly plan history, open collections and payments, daily movements, bank balances or reconciliation.",
+      "Press **Download Excel** next to it. A full copy of everything is the backup in **Setup**.",
     ],
     go: [["Cash flow", "cashflow"]],
   },
@@ -922,7 +959,7 @@ export const GUIDES = [
       "Open **Report** and choose **Daily**, **Monthly** or **Quarterly**.",
       "**Planned against done** shows the planned collections and payments of each period, what was recorded against them, and the percentage.",
       "The **Forecast** applies the usual follow-through of the last periods to the expected amounts, so the balance is more realistic.",
-      "Add the monthly plan lines under **Plan**. The report shows them against the cash that moved. Press **Download Excel** to take the report away.",
+      "Add the monthly plan lines under **Monthly plan**. The report shows them against the cash that moved. Press **Download Excel** to take the report away, or use **Reports** for the other downloads.",
     ],
     go: [["Cash flow", "cashflow"]],
   },

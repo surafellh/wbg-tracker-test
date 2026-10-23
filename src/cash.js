@@ -2,19 +2,21 @@
 //   See:   Summary (where cash stands, what is left after each step) and Report (plan against actual, by type, by bank, forecast).
 //   Enter: Daily log (what cash really moved, and in which bank), Collections and payments (what is expected), Plan (monthly plan lines), Setup (types, USD rate).
 // Shown to Group Finance, unit Finance departments, Group Strategy, CEO and DCEO.
+import { createWeek } from "./cashweek.js";
 import { SECTIONS, PLAN_SECTIONS, PRIORITIES, CURRENCIES, bucketCode, BUCKET_TEXT, FIN_UNITS_FALLBACK, IMPLIED_DAYS, num, sum, addDays, addMonths, monthOf, keyOf, periods, periodLabel, periodEnd, isOpenAt, etb, bankAt, bankDays, position, funding, timeline, byType, planByMonth, HORIZON, MONTHS } from "./cashcalc.js";
 
+const weekStartOf = (iso) => { const d = new Date(iso + "T00:00:00Z").getUTCDay(); return addDays(iso, -((d + 1) % 7)); };
 const clone = (o) => JSON.parse(JSON.stringify(o));
 const SHORT = { "wagwago-electric": "Wagwago Trading", trucksload: "TrucksLoad", geez: "Geez", "niyat-consultancy": "Niyat", "wanza-logistics": "Wanza" };
 const FULL = { "wagwago-electric": "Wagwago Trading (Electric and Corporate)" };
 const PRI_RANK = { High: 0, Normal: 1, Low: 2 };
-const TABS = [["summary", "Summary", "see"], ["report", "Report", "see"], ["log", "Daily log", "enter"], ["items", "Collections and payments", "enter"], ["plan", "Plan", "enter"], ["setup", "Setup", "enter"]];
+const TABS = [["summary", "Summary", "see"], ["report", "Report", "see"], ["recon", "Reconcile", "see"], ["reports", "Reports", "see"], ["week", "Weekly plan", "enter"], ["log", "Daily log", "enter"], ["items", "Lines", "enter"], ["plan", "Monthly plan", "enter"], ["setup", "Setup", "enter"]];
 const serialToIso = (v) => { if (v === "" || v == null) return ""; if (typeof v === "number") return new Date(Math.round((v - 25569) * 864e5)).toISOString().slice(0, 10); const s = String(v).trim(); const m = s.match(/^(\d{4})-(\d{2})-(\d{2})/); return m ? m[0] : ""; };
 const bucketOf = (v) => { const x = parseInt(String(v).trim(), 10); return x === 1 || x === 11 ? 1 : x === 2 || x === 22 ? 2 : x === 3 || x === 33 ? 3 : 0; };
 
 export function createCash(c) {
   const { state, esc } = c;
-  const S = (state.cf = { items: [], itemsAll: [], logAll: [], undo: null, calOpen: false, calMonth: "", types: [], bank: [], log: [], plan: [], settings: {}, loaded: 0, view: "summary", asOf: c.todayIso, scope: "all", bk: { 1: true, 2: true, 3: true }, typeOn: {}, mode: "month", day: c.todayIso, range: 60, dr: {}, bd: {}, dq: { kind: "", q: "", show: 30 }, busy: false, m: null,
+  const S = (state.cf = { items: [], itemsAll: [], logAll: [], undo: null, calOpen: false, calMonth: "", types: [], bank: [], log: [], plan: [], settings: {}, loaded: 0, view: "summary", asOf: c.todayIso, scope: "all", bk: { 1: true, 2: true, 3: true }, typeOn: {}, mode: "month", day: c.todayIso, range: 60, dr: {}, bd: {}, dq: { kind: "", q: "", show: 30 }, busy: false, m: null, week: [], wk: weekStartOf(c.todayIso), rc: { range: 14, all: false }, rp: { from: "" },
     lf: { kind: "", type: "", status: "active", q: "", show: 40 }, pf: { from: "", unit: "all" } });
   const A = () => c.auth() || {};
   const finDept = () => (A().departments || []).some((d) => /^fin/i.test(String(d)));
@@ -42,7 +44,7 @@ export function createCash(c) {
   function subscribe() {
     if (!c.db() || subs.length || !canSee()) return;
     const on = (col, key, order, fn) => c.db().collection(col).orderBy(order).limit(10000).onSnapshot((snap) => { const arr = fn ? fn(snap) : snap.docs.map((d) => ({ id: d.id, ...d.data() })); if (key === "items" || key === "log") { S[key + "All"] = arr; S[key] = arr.filter((x) => !x.deletedAt); } else S[key] = arr; S.loaded++; if (state.tab === "cashflow" && !S.m && !S.busy) c.render(); }, () => { S.loaded++; });
-    subs = [on("cftypes", "types", "sort"), on("cfitems", "items", "createdAt"), on("cfbank", "bank", "day"), on("cflog", "log", "day"), on("cfplan", "plan", "month"),
+    subs = [on("cftypes", "types", "sort"), on("cfitems", "items", "createdAt"), on("cfbank", "bank", "day"), on("cflog", "log", "day"), on("cfplan", "plan", "month"), on("cfweek", "week", "week"),
       on("cfsettings", "settings", "updatedAt", (snap) => Object.fromEntries(snap.docs.map((d) => [d.id, d.data().value])))];
   }
   // Run one or more saves under a lock. fn returns the last api result; the first error stops everything and is shown.
@@ -52,7 +54,7 @@ export function createCash(c) {
     catch (e) { c.toast(c.errText(e)); return false; }
     finally { S.busy = false; c.render(); }
   }
-  const itemRow = (it) => ({ id: it.id, unit: it.unit, kind: it.kind, party: it.party, description: it.description, ref: it.ref, typeCode: it.typeCode, bucket: it.bucket, amount: it.amount, total: it.total ?? "", currency: it.currency, priority: it.priority, expected: it.expected || "", status: it.status, settledOn: it.settledOn || "", note: it.note, enteredOn: it.enteredOn });
+  const itemRow = (it) => ({ id: it.id, unit: it.unit, kind: it.kind, party: it.party, description: it.description, ref: it.ref, typeCode: it.typeCode, bucket: it.bucket, amount: it.amount, total: it.total ?? "", currency: it.currency, priority: it.priority, expected: it.expected || "", status: it.status, settledOn: it.settledOn || "", note: it.note, enteredOn: it.enteredOn, section: it.section || "", unplanned: !!it.unplanned, firstWeek: it.firstWeek || "" });
   const logRow = (l) => ({ id: l.id, unit: l.unit, day: l.day, kind: l.kind, bank: l.bank, amount: l.amount, currency: l.currency, party: l.party, description: l.description, typeCode: l.typeCode, itemId: l.itemId || "", itemCode: l.itemCode || "", note: l.note });
 
   // How much of each planned line has been collected or paid (from the daily log), up to a date.
@@ -102,7 +104,7 @@ export function createCash(c) {
   };
   const usdWarn = () => { const n = S.items.filter((i) => i.currency === "USD" && i.status === "open").length; return n && !fx() ? `<div class="cf-note warn">${n} open item${n > 1 ? "s are" : " is"} in USD and left out of the totals until the USD rate is set in Setup.</div>` : ""; };
   const stat = (k, v, sub, cls) => `<div class="cf-stat ${cls || ""}"><div class="k">${k}</div><div class="v">${v}</div>${sub ? `<div class="s">${sub}</div>` : ""}</div>`;
-  const excelBar = () => `<span class="cf-group"><button class="btn small" data-cf="xl-down" title="A workbook with dropdowns and checks, filled with the current data">Download Excel</button><label class="btn small" title="Fill the workbook, then upload it here">Upload Excel<input type="file" id="cfUpload" accept=".xlsx,.xls" hidden></label></span>`;
+  const excelBar = () => `<span class="cf-group"><button class="btn small" data-cf="w-day-down" title="The day's sheet with every open line prefilled">Download daily template</button><label class="btn small" title="Fill the moved column and the bank sheet, then upload">Upload day<input type="file" id="cfUploadDay" accept=".xlsx,.xls" hidden></label></span>`;
 
   // One day for the whole page: the Summary, Report, Daily log and the lines all show that day.
   function setDay(d) { if (!d) return; S.asOf = S.day = d; S.calOpen = false; S.calMonth = monthOf(d); c.render(); }
@@ -131,7 +133,7 @@ export function createCash(c) {
     const seeTabs = TABS.filter((t) => t[2] === "see"), enterTabs = TABS.filter((t) => t[2] === "enter");
     const tab = (t) => `<button class="cf-tab${S.view === t[0] ? " on" : ""}" data-cf="view" data-v="${t[0]}">${t[1]}</button>`;
     const nav = `<div class="cf-nav"><div class="cf-tabs"><span class="cf-lab">See</span>${seeTabs.map(tab).join("")}</div><div class="cf-tabs"><span class="cf-lab">Enter</span>${enterTabs.map(tab).join("")}</div></div>`;
-    const body = { summary: renderSummary, report: renderReport, log: renderLog, items: renderItems, plan: renderPlan, setup: renderSetup }[S.view]();
+    const body = { summary: renderSummary, report: renderReport, recon: () => W.renderReconcile(), reports: () => W.renderReports(), week: () => W.renderWeek(), log: renderLog, items: renderItems, plan: renderPlan, setup: renderSetup }[S.view]();
     return `<div class="cf">${dayBar()}${undoBar()}${nav}${S.loaded < 3 ? `<div class="small muted cf-pad">Loading…</div>` : ""}${body}</div>`;
   }
 
@@ -367,7 +369,7 @@ export function createCash(c) {
   }
   function drawModal() {
     const root = ensureRoot(), m = S.m; if (!m) { root.innerHTML = ""; return; }
-    const body = { item: itemForm, log: logForm, bank: bankForm, plan: planForm, type: typeForm, result: resultView }[m.type](m);
+    const body = { item: itemForm, log: logForm, bank: bankForm, plan: planForm, type: typeForm, result: resultView, weekline: (q) => W.lineForm(q), trace: (q) => W.traceView(q) }[m.type](m);
     root.innerHTML = `<div class="overlay"><div class="modal wide xmodal" role="dialog" aria-modal="true">${body}</div></div>`;
     const first = root.querySelector("input[type=text], input[type=number]"); if (first && m.isNew && !m.focused) { m.focused = true; first.focus(); }
   }
@@ -470,6 +472,7 @@ export function createCash(c) {
   }
   async function onAction(el) {
     const x = el.dataset.cf, id = el.dataset.id, m = S.m, it = id ? S.items.find((q) => q.id === id) : null;
+    if (x && x.startsWith("w-")) { await W.onAction(el); return; }
     if (x === "view") { S.view = el.dataset.v; c.render(); }
     else if (x === "today") setDay(c.todayIso);
     else if (x === "mode") { S.mode = el.dataset.v; c.render(); }
@@ -566,7 +569,6 @@ export function createCash(c) {
       else closeModal();
     }
     else if (x === "fx-save") { await run(() => c.api().saveCfSetting(A(), "usd_etb", (document.getElementById("cfFx") || {}).value || ""), "Rate saved"); }
-    else if (x === "xl-down") excelWorkbook();
     else if (x === "xl-report") reportExcel();
     else if (x === "xl-types") typesExcel();
   }
@@ -581,7 +583,7 @@ export function createCash(c) {
   }
   function onControl(el) {
     const k = el.dataset.cfc;
-    if (k === "asOf" || k === "day") { if (el.value) { setDay(el.value); return; } } else if (k === "scope") S.scope = el.value; else if (k === "pfrom") S.pf.from = el.value;
+    if (k === "asOf" || k === "day") { if (el.value) { setDay(el.value); return; } } else if (k === "scope") S.scope = el.value; else if (k === "pfrom") S.pf.from = el.value; else if (k === "wk") { if (el.value) S.wk = weekStartOf(el.value); } else if (k === "rpfrom") S.rp.from = el.value;
     c.render();
   }
   function onFilter(el) { S.lf[el.dataset.cff] = el.value; S.lf.show = 40; c.render(); if (el.dataset.cff === "q") { const e = document.querySelector('[data-cff="q"]'); if (e) { e.focus(); e.setSelectionRange(e.value.length, e.value.length); } } }
@@ -589,7 +591,7 @@ export function createCash(c) {
   const main = document.getElementById("main");
   main.addEventListener("click", (e) => { if (e.target.closest("select,input,label")) return; const el = e.target.closest("[data-cf]"); if (el) { if (el.tagName === "A") e.preventDefault(); onAction(el); } });
   main.addEventListener("keydown", (e) => { const el = e.target.closest && e.target.closest("tr[data-cf]"); if (el && (e.key === "Enter" || e.key === " ") && !e.target.closest("select,input,button")) { e.preventDefault(); onAction(el); } });
-  main.addEventListener("change", (e) => { const t = e.target; if (t.id === "cfUpload") { if (t.files[0]) uploadFile(t.files[0]); t.value = ""; return; } if (!t.dataset) return; if (t.dataset.dr) { onDraft(t); return; } if (t.dataset.cfq) onQuick(t); else if (t.dataset.cfc) onControl(t); else if (t.dataset.cff && t.dataset.cff !== "q") onFilter(t); });
+  main.addEventListener("change", (e) => { const t = e.target; if (t.id === "cfUploadDay" || t.id === "cwUploadWeek") { if (t.files[0]) (t.id === "cwUploadWeek" ? W.uploadWeek : W.uploadDay)(t.files[0]); t.value = ""; return; } if (!t.dataset) return; if (t.dataset.dr) { onDraft(t); return; } if (t.dataset.cfq) onQuick(t); else if (t.dataset.cfc) onControl(t); else if (t.dataset.cff && t.dataset.cff !== "q") onFilter(t); });
   const onBank = (t) => {
     const key = t.dataset.key, d = S.bd[key] || (S.bd[key] = {}), tr = t.closest("tr"), k = t.dataset.bd; d[k] = t.value;
     const g = (n) => (tr.querySelector(`[data-bd="${n}"]`) || {}).value, openCell = tr.querySelector('[data-bd="open"]'), opening = openCell ? num(openCell.value) : num(String(tr.children[2].textContent).replace(/,/g, "")), inn = sumExpr(g("in")), out = sumExpr(g("out"));
@@ -603,108 +605,6 @@ export function createCash(c) {
   main.addEventListener("input", (e) => { const t = e.target; if (t.dataset && t.dataset.bd) { onBank(t); return; } if (t.dataset && t.dataset.dr) { onDraft(t); return; } if (t.dataset && t.dataset.cfd === "q") { clearTimeout(onFilter.d); onFilter.d = setTimeout(() => { S.dq.q = t.value; S.dq.show = 30; c.render(); const e2 = document.querySelector('[data-cfd="q"]'); if (e2) { e2.focus(); e2.setSelectionRange(e2.value.length, e2.value.length); } }, 250); return; } if (t.dataset && t.dataset.cff === "q") { clearTimeout(onFilter.t); onFilter.t = setTimeout(() => onFilter(t), 250); } });
   main.addEventListener("pointermove", hover); main.addEventListener("pointerleave", unhover, true); main.addEventListener("pointerdown", hover);
   document.addEventListener("keydown", (e) => { if (e.key === "Escape" && S.m) closeModal(); });
-
-  // ---------------- Excel: download (template with dropdowns and checks, filled with the current data) ----------------
-  async function excelWorkbook() {
-    let ExcelJS; try { ExcelJS = (await import("exceljs")).default; } catch (e) { c.toast("The Excel tool did not load. Reload the page and try again."); return; }
-    const units = scopeUnits().filter((u) => canWrite(u)), wb = new ExcelJS.Workbook(), lists = wb.addWorksheet("Lists", { state: "veryHidden" }), asOf = c.todayIso;
-    if (!units.length) { c.toast("You can only download the workbook for a unit you can edit."); return; }
-    const col = (i, arr) => { arr.forEach((x, k) => { lists.getCell(k + 1, i).value = x; }); const L = lists.getColumn(i).letter; return `Lists!$${L}$1:$${L}$${Math.max(1, arr.length)}`; };
-    const banks = [...new Set(units.flatMap(knownBanks))].filter((b) => b && b !== "All banks");
-    wb.definedNames.add(col(1, units.map(uname)), "L_Unit"); wb.definedNames.add(col(2, ["Collect", "Pay"]), "L_Kind"); wb.definedNames.add(col(3, S.types.filter((t) => t.active).map((t) => t.code)), "L_Type"); wb.definedNames.add(col(4, ["1", "2", "3"]), "L_Urg");
-    wb.definedNames.add(col(5, CURRENCIES), "L_Cur"); wb.definedNames.add(col(6, PRIORITIES), "L_Pri"); wb.definedNames.add(col(7, ["In", "Out"]), "L_InOut"); wb.definedNames.add(col(8, banks.length ? banks : [""]), "L_Bank"); wb.definedNames.add(col(9, PLAN_SECTIONS.map((s) => s[1])), "L_Sec"); wb.definedNames.add(col(10, ["Inflow", "Outflow"]), "L_Flow");
-    const sheet = (name, heads, widths, rows, nrows) => { const ws = wb.addWorksheet(name, { views: [{ state: "frozen", ySplit: 1 }] }); ws.columns = heads.map((h, i) => ({ header: h, key: "c" + i, width: widths[i] })); const hr = ws.getRow(1); hr.font = { bold: true, color: { argb: "FF2A2208" } }; hr.height = 30; hr.alignment = { vertical: "middle", wrapText: true };
-      hr.eachCell((cell) => { cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFF5C518" } }; }); rows.forEach((r) => ws.addRow(r)); return { ws, last: Math.max(rows.length + 200, nrows || 300) }; };
-    const list = (ws, cI, last, name, err) => { for (let r = 2; r <= last; r++) ws.getCell(r, cI).dataValidation = { type: "list", allowBlank: true, formulae: [name], showErrorMessage: true, errorTitle: "Pick from the list", error: err }; };
-    const amount = (ws, cI, last) => { for (let r = 2; r <= last; r++) { ws.getCell(r, cI).dataValidation = { type: "decimal", operator: "greaterThanOrEqual", allowBlank: true, formulae: [0], showErrorMessage: true, errorTitle: "Amount", error: "Enter a number, 0 or more." }; ws.getCell(r, cI).numFmt = "#,##0.00"; } };
-    const date = (ws, cI, last) => { for (let r = 2; r <= last; r++) { ws.getCell(r, cI).dataValidation = { type: "date", operator: "greaterThan", allowBlank: true, formulae: [new Date(Date.UTC(2020, 0, 1))], showErrorMessage: true, errorTitle: "Date", error: "Enter a date, for example 2026-10-22." }; ws.getCell(r, cI).numFmt = "yyyy-mm-dd"; } };
-    const toDate = (iso) => (iso ? new Date(iso + "T00:00:00Z") : "");
-    // 1 collections and payments
-    const eff = S.items.filter((i) => units.includes(i.unit) && i.status === "open");
-    const a = sheet("Collections and payments", ["Code (leave empty for a new line)", "Unit", "Collect or pay", "Party", "Invoice / reference", "Description", "Type", "Urgency (1, 2 or 3)", "Remaining amount", "Original total (optional)", "Currency", "Priority", "Expected date", "Note"], [16, 26, 13, 28, 18, 36, 14, 12, 16, 16, 10, 10, 14, 30],
-      eff.map((i) => [i.code, uname(i.unit), i.kind === "in" ? "Collect" : "Pay", i.party, i.ref, i.description, i.typeCode, i.bucket, num(i.amount), i.total ? num(i.total) : "", i.currency, i.priority, toDate(i.expected), i.note]), 300);
-    list(a.ws, 2, a.last, "L_Unit", "Pick a unit from the list."); list(a.ws, 3, a.last, "L_Kind", "Pick Collect or Pay."); list(a.ws, 7, a.last, "L_Type", "Pick a type from the list. To add a new type, use Setup in the app."); list(a.ws, 8, a.last, "L_Urg", "Pick 1, 2 or 3."); list(a.ws, 11, a.last, "L_Cur", "Pick ETB or USD."); list(a.ws, 12, a.last, "L_Pri", "Pick High, Normal or Low."); amount(a.ws, 9, a.last); amount(a.ws, 10, a.last); date(a.ws, 13, a.last);
-    // 2 daily log
-    const logs = S.log.filter((l) => units.includes(l.unit) && l.day >= addDays(asOf, -7));
-    const b = sheet("Daily log", ["Date", "Unit", "In or out", "Bank", "Planned line code (optional)", "Party", "Description", "Amount", "Currency", "Note"], [13, 26, 10, 22, 18, 28, 36, 16, 10, 30], logs.map((l) => [toDate(l.day), uname(l.unit), l.kind === "in" ? "In" : "Out", l.bank, l.itemCode, l.party, l.description, num(l.amount), l.currency, l.note]), 300);
-    date(b.ws, 1, b.last); list(b.ws, 2, b.last, "L_Unit", "Pick a unit from the list."); list(b.ws, 3, b.last, "L_InOut", "Pick In or Out."); list(b.ws, 4, b.last, "L_Bank", "Pick a bank. To add a new bank, record it once in the app."); amount(b.ws, 8, b.last); list(b.ws, 9, b.last, "L_Cur", "Pick ETB or USD.");
-    // 3 bank balances
-    const bk = S.bank.filter((r) => units.includes(r.unit) && r.day >= addDays(asOf, -7)).sort((x, y) => x.day.localeCompare(y.day));
-    const d = sheet("Bank balances", ["Date", "Unit", "Bank", "Opening", "In", "Out", "Closing balance"], [13, 26, 22, 16, 16, 16, 18], bk.map((r) => [toDate(r.day), uname(r.unit), r.bank, num(r.opening), num(r.inflow), num(r.outflow), num(r.closing)]), 200);
-    date(d.ws, 1, d.last); list(d.ws, 2, d.last, "L_Unit", "Pick a unit from the list."); list(d.ws, 3, d.last, "L_Bank", "Pick a bank, or write a new one in the app first."); for (const cI of [4, 5, 6, 7]) for (let r = 2; r <= d.last; r++) d.ws.getCell(r, cI).numFmt = "#,##0.00";
-    // 4 plan
-    const pl = S.plan.filter((p) => units.includes(p.unit) && p.month >= addMonths(monthOf(asOf), -1));
-    const p = sheet("Plan", ["Month (YYYY-MM)", "Unit", "Inflow or outflow", "Section", "Line", "Amount", "Note"], [14, 26, 14, 14, 36, 16, 30], pl.map((r) => [r.month, uname(r.unit), r.kind === "in" ? "Inflow" : "Outflow", (SECTIONS.find((s) => s[0] === r.section) || [])[1] || r.section, r.label, num(r.amount), r.note]), 200);
-    list(p.ws, 2, p.last, "L_Unit", "Pick a unit from the list."); list(p.ws, 3, p.last, "L_Flow", "Pick Inflow or Outflow."); list(p.ws, 4, p.last, "L_Sec", "Pick Operating, Investing or Financing."); amount(p.ws, 6, p.last);
-    // 5 types (the hint sheet) and instructions
-    const ty = wb.addWorksheet("Types"); ty.columns = [{ header: "Type code", width: 18 }, { header: "Meaning", width: 36 }, { header: "For", width: 12 }, { header: "Counted", width: 10 }, { header: "Description", width: 70 }]; ty.getRow(1).font = { bold: true };
-    S.types.filter((t) => t.active).forEach((t) => ty.addRow([t.code, t.label, t.kind === "in" ? "Collections" : t.kind === "out" ? "Payments" : "Both", t.expected ? "Yes" : "No", t.description]));
-    const info = wb.addWorksheet("Info", { views: [{ showGridLines: false }] }); info.getColumn(1).width = 8; info.getColumn(2).width = 120;
-    [["How to fill this in"], ["1", "Collections and payments: one row per invoice or payable. Leave Code empty for a new line; the app gives it a code (CF-00012). Keep the code of existing lines to update them. Remaining amount is what is still to be collected or paid; Original total is optional."],
-      ["2", "Urgency: 1 within a month (11 when paying), 2 within two months (22), 3 long term (33). Type 1, 2 or 3; the app knows if it is a collection or a payment."],
-      ["3", "Daily log: one row per receipt or payment, with the bank that was credited or debited. Put the code of the planned line in “Planned line code” so a part payment is traced to its line."],
-      ["4", "Bank balances: the closing balance per bank per day. Plan: the monthly forecast lines."],
-      ["5", "Dropdowns list the allowed values. See the Types sheet for what each type means. New types are added in the app under Cash flow, Setup."],
-      ["6", "Upload the file on any Enter page with Upload Excel. Rows that cannot be read are listed so you can fix them; the rest are saved. Uploading does not delete anything."]].forEach((r, i) => { const row = info.addRow(r); if (i === 0) row.font = { bold: true, size: 14 }; });
-    wb.worksheets.forEach((w) => { if (w.name !== "Lists") w.properties.tabColor = { argb: w.name === "Info" || w.name === "Types" ? "FF999999" : "FFF5C518" }; });
-    const buf = await wb.xlsx.writeBuffer(); await c.saveFile(`Cash flow ${asOf}.xlsx`, buf, "Excel saved");
-  }
-
-  // ---------------- Excel: upload ----------------
-  async function uploadFile(file) {
-    const units = writableUnits(); if (!units.length) { c.toast("You cannot edit any unit's cash flow"); return; }
-    if (!c.libsReady("xlsx")) return; const X = c.XLSX(); let wb;
-    try { wb = X.read(await file.arrayBuffer(), { type: "array" }); } catch (e) { c.toast("Could not read that file. Use the workbook from Download Excel."); return; }
-    const norm = (s) => String(s || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim(), uMap = new Map();
-    units.forEach((u) => [uname(u), ushort(u), c.unitName(u), u].forEach((n) => uMap.set(norm(n), u)));
-    if (units.includes("wagwago-electric")) uMap.set("wagwago trading", "wagwago-electric");
-    const tMap = new Map(S.types.map((t) => [norm(t.code), t.code])), rep = { items: [0, 0], log: 0, bank: 0, plan: [0, 0], skip: 0, notes: [] };
-    const sheetRows = (re) => { const n = wb.SheetNames.find((s) => re.test(s)); if (!n) return null; const rows = X.utils.sheet_to_json(wb.Sheets[n], { header: 1, raw: true, defval: "" }); return rows.length > 1 ? rows.slice(1).map((r, i) => ({ r, line: i + 2 })).filter((o) => o.r.some((x) => String(x).trim() !== "")) : []; };
-    const bad = (name, line, why) => { rep.skip++; rep.notes.push(`${name} row ${line}: ${why}`); };
-    const money = (x) => { if (x === "" || x == null) return null; const n = Number(String(x).replace(/,/g, "")); return Number.isFinite(n) ? n : null; };
-    await run(async () => {
-      const aRows = sheetRows(/^collections/i), added = {};
-      if (aRows) for (const { r, line } of aRows) {
-        const [code, unitN, kindN, party, ref, desc, typeN, urg, amt, tot, cur, pri, exp, note] = r, unit = uMap.get(norm(unitN)), kind = /^c/i.test(String(kindN).trim()) ? "in" : /^p/i.test(String(kindN).trim()) ? "out" : "", old = String(code).trim() ? S.items.find((i) => i.code && i.code.toUpperCase() === String(code).trim().toUpperCase()) : null;
-        if (!unit) { bad("Collections and payments", line, `unit “${unitN}” not found or not yours`); continue; }
-        const b = bucketOf(urg) || (old ? old.bucket : 0), a = money(amt); if (!kind && !old) { bad("Collections and payments", line, "Collect or pay is empty"); continue; } if (!b) { bad("Collections and payments", line, "urgency must be 1, 2 or 3"); continue; } if (a === null || a < 0) { bad("Collections and payments", line, "remaining amount is missing or not a number"); continue; }
-        if (!String(party).trim() && !String(desc).trim() && !old) { bad("Collections and payments", line, "party and description are both empty"); continue; }
-        let typeCode = String(typeN).trim() ? tMap.get(norm(typeN)) : ""; if (String(typeN).trim() && !typeCode) { rep.notes.push(`Collections and payments row ${line}: type “${typeN}” is not in the list, left without a type`); typeCode = ""; }
-        const base = old ? itemRow(old) : { unit, kind, status: "open", enteredOn: c.todayIso, bucket: b };
-        const row = { ...base, unit: old ? old.unit : unit, kind: old ? old.kind : kind, party: String(party).trim(), ref: String(ref).trim(), description: String(desc).trim(), typeCode, bucket: b, amount: a, total: money(tot) > 0 ? money(tot) : "", currency: CURRENCIES.includes(String(cur).trim().toUpperCase()) ? String(cur).trim().toUpperCase() : "ETB", priority: PRIORITIES.find((p) => p.toLowerCase() === String(pri).trim().toLowerCase()) || "Normal", expected: serialToIso(exp), note: String(note).trim() };
-        if (old && !canWrite(old.unit)) { bad("Collections and payments", line, "not your unit"); continue; }
-        const res = await c.api().saveCfItem(A(), row); if (res && res.error) return res; rep.items[old ? 1 : 0]++;
-      }
-      const lRows = sheetRows(/^daily/i);
-      if (lRows) for (const { r, line } of lRows) {
-        const [dt, unitN, io, bank, code, party, desc, amt, cur, note] = r, unit = uMap.get(norm(unitN)), day = serialToIso(dt), kind = /^i/i.test(String(io).trim()) ? "in" : /^o/i.test(String(io).trim()) ? "out" : "", a = money(amt);
-        if (!unit) { bad("Daily log", line, `unit “${unitN}” not found or not yours`); continue; } if (!day) { bad("Daily log", line, "date is missing or not a date"); continue; } if (!kind) { bad("Daily log", line, "In or out is empty"); continue; } if (a === null || a <= 0) { bad("Daily log", line, "amount must be above 0"); continue; } if (!String(bank).trim()) { bad("Daily log", line, "bank is empty"); continue; }
-        const item = String(code).trim() ? S.items.find((i) => i.code && i.code.toUpperCase() === String(code).trim().toUpperCase() && i.unit === unit) : null; if (String(code).trim() && !item) { bad("Daily log", line, `no line with code ${code} for this unit`); continue; }
-        const dup = S.log.find((l) => l.unit === unit && l.day === day && l.kind === kind && l.bank === String(bank).trim() && Math.abs(num(l.amount) - a) < 0.005 && (l.itemCode || "") === (item ? item.code : "") && (l.party || "") === String(party).trim());
-        if (dup) { rep.notes.push(`Daily log row ${line}: already recorded, skipped`); continue; }
-        const res = await c.api().saveCfLog(A(), { unit, day, kind, bank: String(bank).trim(), amount: a, currency: CURRENCIES.includes(String(cur).trim().toUpperCase()) ? String(cur).trim().toUpperCase() : "ETB", party: String(party).trim() || (item ? item.party : ""), description: String(desc).trim() || (item ? item.description : ""), typeCode: item ? item.typeCode : "", itemId: item ? item.id : "", itemCode: item ? item.code : "", note: String(note).trim() });
-        if (res && res.error) return res; rep.log++; if (item) { const g = added[item.id] || (added[item.id] = { amt: 0, day: "" }); g.amt += a; if (day > g.day) g.day = day; }
-      }
-      for (const [id, g] of Object.entries(added)) { const e = await syncLine(id, g.amt, g.day); if (e && e.error) return e; }
-      const bRows = sheetRows(/^bank/i);
-      if (bRows) for (const { r, line } of bRows) {
-        const [dt, unitN, bank, op, inn, out, cl] = r, unit = uMap.get(norm(unitN)), day = serialToIso(dt), closing = money(cl);
-        if (!unit) { bad("Bank balances", line, `unit “${unitN}” not found or not yours`); continue; } if (!day || !String(bank).trim()) { bad("Bank balances", line, "date or bank is empty"); continue; } if (closing === null) { bad("Bank balances", line, "closing balance is missing"); continue; }
-        const res = await c.api().saveCfBank(A(), { unit, day, bank: String(bank).trim(), opening: money(op) || 0, inflow: money(inn) || 0, outflow: money(out) || 0, closing }); if (res && res.error) return res; rep.bank++;
-      }
-      const pRows = sheetRows(/^plan/i);
-      if (pRows) for (const { r, line } of pRows) {
-        const [mo, unitN, flow, sec, label, amt, note] = r, unit = uMap.get(norm(unitN)), month = String(mo).trim().slice(0, 7), kind = /^i/i.test(String(flow).trim()) ? "in" : /^o/i.test(String(flow).trim()) ? "out" : "", a = money(amt), section = (PLAN_SECTIONS.find((s) => s[1].toLowerCase() === String(sec).trim().toLowerCase()) || [])[0] || "operating";
-        if (!unit) { bad("Plan", line, `unit “${unitN}” not found or not yours`); continue; } if (!/^\d{4}-\d{2}$/.test(month)) { bad("Plan", line, "month must look like 2026-11"); continue; } if (!kind || !String(label).trim() || a === null) { bad("Plan", line, "inflow/outflow, line or amount is missing"); continue; }
-        const old = S.plan.find((p) => p.unit === unit && p.month === month && p.kind === kind && p.section === section && norm(p.label) === norm(label));
-        const res = await c.api().saveCfPlan(A(), { id: old ? old.id : undefined, unit, month, kind, section, label: String(label).trim(), amount: a, note: String(note).trim() }); if (res && res.error) return res; rep.plan[old ? 1 : 0]++;
-      }
-      return { ok: true };
-    });
-    const lines = []; if (rep.items[0] || rep.items[1]) lines.push(`Collections and payments: <b>${rep.items[0]}</b> added, <b>${rep.items[1]}</b> updated.`); if (rep.log) lines.push(`Daily log: <b>${rep.log}</b> movement${rep.log > 1 ? "s" : ""} added.`); if (rep.bank) lines.push(`Bank balances: <b>${rep.bank}</b> saved.`); if (rep.plan[0] || rep.plan[1]) lines.push(`Plan: <b>${rep.plan[0]}</b> added, <b>${rep.plan[1]}</b> updated.`);
-    if (rep.skip) lines.push(`<b>${rep.skip}</b> row${rep.skip > 1 ? "s were" : " was"} not saved. Fix them in the file and upload again.`); if (!lines.length) lines.push("Nothing was found to save. Use the workbook from Download Excel and keep its sheet names.");
-    S.m = { type: "result", title: "Upload finished", lines, notes: rep.notes }; drawModal();
-  }
 
   // ---------------- Excel: report and types ----------------
   async function reportExcel() {
@@ -721,5 +621,6 @@ export function createCash(c) {
     await c.writeXlsx(wb, `Cash flow types ${c.todayIso}.xlsx`, "Excel saved");
   }
 
+  const W = createWeek({ S, c, esc, A, plain, money, scopeUnits, writableUnits, allUnits, canWrite, unitSel, stat, chip, viewOf, effBank, knownBanks, ushort, uname, typeHint, typeOptions, field, v, unitOpts, itemRow, logRow, run, drawModal, closeModal, setDay, fx });
   return { renderCash, subscribe, canSee };
 }
