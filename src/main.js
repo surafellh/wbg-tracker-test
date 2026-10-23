@@ -16,6 +16,7 @@ import { FINAL_LABELS, FINAL_CLASS, FINAL_COLOR, FINAL_BANDS, RATING_BANDS, rati
 import { createExtras } from "./extras.js";
 import { createProjects } from "./projects.js";
 import { createCash } from "./cash.js";
+import { createMessages } from "./messages.js";
 import { openViewer, canPreview } from "./viewer.js";
 applyPlugin(jsPDF); window.jspdf = { jsPDF }; window.XLSX = XLSX;
 
@@ -53,7 +54,7 @@ applyPlugin(jsPDF); window.jspdf = { jsPDF }; window.XLSX = XLSX;
   // The signed-in person (from the database). The database checks every save again.
   state.requests = []; state.dash = { type: "", units: [], period: "week", pop: false, range: 8 }; state.dashData = null; state.dashKey = "";
   state.level = "tasks"; state.history = null; state.lastSave = null; state.base = {}; state.unlock = new Set(); state.reqNotes = {}; state.people = null; state.pu = {};
-  const auth = () => me ? { name: me.name || "", role: me.role, title: me.title || "", unit: me.unit || "", departments: me.departments || [] } : {};
+  const auth = () => me ? { id: me.id || "", name: me.name || "", role: me.role, title: me.title || "", unit: me.unit || "", departments: me.departments || [] } : {};
   const isAppr = () => isAdmin(me);
   const isLenient = () => !!me && (me.role === "leader" || me.role === "planning");
   const canEdit = u => isAppr() || (unitMember(me, u) && me.role !== "staff");   // employees and division heads are view-only
@@ -1052,7 +1053,7 @@ applyPlugin(jsPDF); window.jspdf = { jsPDF }; window.XLSX = XLSX;
   // ---------- version 3: Business support, Feedback and Corrective actions (src/extras.js) ----------
   const X = createExtras({
     state, esc, fmt, th: (...a) => th(...a), sortOrder: (...a) => sortOrder(...a), sortedUnits: () => sortedUnits(), unitName: id => unitName(id), todayIso, toast: (...a) => toast(...a),
-    errText: e => errText(e), render: () => render(), db: () => db, api: () => api, auth: () => auth(), isAppr: () => isAppr(), canEdit: u => canEdit(u), canLead: u => canLead(u), canFeedback: () => canFeedback(me), myUnit: () => myUnit(), myRole: () => me && me.role,
+    messageAbout: l => DM.compose(l), errText: e => errText(e), render: () => render(), db: () => db, api: () => api, auth: () => auth(), isAppr: () => isAppr(), canEdit: u => canEdit(u), canLead: u => canLead(u), canFeedback: () => canFeedback(me), myUnit: () => myUnit(), myRole: () => me && me.role,
     downloads: () => downloads, libsReady: k => libsReady(k), sheetFromRows: (...a) => sheetFromRows(...a), writeXlsx: (...a) => writeXlsx(...a), XLSX: () => XLSX,
     newPdf: (...a) => newPdf(...a), pdfStyle: () => pdfStyle(), pdfFooter: (...a) => pdfFooter(...a), save: (...a) => save(...a), goTab: t => goTab(t), weekLabel: w => weekLabel(w),
     weekChoices: () => { const t = thisMonday(); return [nextWeekOf(t), t, prevWeekOf(t), prevWeekOf(prevWeekOf(t)), prevWeekOf(prevWeekOf(prevWeekOf(t)))]; }, thisWeek: () => thisMonday(), ALL,
@@ -1061,6 +1062,11 @@ applyPlugin(jsPDF); window.jspdf = { jsPDF }; window.XLSX = XLSX;
     libsReady: k => libsReady(k), sheetFromRows: (...a) => sheetFromRows(...a), writeXlsx: (...a) => writeXlsx(...a), XLSX: () => XLSX });
   const CF = createCash({ state, esc, fmt, sortedUnits: () => sortedUnits(), unitName: id => unitName(id), todayIso, toast: (...a) => toast(...a), errText: e => errText(e), render: () => render(), db: () => db, api: () => api, auth: () => auth(),
     libsReady: k => libsReady(k), sheetFromRows: (...a) => sheetFromRows(...a), writeXlsx: (...a) => writeXlsx(...a), saveFile: (...a) => save(...a), XLSX: () => XLSX });
+  const DM = createMessages({
+    esc, toast: (...a) => toast(...a), errText: e => errText(e), db: () => db, api: () => api, auth: () => auth(), unitName: id => unitName(id),
+    badge: () => { const n = DM.unreadCount(), b = $("#msgCount"); if (b) { b.textContent = n; b.hidden = !n; } },
+    openLink: l => { if (l.kind === "task") openTaskByRef(l.unit, l.ref, l.week); else if (l.kind === "feedback") { if (X.hasFeedback(l.ref)) X.showFeedback(l.ref); else { goTab("fb"); toast("This feedback is not available to you."); } } },
+  });
   // counts follow the chosen level: deliverables (rolled up) or the individual tasks behind them
   const levelPlan = p => !p ? p : (state.level === "deliverables" ? rolledPlan(p) : leafPlan(p));
   const realTasks = p => ((p && levelPlan(p).tasks) || []).filter(t => t.kind !== "KPI / OKR" && t.status !== "Closed");
@@ -2201,6 +2207,7 @@ applyPlugin(jsPDF); window.jspdf = { jsPDF }; window.XLSX = XLSX;
   });
   main.addEventListener("keydown", e => { const h = e.target.closest && e.target.closest("th[data-sort]"); if (h && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); h.click(); } });
   $("#bellBtn").onclick = bellMenu;
+  $("#msgBtn").onclick = () => { closeBellMenu(); DM.toggle(); };
   // keep the floating Plans tabs and the table header just under the top bar
   function syncStick(){ const h = document.querySelector("header.topbar"), ph = document.querySelector(".wrap.pagehead"); const root = document.documentElement.style;
     root.setProperty("--tbh", (h ? h.offsetHeight : 56) + "px"); root.setProperty("--phh", (ph && getComputedStyle(ph).position === "sticky" ? ph.offsetHeight : 0) + "px"); }
@@ -2358,7 +2365,7 @@ applyPlugin(jsPDF); window.jspdf = { jsPDF }; window.XLSX = XLSX;
     const pnState = state.panel, firstShow = !pnState.shown; pnState.shown = true;
     root.innerHTML = `<div class="scrim" id="pnOverlay"></div><aside class="side task-panel${firstShow ? " anim" : ""}" role="dialog" aria-modal="true" aria-label="Task ${esc(t.ref || "")}">
       <div class="panel-head"><div><div><span class="ref big">${esc(t.ref || "numbering…")}</span> ${t.parent ? `<span class="tag">↳ under ${esc(t.parent)}</span>` : ""} <span class="tag">${esc(unitName(u))}</span> ${t.carried ? '<span class="tag">carried</span>' : ""}</div></div>
-        <div class="toolbar">${!ed && editable === false && state.tab !== "update" && state.tab !== "plan" && canEdit(u) && state.filter.period !== "month" && !state.panel.ro ? `<button class="btn" id="pnEdit">Edit in this week's update</button>` : ""}<button class="btn" id="pnPrint" type="button">Print</button><button class="icon-btn" id="pnClose" aria-label="Close">×</button></div></div>
+        <div class="toolbar">${!ed && editable === false && state.tab !== "update" && state.tab !== "plan" && canEdit(u) && state.filter.period !== "month" && !state.panel.ro ? `<button class="btn" id="pnEdit">Edit in this week's update</button>` : ""}<button class="btn" id="pnMsg" type="button">Message</button><button class="btn" id="pnPrint" type="button">Print</button><button class="icon-btn" id="pnClose" aria-label="Close">×</button></div></div>
       <div class="panel-body">
         ${locked}
         ${fld("Task", ed && (!lk || getSettings().allowRename) ? `<textarea class="grow" rows="2" id="p-title" data-pf="title">${esc(t.title)}</textarea>` : `<div class="p-val"><b>${esc(t.title) || "(no title)"}</b></div>`)}
@@ -2539,6 +2546,7 @@ applyPlugin(jsPDF); window.jspdf = { jsPDF }; window.XLSX = XLSX;
       const pk = pOn(); if (!pk) return; const u = state.panel.u, t = pk.t;
       if (b.dataset.pm) { const pn = state.panel, ta = $("#p-comment"), person = (pn.people || []).find(p => p.id === b.dataset.pm); if (person && ta) { const pos = ta.selectionStart, before = ta.value.slice(0, pos).replace(/@[^\s@]*$/, ""), after = ta.value.slice(pos); ta.value = before + "@" + person.name + " " + after; pn.draft = ta.value; (pn.ment = pn.ment || {})[person.id] = person.name; ta.focus(); const at = (before + "@" + person.name + " ").length; ta.setSelectionRange(at, at); $("#pnSug").hidden = true; } return; }
       if (b.id === "pnPost") { postComment(); return; }
+      if (b.id === "pnMsg") { const pk = panelTask(); if (pk) DM.compose({ linkKind: "task", linkRef: pk.t.ref || "", linkUnit: state.panel.u, linkWeek: state.week, linkLabel: ((pk.t.ref ? pk.t.ref + " · " : "") + (pk.t.title || "")).slice(0, 120) }); return; }
       if (b.id === "pnPrint") { printPanel(); return; }
       if (b.id === "pnFb") { X.openFeedback(u, t.ref, state.week); return; }
       if (b.id === "pnAct") { X.openAction(u, t.ref, t.title); return; }
@@ -3570,7 +3578,7 @@ applyPlugin(jsPDF); window.jspdf = { jsPDF }; window.XLSX = XLSX;
     state.level = store.get("wp-level") || ((isAppr() || me.role === "executive") ? "deliverables" : "tasks");
     if (!state.editUnit || state.editUnit === ALL) { const mu = myUnit(); if (mu) { state.editUnit = mu; store.set("wp-unit", mu); } }
     if (!isAppr() && state.editUnit && !myUnit() && me.role !== "executive" && me.role !== "leader") state.editUnit = null;
-    subscribeRequests(); X.subscribe(); PJ.subscribe(); CF.subscribe(); refreshMentions(); refreshRR(); if (["planning", "leader", "super_admin", "executive"].includes(me.role)) subscribeActivity();
+    subscribeRequests(); X.subscribe(); DM.subscribe(); PJ.subscribe(); CF.subscribe(); refreshMentions(); refreshRR(); if (["planning", "leader", "super_admin", "executive"].includes(me.role)) subscribeActivity();
     { const st = store.get("wp-start"); if (st && st !== "dashboard" && !location.hash && document.querySelector(`nav.tabs button[data-tab="${st}"]`) && !(st === "people" && !isAppr())) setTimeout(() => goTab(st), 0); }
     window.addEventListener("offline", () => banner("You are offline. Changes will not save until the connection returns."));
     window.addEventListener("online", () => { bannerMsg = ""; subscribePlans(); render(); });
