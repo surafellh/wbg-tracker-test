@@ -33,7 +33,8 @@ export function periodLabel(key, mode) {
 // ---------- items ----------
 export const closedOn = (it) => (it.status && it.status !== "open" ? it.settledOn || it.enteredOn || "0000-00-00" : null);
 export const isOpenAt = (it, asOf) => (it.enteredOn || "0000-00-00") <= asOf && !(closedOn(it) && closedOn(it) <= asOf);
-export const etb = (it, fx) => n(it.amount) * (it.currency === "USD" ? n(fx) : 1);
+export const rateOf = (it, fx) => (it.currency === "USD" ? n(it.rate) || n(it.fxRate) || n(fx) : 1);   // the rate stored with the entry wins over today's rate
+export const etb = (it, fx) => n(it.amount) * rateOf(it, fx);
 export const typeOf = (types, code) => (types || []).find((t) => t.code === code) || null;
 export const countsIn = (it, types, incl) => { if (incl) return true; const t = typeOf(types, it.typeCode); return !t || t.expected !== false; };
 // Where an open item falls on the calendar: its expected date, or a date worked out from its urgency code.
@@ -184,3 +185,18 @@ export function reconcileRows(bank, log, units, from, to, fxRate) {
   }
   return rows;
 }
+
+// ---------- the weekly cash flow statement ----------
+// The rows of the statement every unit already uses (WEEKLY CASH FLOW). [kind, section, label]
+export const STMT = [
+  ["in", "operating", "Collection from cash sales"], ["in", "operating", "Cash collection / refund / service"], ["in", "operating", "Credit collection"], ["in", "operating", "Other income"],
+  ["in", "investing", "Sales of PPE"], ["in", "investing", "Sales of stock / bond"],
+  ["in", "financing", "Loan proceeds"], ["in", "financing", "Contribution from owners"],
+  ["out", "operating", "Operating activities"],
+  ["out", "investing", "Capital purchase"], ["out", "investing", "Purchase of investments"],
+  ["out", "financing", "Loan repayment"], ["out", "financing", "Dividend"], ["out", "financing", "Lease hold land payments"],
+];
+export const STMT_GROUP = { operating: "from operating activities", investing: "from investing activities", financing: "from financing activities" };
+export const stmtDefault = (kind, section) => (kind === "in" ? (section === "investing" ? "Sales of PPE" : section === "financing" ? "Loan proceeds" : section === "operating" ? "Credit collection" : "Other income") : section === "investing" ? "Capital purchase" : section === "financing" ? "Loan repayment" : "Operating activities");
+export const stmtOf = (w, item) => (w.stmt && STMT.some((s) => s[2] === w.stmt && s[0] === w.kind) ? w.stmt : stmtDefault(w.kind, w.section || (item && item.section) || "operating"));
+export const stmtSection = (label) => (STMT.find((s) => s[2] === label) || [])[1] || "operating";

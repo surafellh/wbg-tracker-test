@@ -1,8 +1,8 @@
-// Cash flow. Two groups of screens:
-//   See:   Summary (where cash stands, what is left after each step) and Report (plan against actual, by type, by bank, forecast).
-//   Enter: Daily log (what cash really moved, and in which bank), Collections and payments (what is expected), Plan (monthly plan lines), Setup (types, USD rate).
+// Cash flow. Seven tabs: Summary, Weekly plan (the weekly statement), Collections & payments and Bank (the two daily sheets),
+// Reconcile, Forecast (plan against actual, by type, monthly forecast lines) and Setup.
 // Shown to Group Finance, unit Finance departments, Group Strategy, CEO and DCEO.
 import { createWeek } from "./cashweek.js";
+import { createDay } from "./cashday.js";
 import { SECTIONS, PLAN_SECTIONS, PRIORITIES, CURRENCIES, bucketCode, BUCKET_TEXT, FIN_UNITS_FALLBACK, IMPLIED_DAYS, num, sum, addDays, addMonths, monthOf, keyOf, periods, periodLabel, periodEnd, isOpenAt, etb, bankAt, bankDays, position, funding, timeline, byType, planByMonth, HORIZON, MONTHS } from "./cashcalc.js";
 
 const weekStartOf = (iso) => { const d = new Date(iso + "T00:00:00Z").getUTCDay(); return addDays(iso, -((d + 1) % 7)); };
@@ -10,7 +10,7 @@ const clone = (o) => JSON.parse(JSON.stringify(o));
 const SHORT = { "wagwago-electric": "Wagwago Trading", trucksload: "TrucksLoad", geez: "Geez", "niyat-consultancy": "Niyat", "wanza-logistics": "Wanza" };
 const FULL = { "wagwago-electric": "Wagwago Trading (Electric and Corporate)" };
 const PRI_RANK = { High: 0, Normal: 1, Low: 2 };
-const TABS = [["summary", "Summary", "see"], ["report", "Report", "see"], ["recon", "Reconcile", "see"], ["reports", "Reports", "see"], ["week", "Weekly plan", "enter"], ["log", "Daily log", "enter"], ["items", "Lines", "enter"], ["plan", "Monthly plan", "enter"], ["setup", "Setup", "enter"]];
+const TABS = [["summary", "Summary"], ["week", "Weekly plan"], ["coll", "Collections & payments"], ["bank", "Bank"], ["recon", "Reconcile"], ["forecast", "Forecast"], ["setup", "Setup"]];
 const serialToIso = (v) => { if (v === "" || v == null) return ""; if (typeof v === "number") return new Date(Math.round((v - 25569) * 864e5)).toISOString().slice(0, 10); const s = String(v).trim(); const m = s.match(/^(\d{4})-(\d{2})-(\d{2})/); return m ? m[0] : ""; };
 const bucketOf = (v) => { const x = parseInt(String(v).trim(), 10); return x === 1 || x === 11 ? 1 : x === 2 || x === 22 ? 2 : x === 3 || x === 33 ? 3 : 0; };
 
@@ -55,7 +55,7 @@ export function createCash(c) {
     finally { S.busy = false; c.render(); }
   }
   const itemRow = (it) => ({ id: it.id, unit: it.unit, kind: it.kind, party: it.party, description: it.description, ref: it.ref, typeCode: it.typeCode, bucket: it.bucket, amount: it.amount, total: it.total ?? "", currency: it.currency, priority: it.priority, expected: it.expected || "", status: it.status, settledOn: it.settledOn || "", note: it.note, enteredOn: it.enteredOn, section: it.section || "", unplanned: !!it.unplanned, firstWeek: it.firstWeek || "" });
-  const logRow = (l) => ({ id: l.id, unit: l.unit, day: l.day, kind: l.kind, bank: l.bank, amount: l.amount, currency: l.currency, party: l.party, description: l.description, typeCode: l.typeCode, itemId: l.itemId || "", itemCode: l.itemCode || "", note: l.note });
+  const logRow = (l) => ({ fxRate: l.fxRate ?? "", id: l.id, unit: l.unit, day: l.day, kind: l.kind, bank: l.bank, amount: l.amount, currency: l.currency, party: l.party, description: l.description, typeCode: l.typeCode, itemId: l.itemId || "", itemCode: l.itemCode || "", note: l.note });
 
   // How much of each planned line has been collected or paid (from the daily log), up to a date.
   const loggedFor = (itemId, upTo, skipId) => sum(S.log.filter((l) => l.itemId === itemId && l.id !== skipId && (!upTo || l.day <= upTo)), (l) => l.amount);
@@ -103,8 +103,9 @@ export function createCash(c) {
       ${Object.keys(S.typeOn).length ? `<button class="btn small" data-cf="type-reset">Back to the saved settings</button>` : ""}</div></details>`;
   };
   const usdWarn = () => { const n = S.items.filter((i) => i.currency === "USD" && i.status === "open").length; return n && !fx() ? `<div class="cf-note warn">${n} open item${n > 1 ? "s are" : " is"} in USD and left out of the totals until the USD rate is set in Setup.</div>` : ""; };
+  const menu = (items) => { const ls = items.filter(Boolean); return ls.length ? `<details class="cf-menu"><summary class="btn small" aria-label="More" title="More">⋯</summary><div class="cf-menu-list">${ls.map(([a, t]) => `<button type="button" class="cf-menu-item" ${a}>${esc(t)}</button>`).join("")}</div></details>` : ""; };
   const stat = (k, v, sub, cls) => `<div class="cf-stat ${cls || ""}"><div class="k">${k}</div><div class="v">${v}</div>${sub ? `<div class="s">${sub}</div>` : ""}</div>`;
-  const excelBar = () => `<span class="cf-group"><button class="btn small" data-cf="w-day-down" title="The day's sheet with every open line prefilled">Download daily template</button><label class="btn small" title="Fill the moved column and the bank sheet, then upload">Upload day<input type="file" id="cfUploadDay" accept=".xlsx,.xls" hidden></label></span>`;
+  const _unusedExcelBar = () => `<span class="cf-group"><button class="btn small" data-cf="w-day-down" title="The day's sheet with every open line prefilled">Download daily template</button><label class="btn small" title="Fill the moved column and the bank sheet, then upload">Upload day<input type="file" id="cfUploadDay" accept=".xlsx,.xls" hidden></label></span>`;
 
   // One day for the whole page: the Summary, Report, Daily log and the lines all show that day.
   function setDay(d) { if (!d) return; S.asOf = S.day = d; S.calOpen = false; S.calMonth = monthOf(d); c.render(); }
@@ -130,10 +131,8 @@ export function createCash(c) {
   function renderCash() {
     if (!canSee()) return `<div class="cf"><div class="empty"><b>Cash flow</b>Cash flow is shown to Group Finance, the Finance departments of the business units, Group Strategy and the executive.</div></div>`;
     subscribe();
-    const seeTabs = TABS.filter((t) => t[2] === "see"), enterTabs = TABS.filter((t) => t[2] === "enter");
-    const tab = (t) => `<button class="cf-tab${S.view === t[0] ? " on" : ""}" data-cf="view" data-v="${t[0]}">${t[1]}</button>`;
-    const nav = `<div class="cf-nav"><div class="cf-tabs"><span class="cf-lab">See</span>${seeTabs.map(tab).join("")}</div><div class="cf-tabs"><span class="cf-lab">Enter</span>${enterTabs.map(tab).join("")}</div></div>`;
-    const body = { summary: renderSummary, report: renderReport, recon: () => W.renderReconcile(), reports: () => W.renderReports(), week: () => W.renderWeek(), log: renderLog, items: renderItems, plan: renderPlan, setup: renderSetup }[S.view]();
+    const nav = `<div class="cf-nav"><div class="cf-tabs">${TABS.map((t) => `<button class="cf-tab${S.view === t[0] ? " on" : ""}" data-cf="view" data-v="${t[0]}">${t[1]}</button>`).join("")}</div></div>`;
+    const body = { summary: renderSummary, week: () => W.renderWeek(), coll: () => D.renderColl(), bank: () => D.renderBank(), recon: () => W.renderReconcile(), forecast: renderForecast, setup: renderSetup }[S.view]();
     return `<div class="cf">${dayBar()}${undoBar()}${nav}${S.loaded < 3 ? `<div class="small muted cf-pad">Loading…</div>` : ""}${body}</div>`;
   }
 
@@ -220,7 +219,7 @@ export function createCash(c) {
     // by bank, for the month to date
     const from = asOf.slice(0, 8) + "01", bankRows = {}; for (const l of S.log) if (units.includes(l.unit) && l.day >= from && l.day <= asOf) { const k = l.unit + "|" + (l.bank || "No bank"); (bankRows[k] = bankRows[k] || { unit: l.unit, bank: l.bank || "No bank", in: 0, out: 0 })[l.kind] += etb(l, fx()); }
     const bkList = Object.values(bankRows).sort((a, b) => a.unit.localeCompare(b.unit) || a.bank.localeCompare(b.bank));
-    return `<div class="cf-body"><div class="cf-filters">${allUnits().length > 1 ? unitSel(S.scope) : ""}${urgencyChips()}${typeToggles()}<span class="cf-group">${mb("day", "Daily")}${mb("month", "Monthly")}${mb("quarter", "Quarterly")}</span><button class="btn small" data-cf="xl-report" style="margin-left:auto">Download Excel</button></div>
+    return `<div class="cf-body"><div class="cf-filters">${allUnits().length > 1 ? unitSel(S.scope) : ""}${urgencyChips()}${typeToggles()}<span class="cf-group">${mb("day", "Daily")}${mb("month", "Monthly")}${mb("quarter", "Quarterly")}</span><span class="cf-right">${menu([['data-cf="xl-report"', "Download this view"]])}</span></div>
       ${usdWarn()}
       <section class="cf-card"><h3>Planned against done</h3><div class="small muted">Planned: collections and payments due in the period (the remaining amount of each line when it was entered). Done: cash recorded in the daily log against those lines. “Not in plan” is cash that moved without a line.${rIn !== null || rOut !== null ? ` In the last ${past.length} period${past.length > 1 ? "s" : ""}, <b>${rIn === null ? "–" : Math.round(rIn * 100) + "%"}</b> of planned collections arrived and <b>${rOut === null ? "–" : Math.round(rOut * 100) + "%"}</b> of planned payments went out. The forecast below uses this.` : ""}</div>
         <div class="scroll"><table class="cf-table"><thead><tr><th>${label}</th><th>Collect: planned</th><th>done</th><th>%</th><th>Pay: planned</th><th>done</th><th>%</th><th>Not in plan (net)</th></tr></thead><tbody>${body}</tbody></table></div></section>
@@ -245,49 +244,6 @@ export function createCash(c) {
   const sumExpr = (t) => { const v = String(t ?? "").replace(/[\s,]/g, ""); if (!v) return 0; const parts = v.split("+"); let n = 0; for (const p of parts) { if (!/^\d*\.?\d+$/.test(p)) return NaN; n += Number(p); } return n; };
   const draftOf = (it) => { const d = S.dr[it.id] || {}; return { amt: d.amt ?? "", bank: d.bank ?? lastBank(it.unit, it.kind) }; };
   const draftCount = () => Object.entries(S.dr).filter(([id, d]) => num(d.amt) > 0 && S.items.some((i) => i.id === id)).length;
-  function renderLog() {
-    const units = scopeUnits(), day = S.day, q = S.dq.q.trim().toLowerCase(), kindF = S.dq.kind;
-    const rows = S.log.filter((l) => l.day === day && units.includes(l.unit)).sort((a, b) => a.unit.localeCompare(b.unit) || b.kind.localeCompare(a.kind) || (a.bank || "").localeCompare(b.bank || ""));
-    const totIn = sum(rows.filter((r) => r.kind === "in"), (r) => etb(r, fx())), totOut = sum(rows.filter((r) => r.kind === "out"), (r) => etb(r, fx()));
-    const todayOf = (id) => rows.filter((l) => l.itemId === id);
-    const lines = effItems(day).filter((it) => it.status === "open" && units.includes(it.unit) && canWrite(it.unit) && (!kindF || it.kind === kindF) && (!q || `${it.code} ${it.party} ${it.description} ${it.ref} ${it.typeCode}`.toLowerCase().includes(q)))
-      .sort((a, b) => (todayOf(b.id).length ? 1 : 0) - (todayOf(a.id).length ? 1 : 0) || (S.dr[b.id] && num(S.dr[b.id].amt) > 0 ? 1 : 0) - (S.dr[a.id] && num(S.dr[a.id].amt) > 0 ? 1 : 0) || a.bucket - b.bucket || etb(b, fx()) - etb(a, fx()));
-    const shown = lines.slice(0, S.dq.show), n = draftCount();
-    const bankSel = (it, d) => { const banks = knownBanks(it.unit), cur = d.bank && !banks.includes(d.bank) ? [d.bank, ...banks] : banks; return banks.length || d.bank ? `<select class="cf-bank" data-dr="bank" data-id="${esc(it.id)}" aria-label="Bank">${cur.map((b) => `<option ${b === d.bank ? "selected" : ""}>${esc(b)}</option>`).join("")}</select>` : `<span class="small muted">add a bank below</span>`; };
-    const sheet = shown.map((it) => { const d = draftOf(it), done = todayOf(it.id), over = num(d.amt) > num(it.amount) + 0.005;
-      return `<tr class="${num(d.amt) > 0 ? "cf-fill" : ""}"><td><span class="tag">${esc(it.code || "")}</span></td><td><b>${esc(it.party || it.description || "")}</b>${it.party && it.description ? `<div class="small muted">${esc(it.description)}</div>` : ""}
-        ${done.length ? `<div class="cf-pills">${done.map((l) => `<button type="button" class="cf-pill" data-cf="log-open" data-id="${esc(l.id)}" title="Recorded today. Click to edit">${it.kind === "in" ? "+" : "−"}${plain(l.amount)} · ${esc(l.bank || "")}</button>`).join("")}</div>` : ""}</td>
-        <td class="small" title="${esc(typeHint(it.typeCode))}">${esc(it.typeCode || "No type")}</td><td><span class="pill ${it.kind === "in" ? "s-done" : "s-not"}">${it.kind === "in" ? "Collect" : "Pay"}</span> <span class="small muted">${bucketCode(it.kind, it.bucket)}</span></td>
-        <td class="num">${money(it.amount, false)}${it.currency !== "ETB" ? ` <span class="tag">${esc(it.currency)}</span>` : ""}</td>
-        <td class="num"><input type="number" min="0" step="any" class="cf-amt${over ? " over" : ""}" data-dr="amt" data-id="${esc(it.id)}" value="${esc(String(d.amt))}" placeholder="0" aria-label="Cash today"></td><td>${bankSel(it, d)}</td></tr>`; }).join("");
-    // bank movements for the day: opening (yesterday's closing), what came in, what went out, closing. In and out are the bank's day totals.
-    const eb = effBank(), bkRows = []; for (const u of units) { const banks = [...new Set([...knownBanks(u), ...rows.filter((r) => r.unit === u && r.bank).map((r) => r.bank)])]; for (const bk of banks) {
-      const prev = eb.filter((b) => b.unit === u && b.bank === bk && b.day < day).sort((a, b) => b.day.localeCompare(a.day))[0], saved = S.bank.find((b) => b.unit === u && b.bank === bk && b.day === day);
-      const mine = rows.filter((r) => r.unit === u && r.bank === bk), itIn = sum(mine.filter((r) => r.kind === "in"), (r) => num(r.amount)), itOut = sum(mine.filter((r) => r.kind === "out"), (r) => num(r.amount));
-      const key = `${u}|${bk}|${day}`, d = S.bd[key] || {}, opening = prev ? num(prev.closing) : saved ? num(saved.opening) : num(d.open);
-      const inn = d.in !== undefined ? d.in : saved ? num(saved.inflow) : itIn || "", out = d.out !== undefined ? d.out : saved ? num(saved.outflow) : itOut || "";
-      const nIn = sumExpr(inn) || 0, nOut = sumExpr(out) || 0, calc = opening + nIn - nOut, close = d.close !== undefined ? d.close : saved ? num(saved.closing) : Math.round(calc * 100) / 100;
-      bkRows.push({ unit: u, bank: bk, key, opening, hasPrev: !!prev, inn, out, nIn, nOut, close, calc, saved, itIn, itOut }); } }
-    const bkHtml = bkRows.map((b) => { const w = canWrite(b.unit), restIn = b.nIn - b.itIn, restOut = b.nOut - b.itOut, trace = (v, rest) => (!(sumExpr(v) > 0) ? "" : `<div class="small ${rest < -0.5 ? "neg" : "muted"}">${rest < -0.5 ? "itemized " + plain(-rest) + " more than the total" : rest > 0.5 ? plain(rest) + " not itemized yet" : "all itemized"}</div>`);
-      return `<tr data-bkkey="${esc(b.key)}"><td class="small">${esc(ushort(b.unit))}</td><td><b>${esc(b.bank)}</b></td>
-        <td class="num">${b.hasPrev || b.saved ? plain(b.opening) : `<input type="number" step="any" class="cf-bk" data-bd="open" data-key="${esc(b.key)}" value="${esc(String(b.opening || ""))}" ${w ? "" : "disabled"} aria-label="Opening">`}</td>
-        <td class="num"><input type="text" inputmode="decimal" class="cf-bk" data-bd="in" data-key="${esc(b.key)}" value="${esc(String(b.inn))}" placeholder="0" ${w ? "" : "disabled"} aria-label="Total in">${trace(b.inn, restIn)}</td>
-        <td class="num"><input type="text" inputmode="decimal" class="cf-bk" data-bd="out" data-key="${esc(b.key)}" value="${esc(String(b.out))}" placeholder="0" ${w ? "" : "disabled"} aria-label="Total out">${trace(b.out, restOut)}</td>
-        <td class="num"><input type="number" step="any" class="cf-bk" data-bd="close" data-key="${esc(b.key)}" value="${esc(String(b.close))}" ${w ? "" : "disabled"} aria-label="Closing balance"><div class="small cf-bkchk">${Math.abs(num(b.close) - b.calc) > 0.5 ? `<span class="neg">opening + in − out is ${plain(b.calc)}</span>` : b.saved ? '<span class="ok">saved</span>' : '<span class="muted">not saved</span>'}</div></td></tr>`; }).join("");
-    const bkTot = { open: sum(bkRows, (b) => b.opening), inn: sum(bkRows, (b) => b.nIn), out: sum(bkRows, (b) => b.nOut), close: sum(bkRows, (b) => num(b.close)) };
-    const liveIds = new Set(S.items.map((i) => i.id)), other = rows.filter((l) => !l.itemId || !liveIds.has(l.itemId));
-    const otherHtml = other.map((l) => `<tr class="clickable" data-cf="log-open" data-id="${esc(l.id)}" tabindex="0"><td class="small">${esc(ushort(l.unit))}</td><td><span class="pill ${l.kind === "in" ? "s-done" : "s-not"}">${l.kind === "in" ? "In" : "Out"}</span></td><td>${esc(l.bank || "")}</td><td><b>${esc(l.party || l.description || "")}</b>${l.party && l.description ? `<div class="small muted">${esc(l.description)}</div>` : ""}</td><td class="num">${money(l.amount, false)}</td></tr>`).join("");
-    const w = writableUnits().length > 0;
-    return `<div class="cf-body"><div class="cf-filters">${allUnits().length > 1 ? unitSel(S.scope) : ""}<span style="margin-left:auto" class="cf-group">${excelBar()}</span></div>
-      <section class="cf-card"><div class="cf-split"><div><h3>Bank movements, ${esc(dShort(day))}</h3><div class="small muted">Per bank: what the account held at the start, the total that came in, the total that went out, and the closing. Enter the day's totals from the bank report, now or the next morning. To add several amounts, type them with a plus, for example <b>500000+250000</b>. Opening is yesterday's closing.</div></div>${w ? `<span class="cf-group"><button class="btn" data-cf="bank-new">+ Bank account</button><button class="btn primary" data-cf="bk-save" ${bkRows.length ? "" : "disabled"}>Save day</button></span>` : ""}</div>
-        ${bkRows.length ? `<div class="scroll"><table class="cf-table cf-bktable"><thead><tr><th>Unit</th><th>Bank</th><th>Opening</th><th>In</th><th>Out</th><th>Closing</th></tr></thead><tbody>${bkHtml}<tr class="tot"><td colspan="2"><b>Total</b></td><td class="num">${plain(bkTot.open)}</td><td class="num" id="cfTotIn">${plain(bkTot.inn)}</td><td class="num" id="cfTotOut">${plain(bkTot.out)}</td><td class="num" id="cfTotClose">${plain(bkTot.close)}</td></tr></tbody></table></div>` : `<div class="empty"><b>No bank accounts yet</b>${w ? `Press “+ Bank account” to add the first balance.` : ""}</div>`}</section>
-      <section class="cf-card"><div class="cf-split"><div><h3>Trace the cash to collections and payments</h3><div class="small muted">The bank totals above cannot show who paid or was paid. Itemize them here: type the amount next to the line and choose the bank. Do it in as many rounds as you need; each save adds entries. Several movements on the same line: save, then enter again.</div></div>${w ? `<button class="btn primary" data-cf="dr-save" ${n ? "" : "disabled"} id="cfDrSave">${n ? `Save ${n} entr${n > 1 ? "ies" : "y"}` : "Save entries"}</button>` : ""}</div>
-        <div class="cf-filters" style="margin:8px 0"><span class="cf-group">${chip(!kindF, 'data-cf="dkind" data-v=""', "All")}${chip(kindF === "in", 'data-cf="dkind" data-v="in"', "Collections")}${chip(kindF === "out", 'data-cf="dkind" data-v="out"', "Payments")}</span><input type="search" data-cfd="q" placeholder="Search party, code, type" value="${esc(S.dq.q)}" aria-label="Search"><span class="small muted">${lines.length} open line${lines.length === 1 ? "" : "s"}</span></div>
-        ${shown.length ? `<div class="scroll"><table class="cf-table cf-list cf-sheet"><thead><tr><th>Code</th><th>Party</th><th>Type</th><th></th><th title="Total minus collected or paid so far">Remaining</th><th>Cash today</th><th>Bank</th></tr></thead><tbody>${sheet}</tbody></table></div>${lines.length > shown.length ? `<div class="toolbar"><button class="btn" data-cf="dmore">Show more</button></div>` : ""}` : `<div class="empty"><b>No open lines${q ? " match" : ""}</b>${q ? "Clear the search." : "Add lines under Collections and payments."}</div>`}</section>
-      <section class="cf-card"><div class="cf-split"><div><h3>Other cash that moved</h3><div class="small muted">Money that was not in a planned line.</div></div>${w ? `<button class="btn" data-cf="log-new">+ Add cash movement</button>` : ""}</div>
-        ${other.length ? `<div class="scroll"><table class="cf-table"><thead><tr><th>Unit</th><th></th><th>Bank</th><th>Party</th><th>Amount</th></tr></thead><tbody>${otherHtml}</tbody></table></div>` : `<div class="small muted">Nothing.</div>`}</section>
-</div>`;
-  }
 
   // ---------------- Collections and payments ----------------
   // A line as it stood at the end of the chosen day: what was collected or paid that day, to date, and what was left.
@@ -307,29 +263,6 @@ export function createCash(c) {
   }
   const typeOptions = (kind, cur, withNew) => { const list = S.types.filter((t) => t.active && (!kind || t.kind === "both" || t.kind === kind)); if (cur && !list.some((t) => t.code === cur)) list.push({ code: cur, label: cur });
     return `<option value="">No type</option>${list.map((t) => `<option value="${esc(t.code)}" ${t.code === cur ? "selected" : ""}>${esc(t.code)}${t.label && t.label !== t.code ? " – " + esc(t.label) : ""}</option>`).join("")}${withNew && canWriteAny() ? `<option value="__new__">+ Add a new type…</option>` : ""}`; };
-  function renderItems() {
-    const f = S.lf, D = S.day, list = filteredItems(), shown = list.slice(0, f.show), noType = S.items.filter((i) => viewOf(i, D).open && scopeUnits().includes(i.unit) && !i.typeCode).length;
-    const totIn = sum(list.filter((o) => o.i.kind === "in"), (o) => etb({ ...o.i, amount: o.v.left }, fx())), totOut = sum(list.filter((o) => o.i.kind === "out"), (o) => etb({ ...o.i, amount: o.v.left }, fx())), movedIn = sum(list.filter((o) => o.i.kind === "in"), (o) => etb({ ...o.i, amount: o.v.onDay }, fx())), movedOut = sum(list.filter((o) => o.i.kind === "out"), (o) => etb({ ...o.i, amount: o.v.onDay }, fx()));
-    const rows = shown.map(({ i, v }) => { const w = canWrite(i.unit), t = typeByCode(i.typeCode), cur = i.currency !== "ETB" ? ` <span class="tag">${esc(i.currency)}</span>` : "";
-      return `<tr class="${v.open ? "" : "dim"}"><td><span class="tag">${esc(i.code || "")}</span></td><td class="small">${esc(ushort(i.unit))}</td>
-        <td><span class="pill ${i.kind === "in" ? "s-done" : "s-not"}">${i.kind === "in" ? "Collect" : "Pay"}</span> <b>${esc(i.party || "")}</b>${t && t.expected === false ? ' <span class="tag" title="This type is not counted in the summary and report. Change it in Setup, or under Counted types on the Summary.">not counted</span>' : ""}${i.description ? `<div class="small muted">${esc(i.description)}</div>` : ""}${i.ref ? `<div class="small muted">Ref ${esc(i.ref)}</div>` : ""}</td>
-        <td title="${esc(t ? (t.label && t.label !== t.code ? t.label + ". " : "") + (t.description || "") : "")}">${w && v.open ? `<select class="cf-sel" data-cfq="type" data-id="${esc(i.id)}" aria-label="Type">${typeOptions(i.kind, i.typeCode, true)}</select>` : esc(i.typeCode || "No type")}</td>
-        <td class="small" title="${esc(BUCKET_TEXT[i.bucket])}">${bucketCode(i.kind, i.bucket)}</td><td class="num">${num(i.total) > 0 ? `${money(i.total, false)}${cur}` : '<span class="muted">–</span>'}</td>
-        <td class="num">${v.onDay ? `<b>${money(v.onDay, false)}</b>` : '<span class="muted">–</span>'}</td>
-        <td class="num">${v.to ? money(v.to, false) : '<span class="muted">–</span>'}${num(i.total) > 0 && v.to ? `<div class="small muted">${pct(v.to, i.total)}</div>` : ""}</td>
-        <td class="num"><b>${v.open ? money(v.left, false) : '<span class="muted">–</span>'}</b>${v.open ? cur : ""}</td>
-        <td>${w && v.open ? `<input type="date" class="cf-date" data-cfq="expected" data-id="${esc(i.id)}" value="${esc(i.expected || "")}" aria-label="Expected date">` : esc(dShort(i.expected))}</td>
-        <td class="small cf-act">${!v.open ? `<span class="pill s-done">${v.wo ? "Written off" : i.kind === "in" ? "Collected" : "Paid"}</span>` : v.to > 0 ? `<span class="pill s-not">Part ${i.kind === "in" ? "collected" : "paid"}</span>` : ""}${w ? `<div class="toolbar">${v.open ? `<button class="btn small" data-cf="rec" data-id="${esc(i.id)}">${i.kind === "in" ? "Collected" : "Paid"}</button>` : ""}<button class="btn small ghost" data-cf="item-open" data-id="${esc(i.id)}">Edit</button></div>` : ""}</td></tr>`; }).join("");
-    const opt = (v, l) => `<option value="${v}" ${f.status === v ? "selected" : ""}>${l}</option>`;
-    return `<div class="cf-body"><div class="cf-filters">${allUnits().length > 1 ? unitSel(S.scope) : ""}<span class="cf-group">${chip(!f.kind, 'data-cf="lkind" data-v=""', "All")}${chip(f.kind === "in", 'data-cf="lkind" data-v="in"', "Collections")}${chip(f.kind === "out", 'data-cf="lkind" data-v="out"', "Payments")}</span>${urgencyChips()}
-        <select data-cff="type" aria-label="Type"><option value="">All types</option><option value="__none" ${f.type === "__none" ? "selected" : ""}>No type (${noType})</option>${S.types.map((t) => `<option value="${esc(t.code)}" ${f.type === t.code ? "selected" : ""}>${esc(t.code)}</option>`).join("")}</select>
-        <select data-cff="status" aria-label="Show">${opt("active", "Open, or moved that day")}${opt("open", "Open at the end of the day")}${opt("day", "Moved that day")}${opt("settled", "Settled")}${opt("written_off", "Written off")}${opt("all", "All")}</select>
-        <input type="search" data-cff="q" placeholder="Search party, code, reference" value="${esc(f.q)}" aria-label="Search"></div>
-      <div class="cf-filters"><span class="small muted">As at the end of <b>${esc(dShort(D))}</b>: ${list.length} line${list.length === 1 ? "" : "s"} · collected that day ${plain(movedIn)} · paid that day ${plain(movedOut)} · remaining to collect ${plain(totIn)} · remaining to pay ${plain(totOut)}</span><span style="margin-left:auto" class="cf-group">${excelBar()}${writableUnits().length ? `<button class="btn primary" data-cf="item-new">+ Add a line</button>` : ""}</span></div>
-      ${usdWarn()}${noType ? `<div class="cf-note">${noType} open line${noType > 1 ? "s have" : " has"} no type. Choose one so it adds up in the report. <button class="btn small" data-cf="no-type">Show them</button></div>` : ""}
-      <section class="cf-card flush">${list.length ? `<div class="scroll"><table class="cf-table cf-items"><thead><tr><th>Code</th><th>Unit</th><th>Party</th><th>Type</th><th title="1 / 11 within a month, 2 / 22 within two months, 3 / 33 long term">Urgency</th><th title="The full invoice amount, when known">Total</th><th title="Collected for collections, paid for payments, on the chosen day only">Collected / paid ${D === c.todayIso ? "today" : "on " + esc(dShort(D))}</th><th title="Everything collected or paid up to the end of the chosen day">Collected / paid to date</th><th title="What is still to be collected or paid at the end of the chosen day">Remaining</th><th title="Blank: about 30, 60 or 120 days ahead, by urgency">Expected</th><th class="cf-act"></th></tr></thead><tbody>${rows}</tbody></table></div>
-      ${list.length > f.show ? `<div class="toolbar cf-pad"><button class="btn" data-cf="more">Show more</button></div>` : ""}` : `<div class="empty"><b>Nothing here</b>Change the filters or the day, or add a line.</div>`}</section></div>`;
-  }
 
   // ---------------- Plan ----------------
   function renderPlan() {
@@ -337,10 +270,15 @@ export function createCash(c) {
     const pm = planByMonth(plans, units), mths = pm.months;
     const sec = SECTIONS.slice(0, 3).flatMap(([s, l]) => ["in", "out"].map((k) => { const r = pm.rows[`${s}|${k}`]; return r ? `<tr><td>${l} ${k === "in" ? "inflow" : "outflow"}</td>${mths.map((m) => `<td class="num">${money(r[m])}</td>`).join("")}</tr>` : ""; })).join("");
     const net = `<tr class="tot"><td><b>Net cash flow</b></td>${mths.map((m) => `<td class="num strong">${money(sum(Object.entries(pm.rows), ([k, v]) => (k.endsWith("|in") ? 1 : -1) * num(v[m])), false)}</td>`).join("")}</tr>`;
-    return `<div class="cf-body"><div class="cf-filters">${allUnits().length > 1 ? unitSel(S.scope) : ""}<label class="small muted">From <input type="month" data-cfc="pfrom" value="${esc(from)}"></label><span style="margin-left:auto" class="cf-group">${excelBar()}${writableUnits().length ? `<button class="btn primary" data-cf="plan-new">+ Plan line</button>` : ""}</span></div>
-      <div class="small muted cf-pad">The monthly plan finance prepares: what is planned to come in and go out, by operating, investing and financing. The Report compares it with the cash that really moved.</div>
+    return `<div class="cf-body"><div class="cf-filters"><label class="small muted">From <input type="month" data-cfc="pfrom" value="${esc(from)}"></label>${writableUnits().length ? `<button class="btn small" data-cf="plan-new">+ Forecast line</button>` : ""}</div>
+      <div class="small muted cf-pad">The monthly forecast lines (for example the Sept to Nov forecast): what is expected to come in and go out each month. The tables above compare them with the cash that really moved.</div>
       ${mths.length ? `<section class="cf-card"><h3>Plan summary</h3><div class="scroll"><table class="cf-table"><thead><tr><th>Line</th>${mths.map((m) => `<th>${esc(periodLabel(m, "month"))}</th>`).join("")}</tr></thead><tbody>${sec}${net}</tbody></table></div></section>` : ""}
       <section class="cf-card flush">${plans.length ? `<div class="scroll"><table class="cf-table"><thead><tr><th>Month</th><th>Unit</th><th>Section</th><th></th><th>Line</th><th>Amount</th><th></th></tr></thead><tbody>${plans.map((p) => `<tr><td>${esc(periodLabel(p.month, "month"))}</td><td class="small">${esc(ushort(p.unit))}</td><td class="small">${esc((SECTIONS.find((s) => s[0] === p.section) || [])[1] || p.section)}</td><td class="small">${p.kind === "in" ? "Inflow" : "Outflow"}</td><td>${esc(p.label)}</td><td class="num">${money(p.amount, false)}</td><td>${canWrite(p.unit) ? `<button class="btn small ghost" data-cf="plan-open" data-id="${esc(p.id)}">Edit</button>` : ""}</td></tr>`).join("")}</tbody></table></div>` : `<div class="empty"><b>No plan lines yet</b>Add the monthly forecast, for example collections expected, payroll, CAPEX or loan repayments.</div>`}</section></div>`;
+  }
+
+  function renderForecast() {
+    const r = renderReport(), n = S.plan.filter((p) => scopeUnits().includes(p.unit)).length;
+    return r.replace(/<\/div>$/, `<details class="cf-card cf-fold"><summary><b>Monthly forecast lines</b> <span class="small muted">${n}</span></summary>${renderPlan()}</details></div>`);
   }
 
   // ---------------- Setup ----------------
@@ -363,7 +301,7 @@ export function createCash(c) {
     let root = document.getElementById("cfModalRoot");
     if (!root) { root = document.createElement("div"); root.id = "cfModalRoot"; document.body.append(root);
       root.addEventListener("click", (e) => { const el = e.target.closest("[data-cf]"); if (el) onAction(el); else if (e.target.classList && e.target.classList.contains("overlay")) closeModal(); });
-      root.addEventListener("change", (e) => { const id = e.target.id; if (id === "ci-type" && e.target.value === "__new__") onAction({ dataset: { cf: "type-from-item" } }); else if (id === "cl-code") linkPick(); else if (id === "cl-bank") bankPick(); else if (id === "ci-kind") { readItem(); drawModal(); } });
+      root.addEventListener("change", (e) => { const id = e.target.id; if (id === "ci-type" && e.target.value === "__new__") onAction({ dataset: { cf: "type-from-item" } }); else if (id === "cl-code") linkPick(); else if (id === "cl-bank") bankPick(); else if (id === "ci-kind") { readItem(); drawModal(); } else if (id === "cw-kind" || id === "cw-cur") W.onModalChange(id); });
       root.addEventListener("input", (e) => { if (e.target.id === "cl-code") linkPick(); }); }
     return root;
   }
@@ -473,6 +411,7 @@ export function createCash(c) {
   async function onAction(el) {
     const x = el.dataset.cf, id = el.dataset.id, m = S.m, it = id ? S.items.find((q) => q.id === id) : null;
     if (x && x.startsWith("w-")) { await W.onAction(el); return; }
+    if (x && x.startsWith("d-")) { await D.onAction(el); return; }
     if (x === "view") { S.view = el.dataset.v; c.render(); }
     else if (x === "today") setDay(c.todayIso);
     else if (x === "mode") { S.mode = el.dataset.v; c.render(); }
@@ -482,8 +421,8 @@ export function createCash(c) {
     else if (x === "type-reset") { S.typeOn = {}; keepOpen(); }
     else if (x === "lkind") { S.lf.kind = el.dataset.v; S.lf.show = 40; c.render(); }
     else if (x === "more") { S.lf.show += 40; c.render(); }
-    else if (x === "no-type") { S.lf.type = "__none"; S.lf.status = "open"; c.render(); }
-    else if (x === "cat-open") { S.lf.kind = el.dataset.kind; S.lf.type = el.dataset.code; S.lf.status = "open"; S.lf.q = ""; S.view = "items"; c.render(); }
+    else if (x === "no-type") { S.lf.type = "__none"; S.lf.status = "open"; S.view = "coll"; c.render(); }
+    else if (x === "cat-open") { S.lf.kind = el.dataset.kind; S.lf.type = el.dataset.code; S.lf.status = "open"; S.lf.q = ""; S.view = "coll"; c.render(); }
     else if (x === "close") closeModal();
     else if (x === "day-shift") setDay(addDays(S.day, Number(el.dataset.v)));
     else if (x === "day-today") setDay(c.todayIso);
@@ -512,7 +451,7 @@ export function createCash(c) {
       const ents = Object.entries(S.dr).map(([id, d]) => ({ it: S.items.find((q) => q.id === id), d })).filter((o) => o.it && num(o.d.amt) > 0 && canWrite(o.it.unit));
       if (!ents.length) return; const noBank = ents.find((o) => !(o.d.bank || lastBank(o.it.unit, o.it.kind))); if (noBank) { c.toast("Choose the bank for " + (noBank.it.party || noBank.it.code)); return; }
       const ok = await run(async () => { for (const { it, d } of ents) {
-        const res = await c.api().saveCfLog(A(), { unit: it.unit, day: S.day, kind: it.kind, bank: d.bank || lastBank(it.unit, it.kind), amount: num(d.amt), currency: it.currency, party: it.party, description: it.description, typeCode: it.typeCode, itemId: it.id, itemCode: it.code, note: "" });
+        const res = await c.api().saveCfLog(A(), { unit: it.unit, day: S.day, kind: it.kind, bank: d.bank || lastBank(it.unit, it.kind), amount: num(d.amt), currency: it.currency, party: it.party, description: it.description, typeCode: it.typeCode, itemId: it.id, itemCode: it.code, note: "", fxRate: it.currency === "USD" ? fx() || "" : "" });
         if (res && res.error) return res; const e = await syncLine(it.id, num(d.amt), S.day); if (e && e.error) return e; } return { ok: true }; }, `${ents.length} entr${ents.length > 1 ? "ies" : "y"} saved`);
       if (ok) { ents.forEach((o) => delete S.dr[o.it.id]); c.render(); }
     }
@@ -535,7 +474,7 @@ export function createCash(c) {
       const rows = [...document.querySelectorAll("tr[data-bkkey]")].map((tr) => { const [unit, bank, day] = tr.dataset.bkkey.split("|"), g = (k) => (tr.querySelector(`[data-bd="${k}"]`) || {}).value; return { unit, bank, day, tr, open: g("open"), inn: sumExpr(g("in")), out: sumExpr(g("out")), close: g("close") }; }).filter((r) => canWrite(r.unit));
       if (!rows.length) return;
       const bad = rows.find((r) => Number.isNaN(r.inn) || Number.isNaN(r.out)); if (bad) { c.toast("In and Out must be numbers, or a sum like 500000+250000"); return; }
-      const ok = await run(async () => { for (const r of rows) { const prev = effBank().filter((b) => b.unit === r.unit && b.bank === r.bank && b.day < r.day).sort((a, b) => b.day.localeCompare(a.day))[0], opening = prev ? num(prev.closing) : num(r.open); const closing = r.close === "" ? opening + r.inn - r.out : num(r.close);
+      const ok = await run(async () => { for (const r of rows) { const prev = effBank().filter((b) => b.unit === r.unit && b.bank === r.bank && b.day < r.day).sort((a, b) => b.day.localeCompare(a.day))[0], opening = prev ? num(prev.closing) : num(r.open); const closing = Math.round((opening + r.inn - r.out) * 100) / 100;
         const res = await c.api().saveCfBank(A(), { unit: r.unit, day: r.day, bank: r.bank, opening, inflow: r.inn, outflow: r.out, closing }); if (res && res.error) return res; } return { ok: true }; }, "Day saved");
       if (ok) rows.forEach((r) => delete S.bd[`${r.unit}|${r.bank}|${r.day}`]);
     }
@@ -591,20 +530,19 @@ export function createCash(c) {
   const main = document.getElementById("main");
   main.addEventListener("click", (e) => { if (e.target.closest("select,input,label")) return; const el = e.target.closest("[data-cf]"); if (el) { if (el.tagName === "A") e.preventDefault(); onAction(el); } });
   main.addEventListener("keydown", (e) => { const el = e.target.closest && e.target.closest("tr[data-cf]"); if (el && (e.key === "Enter" || e.key === " ") && !e.target.closest("select,input,button")) { e.preventDefault(); onAction(el); } });
-  main.addEventListener("change", (e) => { const t = e.target; if (t.id === "cfUploadDay" || t.id === "cwUploadWeek") { if (t.files[0]) (t.id === "cwUploadWeek" ? W.uploadWeek : W.uploadDay)(t.files[0]); t.value = ""; return; } if (!t.dataset) return; if (t.dataset.dr) { onDraft(t); return; } if (t.dataset.cfq) onQuick(t); else if (t.dataset.cfc) onControl(t); else if (t.dataset.cff && t.dataset.cff !== "q") onFilter(t); });
+  main.addEventListener("change", (e) => { const t = e.target; if (t.id === "cfUploadDay" || t.id === "cwUploadWeek") { if (t.files[0]) (t.id === "cwUploadWeek" ? W.uploadWeek : D.uploadDay)(t.files[0]); t.value = ""; return; } if (!t.dataset) return; if (t.dataset.dr) { onDraft(t); return; } if (t.dataset.cfq) onQuick(t); else if (t.dataset.cfc) onControl(t); else if (t.dataset.cff && t.dataset.cff !== "q") onFilter(t); });
   const onBank = (t) => {
     const key = t.dataset.key, d = S.bd[key] || (S.bd[key] = {}), tr = t.closest("tr"), k = t.dataset.bd; d[k] = t.value;
-    const g = (n) => (tr.querySelector(`[data-bd="${n}"]`) || {}).value, openCell = tr.querySelector('[data-bd="open"]'), opening = openCell ? num(openCell.value) : num(String(tr.children[2].textContent).replace(/,/g, "")), inn = sumExpr(g("in")), out = sumExpr(g("out"));
-    const calc = opening + (Number.isNaN(inn) ? 0 : inn) - (Number.isNaN(out) ? 0 : out), cl = tr.querySelector('[data-bd="close"]');
-    if (k !== "close" && cl) { cl.value = String(Math.round(calc * 100) / 100); d.close = cl.value; }
-    const chk = tr.querySelector(".cf-bkchk"); if (chk) chk.innerHTML = Math.abs(num(cl.value) - calc) > 0.5 ? `<span class="neg">opening + in − out is ${plain(calc)}</span>` : '<span class="muted">not saved</span>';
-    const rowsAll = [...document.querySelectorAll("tr[data-bkkey]")], tot = (n) => sum(rowsAll, (r) => { const x = n === "close" ? num((r.querySelector('[data-bd="close"]') || {}).value) : sumExpr((r.querySelector(`[data-bd="${n}"]`) || {}).value); return Number.isNaN(x) ? 0 : x; });
-    const set = (id, v) => { const e = document.getElementById(id); if (e) e.textContent = plain(v); }; set("cfTotIn", tot("in")); set("cfTotOut", tot("out")); set("cfTotClose", tot("close"));
+    const g = (n) => (tr.querySelector(`[data-bd="${n}"]`) || {}).value, openCell = tr.querySelector('[data-bd="open"]'), oc = openCell ? null : tr.querySelector("td.num"), opening = openCell ? num(openCell.value) : num(String(oc ? oc.textContent : 0).replace(/,/g, "")), inn = sumExpr(g("in")), out = sumExpr(g("out"));
+    const cl = tr.querySelector("[data-bd-close]"); if (cl) { cl.dataset.v = String(opening + (Number.isNaN(inn) ? 0 : inn) - (Number.isNaN(out) ? 0 : out)); cl.textContent = plain(cl.dataset.v); }
+    const rowsAll = [...document.querySelectorAll("tr[data-bkkey]")], tot = (n) => sum(rowsAll, (r) => { if (n === "close") return num((r.querySelector("[data-bd-close]") || { dataset: {} }).dataset.v ?? String((r.querySelector("[data-bd-close]") || {}).textContent || "").replace(/,/g, "")); const x = sumExpr((r.querySelector(`[data-bd="${n}"]`) || {}).value); return Number.isNaN(x) ? 0 : x; });
+    const set = (id, val) => { const e = document.getElementById(id); if (e) e.textContent = plain(val); }; set("cfTotIn", tot("in")); set("cfTotOut", tot("out")); set("cfTotClose", tot("close"));
   };
-  const onDraft = (t) => { const d = S.dr[t.dataset.id] || (S.dr[t.dataset.id] = {}); d[t.dataset.dr] = t.value; const b = document.getElementById("cfDrSave"), n = draftCount(); if (b) { b.disabled = !n; b.textContent = n ? `Save ${n} entr${n > 1 ? "ies" : "y"}` : "Save entries"; } const row = t.closest("tr"); if (row) row.classList.toggle("cf-fill", num(d.amt) > 0); };
+  const onDraft = (t) => { const d = S.dr[t.dataset.id] || (S.dr[t.dataset.id] = {}); d[t.dataset.dr] = t.value; const b = document.getElementById("cfDrSave"), n = draftCount(); if (b) { b.disabled = !n; b.textContent = n ? `Save ${n} entr${n > 1 ? "ies" : "y"}` : "Save entries"; } const row = t.closest("tr"); if (row) { row.classList.toggle("cf-fill", num(d.amt) > 0); const lf = row.querySelector("[data-left-of]"); if (lf && t.dataset.dr === "amt") lf.textContent = plain(Math.max(0, num(t.dataset.left) - num(t.value))); } };
   main.addEventListener("input", (e) => { const t = e.target; if (t.dataset && t.dataset.bd) { onBank(t); return; } if (t.dataset && t.dataset.dr) { onDraft(t); return; } if (t.dataset && t.dataset.cfd === "q") { clearTimeout(onFilter.d); onFilter.d = setTimeout(() => { S.dq.q = t.value; S.dq.show = 30; c.render(); const e2 = document.querySelector('[data-cfd="q"]'); if (e2) { e2.focus(); e2.setSelectionRange(e2.value.length, e2.value.length); } }, 250); return; } if (t.dataset && t.dataset.cff === "q") { clearTimeout(onFilter.t); onFilter.t = setTimeout(() => onFilter(t), 250); } });
   main.addEventListener("pointermove", hover); main.addEventListener("pointerleave", unhover, true); main.addEventListener("pointerdown", hover);
   document.addEventListener("keydown", (e) => { if (e.key === "Escape" && S.m) closeModal(); });
+  document.addEventListener("click", (e) => { document.querySelectorAll("details.cf-menu[open]").forEach((d) => { if (!d.contains(e.target) || e.target.closest(".cf-menu-item")) d.open = false; }); });
 
   // ---------------- Excel: report and types ----------------
   async function reportExcel() {
@@ -621,6 +559,7 @@ export function createCash(c) {
     await c.writeXlsx(wb, `Cash flow types ${c.todayIso}.xlsx`, "Excel saved");
   }
 
-  const W = createWeek({ S, c, esc, A, plain, money, scopeUnits, writableUnits, allUnits, canWrite, unitSel, stat, chip, viewOf, effBank, knownBanks, ushort, uname, typeHint, typeOptions, field, v, unitOpts, itemRow, logRow, run, drawModal, closeModal, setDay, fx });
+  const hh = { S, c, esc, A, plain, money, scopeUnits, writableUnits, allUnits, canWrite, unitSel, stat, chip, viewOf, effBank, knownBanks, lastBank, ushort, uname, typeHint, typeOptions, typeByCode, field, v, unitOpts, itemRow, logRow, run, drawModal, closeModal, setDay, fx, menu, usdWarn, draftOf, draftCount, sumExpr, syncLine };
+  const W = createWeek(hh), D = createDay(hh);
   return { renderCash, subscribe, canSee };
 }

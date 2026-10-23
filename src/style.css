@@ -1089,3 +1089,35 @@ tr.dim td{opacity:.55}.fut td{opacity:.9}
 .cf-items td.cf-act{white-space:nowrap}
 .cf-table tr.dim{opacity:.6}
 .cf-table tr.strong td{font-size:1.05em}
+
+/* Cash flow, simplified: one slim bar per page, three-dot menus, statement table */
+.cf-bar{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin:6px 0 10px}
+.cf-bar select,.cf-bar input[type=search]{max-width:190px}
+.cf-bar .cf-s{max-width:150px}
+.cf-right{margin-left:auto;display:inline-flex;align-items:center;gap:6px}
+.cf-wk{display:inline-flex;align-items:center;gap:6px}
+.cf-datemini{width:auto;max-width:140px;padding:4px 6px}
+.cf-sum{margin:0 0 8px}
+.cf-menu{position:relative;display:inline-block}
+.cf-menu>summary{list-style:none;cursor:pointer;min-width:30px;text-align:center}
+.cf-menu>summary::-webkit-details-marker{display:none}
+.cf-menu-list{position:absolute;right:0;top:100%;z-index:30;min-width:230px;background:var(--surface,#fff);border:1px solid var(--line,#ddd);border-radius:8px;box-shadow:0 6px 20px rgba(0,0,0,.15);padding:4px;margin-top:2px}
+.cf-menu-item{display:block;width:100%;text-align:left;background:none;border:0;padding:8px 10px;border-radius:6px;cursor:pointer;font:inherit;color:inherit}
+.cf-menu-item:hover,.cf-menu-item:focus{background:rgba(127,127,127,.15)}
+.cf-stmt td:first-child{white-space:normal}
+.cf-stmt tr.cf-row.clickable{cursor:pointer}
+.cf-stmt tr.cf-sub td{background:rgba(127,127,127,.06);font-size:.92em}
+.cf-caret{display:inline-block;width:1em;color:#888}
+.cf-kd.in{color:#2e7d32}.cf-kd.out{color:#c62828}
+.cf-coll th,.cf-coll td{padding:5px 7px}
+.cf-coll .cf-amt{width:96px}
+.cf-coll .cf-bank{max-width:130px}
+.cf-fold>summary{cursor:pointer;padding:6px 0}
+.cf-bktable td.num .cf-bk{width:120px}
+@media(max-width:700px){.cf-right{margin-left:0}}
+.cf-menu{width:auto;flex:0 0 auto}
+.cf-menu>summary{display:inline-flex;align-items:center;justify-content:center;list-style:none;width:auto}
+.cf-menu>summary::marker{content:""}
+.cf-coll thead th,.cf-bktable thead th{text-align:left}
+.cf-coll thead th:nth-child(5),.cf-coll thead th:nth-child(6),.cf-coll thead th:nth-child(8),.cf-bktable thead th.n{text-align:right}
+.cf-stmt thead th:first-child{text-align:left}
