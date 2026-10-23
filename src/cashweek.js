@@ -218,12 +218,12 @@ export function createWeek(h) {
     const wb = await XL.newBook(c, (col) => { col(1, ["Collect", "Pay"], "L_Kind"); col(2, STMT.map((s) => s[2]), "L_Row"); col(3, types.length ? types : [""], "L_Type"); col(4, ["1", "2", "3"], "L_Urg"); col(5, CURRENCIES, "L_Cur"); }); if (!wb) return;
     for (const u of units) {
       const nm = short(u), det = wb.addWorksheet(`${nm} Detail`.slice(0, 31), { views: [{ state: "frozen", ySplit: 4 }] }), st = wb.addWorksheet(`${nm} Plan`.slice(0, 31), { views: [{ showGridLines: false }] });
-      const m = buildStmt([u], W), pre = [...m.in.rows, ...m.out.rows].flatMap((r) => r.lines).filter((l) => l.it);
-      const rows = pre.length ? pre.map((l) => ({ it: l.it, row: l.stmt, planned: Math.round((l.plan / (l.rate || 1)) * 100) / 100, rate: l.rate, due: l.due, remark: l.remark })) : m.cand.map((x) => ({ it: x.it, row: stmtDefault(x.it.kind, x.it.section), planned: Math.round(x.left * 100) / 100, rate: x.it.currency === "USD" ? h.fx() : "", due: x.it.expected, remark: "" }));
+      const m = buildStmt([u], W), pre = [...m.in.rows, ...m.out.rows].flatMap((r) => r.lines);
+      const rows = pre.length ? pre.map((l) => ({ it: l.it, wl: l, row: l.stmt, planned: Math.round((l.plan / (l.rate || 1)) * 100) / 100, rate: l.rate, due: l.due, remark: l.remark })) : m.cand.map((x) => ({ it: x.it, row: stmtDefault(x.it.kind, x.it.section), planned: Math.round(x.left * 100) / 100, rate: x.it.currency === "USD" ? h.fx() : "", due: x.it.expected, remark: "" }));
       det.getCell("A1").value = "Week starting (Saturday)"; det.getCell("B1").value = XL.toDate(W); det.getCell("B1").numFmt = "yyyy-mm-dd"; det.getCell("A2").value = "Business unit"; det.getCell("B2").value = h.uname(u); XL.bold(det.getCell("A1")); XL.bold(det.getCell("A2"));
       det.getCell("D1").value = `${weekLabel(W)}. Planned this week = what you expect to collect or pay in this week. Code links the line to the daily sheet: leave it empty for a new line.`;
       XL.head(det, 4, ["Code", "Collect or pay", "Cash flow row", "Customer or payee", "Invoice no", "Description", "Type", "Cat (1, 2, 3)", "Due date", "Currency", "Rate (ETB per USD)", "Planned this week", "Remark", "Planned in ETB"], [13, 12, 28, 30, 16, 34, 14, 9, 12, 9, 12, 16, 28, 16]);
-      rows.forEach((x, k) => { const r = 5 + k, it = x.it; [it.code, it.kind === "in" ? "Collect" : "Pay", x.row, it.party, it.ref, it.description, it.typeCode, it.bucket, XL.toDate(x.due), it.currency, it.currency === "USD" ? x.rate : "", x.planned, x.remark].forEach((val, i) => { det.getCell(r, i + 1).value = val; }); XL.fill(det.getCell(r, 1), XL.GREY); });
+      rows.forEach((x, k) => { const r = 5 + k, it = x.it || { code: "", kind: x.wl.kind, party: x.wl.party, ref: x.wl.w.ref, description: x.wl.description, typeCode: "", bucket: "", currency: x.wl.cur }; [it.code, it.kind === "in" ? "Collect" : "Pay", x.row, it.party, it.ref, it.description, it.typeCode, it.bucket, XL.toDate(x.due), it.currency, it.currency === "USD" ? x.rate : "", x.planned, x.remark].forEach((val, i) => { det.getCell(r, i + 1).value = val; }); XL.fill(det.getCell(r, 1), XL.GREY); });
       const last = Math.max(5 + rows.length + 100, 300);
       for (let r = 5; r <= last; r++) { det.getCell(r, 14).value = { formula: `IF(L${r}="","",IF(J${r}="USD",L${r}*K${r},L${r}))` }; det.getCell(r, 14).numFmt = "#,##0.00"; XL.fill(det.getCell(r, 14), XL.GREY); }
       XL.listV(det, 2, 5, last, "L_Kind", "Pick Collect or Pay."); XL.listV(det, 3, 5, last, "L_Row", "Pick a row of the cash flow from the list."); XL.listV(det, 7, 5, last, "L_Type", "Pick a type. New types are added in the app under Setup."); XL.listV(det, 8, 5, last, "L_Urg", "Pick 1, 2 or 3."); XL.listV(det, 10, 5, last, "L_Cur", "Pick ETB or USD.");
@@ -257,7 +257,7 @@ export function createWeek(h) {
   async function uploadWeek(file) {
     const units = h.writableUnits(); if (!units.length) { c.toast("You cannot edit any unit's cash flow"); return; } const bk = await XL.readBook(c, file); if (!bk) return; const { X, wb } = bk;
     const uMap = unitMap(units), tMap = new Map(S.types.map((t) => [XL.norm(t.code), t.code])), rowMap = new Map(STMT.map((s) => [XL.norm(s[2]) + "|" + s[0], s[2]])), rep = { counts: {}, skip: 0, notes: [] };
-    const bad = (sheet, line, why) => { rep.skip++; rep.notes.push(`${sheet} row ${line}: ${why}`); }; let added = 0, upd = 0, planned = 0;
+    const bad = (sheet, line, why) => { rep.skip++; rep.notes.push(`${sheet} row ${line}: ${why}`); }; let added = 0, upd = 0, planned = 0, same = 0, replaced = 0;
     const sheets = XL.readSheets(X, wb, /detail$/i); if (!sheets.length) { c.toast("No “… Detail” sheet found. Use the template from Download template for this week."); return; }
     await h.run(async () => {
       for (const sh of sheets) {
@@ -281,12 +281,15 @@ export function createWeek(h) {
             if (res && res.error) return res; itemId = res.id; added++; }
           else { const ch = { party: String(party).trim() || item.party, description: String(desc).trim() || item.description, ref: String(ref).trim() || item.ref, typeCode: typeCode || item.typeCode, bucket: b, section, expected: dueIso || item.expected };
             if (Object.entries(ch).some(([k, val]) => (item[k] || "") !== val)) { const res = await c.api().saveCfItem(A(), h.itemRow({ ...item, ...ch })); if (res && res.error) return res; upd++; } }
-          const res = await c.api().saveCfWeek(A(), { unit, week: W, itemId, planned: p, due: dueIso, rolled: false, note: "", stmt, section, currency, rate: currency === "USD" ? rt : "", remark: String(remark).trim() }); if (res && res.error) return res; planned++;
+          // already planned this week with the same values: nothing to do. A history line of the same name in this week is replaced, not added to.
+          const here = S.week.find((q) => q.itemId === itemId && q.week === W && q.unit === unit), nameKey = `${String(party)} ${String(desc)}`, twin = !here && S.week.find((q) => !q.itemId && q.unit === unit && q.week === W && q.kind === kind && (sim(wText(q), nameKey) >= 0.6 || (!nameKey.trim() && Math.abs(num(q.planned) - p) < 1)));
+          if (here && Math.abs(num(here.planned) - p) < 0.005 && here.stmt === stmt && num(here.rate) === (currency === "USD" ? rt : 0)) { same++; continue; }
+          const res = await c.api().saveCfWeek(A(), { unit, week: W, itemId, planned: p, due: dueIso, rolled: here ? here.rolled : false, note: "", stmt, section, currency, rate: currency === "USD" ? rt : "", remark: String(remark).trim(), party: String(party).trim(), description: String(desc).trim(), actual: twin && twin.actual != null ? twin.actual : "" }); if (res && res.error) return res; if (twin) { const d = await c.api().deleteCf(A(), "cf_week_lines", twin.id); if (d && d.error) return d; replaced++; } planned++;
         }
       }
       return { ok: true };
     });
-    rep.counts.a = planned ? `Weekly plan: <b>${planned}</b> line${planned > 1 ? "s" : ""} planned (<b>${added}</b> new, <b>${upd}</b> existing line${upd === 1 ? "" : "s"} updated).` : ""; report(rep, "Upload finished");
+    rep.counts.a = planned ? `Weekly plan: <b>${planned}</b> line${planned > 1 ? "s" : ""} saved (<b>${added}</b> new line${added === 1 ? "" : "s"}, <b>${upd}</b> existing line${upd === 1 ? "" : "s"} changed${replaced ? `, <b>${replaced}</b> replaced an imported line of the same name` : ""}).` : ""; rep.counts.b = same ? `<b>${same}</b> line${same > 1 ? "s were" : " was"} already in the plan with the same amount, left as they are.` : ""; report(rep, "Upload finished");
   }
 
   // ---------------- actions ----------------
