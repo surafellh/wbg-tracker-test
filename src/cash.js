@@ -126,7 +126,7 @@ export function createCash(c) {
       <div class="cf-cal-k small muted"><i class="dot in"></i> collected <i class="dot out"></i> paid</div></div>`;
   }
   const dayBar = () => `<div class="cf-daybar"><span class="cf-lab">Day</span><button class="btn small" data-cf="day-shift" data-v="-1" aria-label="Previous day">‹</button><span class="cf-calwrap"><button class="btn cf-daybtn" data-cf="cal-toggle" aria-expanded="${S.calOpen}">${esc(dShort(S.day))} ▾</button>${S.calOpen ? calendar() : ""}</span><button class="btn small" data-cf="day-shift" data-v="1" aria-label="Next day">›</button>${S.day !== c.todayIso ? `<button class="btn small" data-cf="day-today">Today</button><span class="small muted">${S.day < c.todayIso ? "Looking back: everything on this page shows the position at the end of this day." : "A future day."}</span>` : '<span class="small muted">Today. Pick another day to see its position, or the dots for days when cash moved.</span>'}</div>`;
-  const undoBar = () => (S.undo ? `<div class="cf-note cf-undo">${esc(S.undo.label)} was deleted. <button class="btn small" data-cf="undo">Undo</button> <button class="btn small ghost" data-cf="undo-x">Dismiss</button></div>` : "");
+  const undoBar = () => (S.uu ? `<div class="cf-note cf-undo">${esc(S.uu.label)} was applied. <button class="btn small" data-cf="w-undo-up">Undo</button> <button class="btn small ghost" data-cf="w-undo-x">Dismiss</button></div>` : "") + (S.undo ? `<div class="cf-note cf-undo">${esc(S.undo.label)} was deleted. <button class="btn small" data-cf="undo">Undo</button> <button class="btn small ghost" data-cf="undo-x">Dismiss</button></div>` : "");
   // ---------------- page shell ----------------
   function renderCash() {
     if (!canSee()) return `<div class="cf"><div class="empty"><b>Cash flow</b>Cash flow is shown to Group Finance, the Finance departments of the business units, Group Strategy and the executive.</div></div>`;
@@ -307,7 +307,7 @@ export function createCash(c) {
   }
   function drawModal() {
     const root = ensureRoot(), m = S.m; if (!m) { root.innerHTML = ""; return; }
-    const body = { item: itemForm, log: logForm, bank: bankForm, plan: planForm, type: typeForm, result: resultView, weekline: (q) => W.lineForm(q), trace: (q) => W.traceView(q), linkline: (q) => W.linkForm(q) }[m.type](m);
+    const body = { item: itemForm, log: logForm, bank: bankForm, plan: planForm, type: typeForm, result: resultView, weekline: (q) => W.lineForm(q), trace: (q) => W.traceView(q), linkline: (q) => W.linkForm(q), clean: (q) => W.cleanView(q) }[m.type](m);
     root.innerHTML = `<div class="overlay"><div class="modal wide xmodal" role="dialog" aria-modal="true">${body}</div></div>`;
     const first = root.querySelector("input[type=text], input[type=number]"); if (first && m.isNew && !m.focused) { m.focused = true; first.focus(); }
   }

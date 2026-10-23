@@ -69,7 +69,7 @@ export function createWeek(h) {
       ${S.wcand ? `<div class="scroll"><table class="cf-table"><tbody>${m.cand.slice(0, 40).map((x) => `<tr><td><span class="tag">${esc(x.it.code || "")}</span></td><td><b>${esc(x.it.party || x.it.description || "")}</b></td><td class="small">${esc(h.ushort(x.it.unit))}</td><td class="small">${x.it.kind === "in" ? "Collect" : "Pay"}</td><td class="num">${plain(x.left)}</td><td><button class="btn small" data-cf="w-roll-one" data-id="${esc(x.it.id)}">Plan this week</button></td></tr>`).join("")}</tbody></table></div>${m.cand.length > 40 ? '<div class="small muted">and more. Use Roll in.</div>' : ""}` : ""}` : "";
     const empty = !m.in.rows.some((r) => r.lines.length) && !m.out.rows.some((r) => r.lines.length) && !m.cand.length ? `<div class="empty"><b>No plan for this week yet</b>${writable ? "Add a line, or download the template, fill it in and upload it." : "Nothing has been planned for this week."}</div>` : "";
     return `<div class="cf-body"><div class="cf-bar">${h.allUnits().length > 1 ? h.unitSel(S.scope) : ""}<span class="cf-wk"><button class="btn small" data-cf="w-shift" data-v="-7" aria-label="Previous week">‹</button><b title="Saturday to Friday">${esc(weekLabel(W))}</b><button class="btn small" data-cf="w-shift" data-v="7" aria-label="Next week">›</button><input type="date" data-cfc="wk" value="${esc(W)}" aria-label="Pick any day in the week" class="cf-datemini">${W !== weekStart(c.todayIso) ? '<button class="btn small ghost" data-cf="w-thisweek">This week</button>' : ""}</span>
-        <span class="cf-right">${writable ? `<button class="btn primary small" data-cf="w-new">+ Add a line</button>` : ""}${h.menu([['data-cf="w-xl-down"', "Download template for this week"], writable ? ['data-cf="w-pick-week"', "Upload filled template"] : null, ['data-cf="w-dl" data-v="week"', "Download this week (plan and actual)"], ['data-cf="w-dl" data-v="history"', "Download every week's lines"]])}<input type="file" id="cwUploadWeek" accept=".xlsx,.xls" hidden></span></div>
+        <span class="cf-right">${writable ? `<button class="btn primary small" data-cf="w-new">+ Add a line</button>` : ""}${h.menu([['data-cf="w-xl-down"', "Download template for this week"], writable ? ['data-cf="w-pick-week"', "Upload filled template"] : null, ['data-cf="w-dl" data-v="week"', "Download this week (plan and actual)"], ['data-cf="w-dl" data-v="history"', "Download every week's lines"], writable ? ['data-cf="w-dup"', "Remove duplicate lines…"] : null, writable ? ['data-cf="w-clear"', "Take out every line of this week…"] : null])}<input type="file" id="cwUploadWeek" accept=".xlsx,.xls" hidden></span></div>
       ${cand}${empty}${tbl}</div>`;
   }
 
@@ -126,6 +126,36 @@ export function createWeek(h) {
       <div class="scroll"><table class="cf-table"><thead><tr><th>Day</th><th>Bank</th><th>Amount</th><th>Note</th></tr></thead><tbody>${logs.map((l) => `<tr><td>${esc(dShort(l.day))}</td><td>${esc(l.bank || "")}</td><td class="num">${plain(l.amount)}</td><td class="small">${esc(l.note || "")}</td></tr>`).join("") || `<tr><td colspan="4" class="small muted">Nothing ${it.kind === "in" ? "collected" : "paid"} yet.</td></tr>`}</tbody></table></div>
       <div class="small muted" style="margin-top:8px">Left when entered: <b>${plain(it.amount)}</b> · ${it.kind === "in" ? "collected" : "paid"} so far: <b>${plain(sum(logs, (l) => l.amount))}</b> · left now: <b>${plain(h.viewOf(it, "9999-12-31").left)}</b></div>
       <div class="save-bar"><div></div><div class="toolbar"><button class="btn" data-cf="close">Close</button></div></div>`;
+  }
+
+  const weekRow = (w) => ({ id: w.itemId ? undefined : w.id, unit: w.unit, week: w.week, itemId: w.itemId || "", kind: w.kind, planned: w.planned, due: w.due || "", rolled: !!w.rolled, note: w.note || "", stmt: w.stmt || "", section: w.section, party: w.party || "", description: w.description || "", ref: w.ref || "", currency: w.currency || "ETB", rate: w.rate === "" || w.rate == null ? "" : w.rate, remark: w.remark || "", actual: w.actual === "" || w.actual == null ? "" : w.actual });
+  async function undoUpload() {
+    const u = S.uu; if (!u) return; S.uu = null;
+    await h.run(async () => { for (const f of [...u.steps].reverse()) { const r = await f(); if (r && r.error) return r; } return { ok: true }; }, `${u.label} was undone`);
+  }
+  // Imported lines that now have a line with a code for the same name in the same week: the imported copy is the duplicate.
+  function dupPairs(units) {
+    const out = []; for (const w of S.week) { if (w.itemId || !units.includes(w.unit) || !h.canWrite(w.unit)) continue;
+      const q = S.week.find((o) => o.itemId && o.unit === w.unit && o.week === w.week && o.kind === w.kind && (sim(wText(o), wText(w)) >= 0.6 || (!wText(w).trim() && Math.abs(num(o.planned) - num(w.planned)) < 1))); if (q) out.push({ w, q }); }
+    return out;
+  }
+  function cleanView(m) {
+    const units = h.scopeUnits();
+    if (m.mode === "dup") { const ps = dupPairs(units);
+      return `<div class="panel-head"><div><h2>Remove duplicate lines</h2><div class="small muted">A line imported from the old weekly workbooks, and a line with a code for the same name in the same week. The imported copy is removed and its reported actual moves to the line with the code.</div></div></div>
+        ${ps.length ? `<div class="scroll"><table class="cf-table"><thead><tr><th>Week</th><th>Unit</th><th>Line</th><th>Imported</th><th>With code</th></tr></thead><tbody>${ps.slice(0, 60).map(({ w, q }) => `<tr><td class="small">${esc(dMini(w.week))}</td><td class="small">${esc(h.ushort(w.unit))}</td><td>${esc(w.party || w.description)} <span class="tag">${esc(q.itemCode || "")}</span></td><td class="num">${plain(w.planned)}</td><td class="num">${plain(q.planned)}</td></tr>`).join("")}</tbody></table></div>${ps.length > 60 ? `<div class="small muted">and ${ps.length - 60} more</div>` : ""}` : `<div class="empty"><b>No duplicates found</b></div>`}
+        <div class="save-bar"><div></div><div class="toolbar"><button class="btn" data-cf="close">Close</button>${ps.length ? `<button class="btn primary" data-cf="w-dup-go">Remove ${ps.length} imported cop${ps.length === 1 ? "y" : "ies"}</button>` : ""}</div></div>`; }
+    const n = S.week.filter((w) => w.week === S.wk && units.includes(w.unit) && h.canWrite(w.unit)).length;
+    return `<div class="panel-head"><div><h2>Take out every line of this week</h2><div class="small muted">${n} line${n === 1 ? "" : "s"} in the week of ${esc(dShort(S.wk))} for ${S.scope === "all" ? "the units you can edit" : esc(h.uname(S.scope))}. The lines themselves, their codes and the cash recorded against them are not deleted, only their place in this week's plan. You can undo it right after.</div></div>
+      <div class="save-bar"><div></div><div class="toolbar"><button class="btn" data-cf="close">Cancel</button>${n ? `<button class="btn danger" data-cf="w-clear-go">Take out ${n} line${n === 1 ? "" : "s"}</button>` : ""}</div></div>`;
+  }
+  async function cleanGo(mode) {
+    const units = h.scopeUnits(), undo = []; let n = 0;
+    const list = mode === "dup" ? dupPairs(units).map(({ w, q }) => ({ w, q })) : S.week.filter((w) => w.week === S.wk && units.includes(w.unit) && h.canWrite(w.unit)).map((w) => ({ w }));
+    const ok = await h.run(async () => { for (const { w, q } of list) { const old = weekRow(w);
+      if (q && (q.actual === "" || q.actual == null) && w.actual !== "" && w.actual != null) { const prevQ = weekRow(q), r = await c.api().saveCfWeek(A(), { ...prevQ, actual: w.actual }); if (r && r.error) return r; undo.push(() => c.api().saveCfWeek(A(), prevQ)); }
+      const d = await c.api().deleteCf(A(), "cf_week_lines", w.id); if (d && d.error) return d; undo.push(() => c.api().saveCfWeek(A(), { ...old, id: w.itemId ? undefined : w.id })); n++; } return { ok: true }; }, "");
+    if (ok) { S.uu = { label: mode === "dup" ? `Removing ${n} duplicate${n === 1 ? "" : "s"}` : `Taking out ${n} line${n === 1 ? "" : "s"}`, steps: undo }; h.closeModal(); }
   }
 
   // ---------------- link a plan line to a line (same line, different value in another week, for example a part payment) ----------------
@@ -257,7 +287,7 @@ export function createWeek(h) {
   async function uploadWeek(file) {
     const units = h.writableUnits(); if (!units.length) { c.toast("You cannot edit any unit's cash flow"); return; } const bk = await XL.readBook(c, file); if (!bk) return; const { X, wb } = bk;
     const uMap = unitMap(units), tMap = new Map(S.types.map((t) => [XL.norm(t.code), t.code])), rowMap = new Map(STMT.map((s) => [XL.norm(s[2]) + "|" + s[0], s[2]])), rep = { counts: {}, skip: 0, notes: [] };
-    const bad = (sheet, line, why) => { rep.skip++; rep.notes.push(`${sheet} row ${line}: ${why}`); }; let added = 0, upd = 0, planned = 0, same = 0, replaced = 0;
+    const bad = (sheet, line, why) => { rep.skip++; rep.notes.push(`${sheet} row ${line}: ${why}`); }; let added = 0, upd = 0, planned = 0, same = 0, replaced = 0; const undo = [];
     const sheets = XL.readSheets(X, wb, /detail$/i); if (!sheets.length) { c.toast("No “… Detail” sheet found. Use the template from Download template for this week."); return; }
     await h.run(async () => {
       for (const sh of sheets) {
@@ -278,18 +308,18 @@ export function createWeek(h) {
           let item = old; if (!item) item = S.items.find((q) => q.unit === unit && q.kind === kind && q.status === "open" && XL.norm(q.party) === XL.norm(party) && XL.norm(q.ref) === XL.norm(ref) && XL.norm(q.description) === XL.norm(desc) && (String(party).trim() || String(desc).trim()));   // the same line uploaded again
           let itemId = item && item.id;
           if (!item) { const res = await c.api().saveCfItem(A(), { unit, kind, party: String(party).trim(), description: String(desc).trim(), ref: String(ref).trim(), typeCode, bucket: b, amount: p, total: p, currency, priority: "Normal", expected: dueIso, status: "open", enteredOn: c.todayIso, section, firstWeek: W, note: "" });
-            if (res && res.error) return res; itemId = res.id; added++; }
+            if (res && res.error) return res; itemId = res.id; added++; undo.push(() => c.api().deleteCf(A(), "cf_items", res.id)); }
           else { const ch = { party: String(party).trim() || item.party, description: String(desc).trim() || item.description, ref: String(ref).trim() || item.ref, typeCode: typeCode || item.typeCode, bucket: b, section, expected: dueIso || item.expected };
-            if (Object.entries(ch).some(([k, val]) => (item[k] || "") !== val)) { const res = await c.api().saveCfItem(A(), h.itemRow({ ...item, ...ch })); if (res && res.error) return res; upd++; } }
+            if (Object.entries(ch).some(([k, val]) => (item[k] || "") !== val)) { const before = h.itemRow(item); const res = await c.api().saveCfItem(A(), h.itemRow({ ...item, ...ch })); if (res && res.error) return res; upd++; undo.push(() => c.api().saveCfItem(A(), before)); } }
           // already planned this week with the same values: nothing to do. A history line of the same name in this week is replaced, not added to.
           const here = S.week.find((q) => q.itemId === itemId && q.week === W && q.unit === unit), nameKey = `${String(party)} ${String(desc)}`, twin = !here && S.week.find((q) => !q.itemId && q.unit === unit && q.week === W && q.kind === kind && (sim(wText(q), nameKey) >= 0.6 || (!nameKey.trim() && Math.abs(num(q.planned) - p) < 1)));
           if (here && Math.abs(num(here.planned) - p) < 0.005 && here.stmt === stmt && num(here.rate) === (currency === "USD" ? rt : 0)) { same++; continue; }
-          const res = await c.api().saveCfWeek(A(), { unit, week: W, itemId, planned: p, due: dueIso, rolled: here ? here.rolled : false, note: "", stmt, section, currency, rate: currency === "USD" ? rt : "", remark: String(remark).trim(), party: String(party).trim(), description: String(desc).trim(), actual: twin && twin.actual != null ? twin.actual : "" }); if (res && res.error) return res; if (twin) { const d = await c.api().deleteCf(A(), "cf_week_lines", twin.id); if (d && d.error) return d; replaced++; } planned++;
+          const res = await c.api().saveCfWeek(A(), { unit, week: W, itemId, planned: p, due: dueIso, rolled: here ? here.rolled : false, note: "", stmt, section, currency, rate: currency === "USD" ? rt : "", remark: String(remark).trim(), party: String(party).trim(), description: String(desc).trim(), actual: twin && twin.actual != null ? twin.actual : "" }); if (res && res.error) return res; { const prev = here ? weekRow(here) : null, nid = res.id; undo.push(() => (prev ? c.api().saveCfWeek(A(), prev) : c.api().deleteCf(A(), "cf_week_lines", nid))); } if (twin) { const old = weekRow(twin), d = await c.api().deleteCf(A(), "cf_week_lines", twin.id); if (d && d.error) return d; replaced++; undo.push(() => c.api().saveCfWeek(A(), old)); } planned++;
         }
       }
       return { ok: true };
     });
-    rep.counts.a = planned ? `Weekly plan: <b>${planned}</b> line${planned > 1 ? "s" : ""} saved (<b>${added}</b> new line${added === 1 ? "" : "s"}, <b>${upd}</b> existing line${upd === 1 ? "" : "s"} changed${replaced ? `, <b>${replaced}</b> replaced an imported line of the same name` : ""}).` : ""; rep.counts.b = same ? `<b>${same}</b> line${same > 1 ? "s were" : " was"} already in the plan with the same amount, left as they are.` : ""; report(rep, "Upload finished");
+    rep.counts.a = planned ? `Weekly plan: <b>${planned}</b> line${planned > 1 ? "s" : ""} saved (<b>${added}</b> new line${added === 1 ? "" : "s"}, <b>${upd}</b> existing line${upd === 1 ? "" : "s"} changed${replaced ? `, <b>${replaced}</b> replaced an imported line of the same name` : ""}).` : ""; rep.counts.b = same ? `<b>${same}</b> line${same > 1 ? "s were" : " was"} already in the plan with the same amount, left as they are.` : ""; if (undo.length) S.uu = { label: "The weekly upload", steps: undo }; report(rep, "Upload finished");
   }
 
   // ---------------- actions ----------------
@@ -306,6 +336,12 @@ export function createWeek(h) {
     else if (x === "w-remove") { const w = S.week.find((q) => q.id === id); if (!w) return; await h.run(() => c.api().deleteCf(A(), "cf_week_lines", id), "Taken out of this week"); }
     else if (x === "w-roll-all") await rollIn(buildStmt(h.scopeUnits(), S.wk).cand);
     else if (x === "w-roll-one") await rollIn(buildStmt(h.scopeUnits(), S.wk).cand.filter((q) => q.it.id === id));
+    else if (x === "w-undo-up") await undoUpload();
+    else if (x === "w-undo-x") { S.uu = null; c.render(); }
+    else if (x === "w-dup") { S.m = { type: "clean", mode: "dup" }; h.drawModal(); }
+    else if (x === "w-clear") { S.m = { type: "clean", mode: "clear" }; h.drawModal(); }
+    else if (x === "w-dup-go") await cleanGo("dup");
+    else if (x === "w-clear-go") await cleanGo("clear");
     else if (x === "w-link") { S.m = { type: "linkline", weekId: id }; h.drawModal(); }
     else if (x === "w-link-save") await onLinkSave(false);
     else if (x === "w-link-new") await onLinkSave(true);
@@ -317,5 +353,5 @@ export function createWeek(h) {
     else if (x === "w-rcall") { S.rc.all = el.dataset.v === "1"; c.render(); }
     else if (x === "w-goday") { S.scope = el.dataset.unit || S.scope; S.view = "coll"; h.setDay(el.dataset.day); }
   }
-  return { renderWeek, renderReconcile, lineForm, traceView, linkForm, onAction, onModalChange, uploadWeek, download, weekStart, buildStmt };
+  return { renderWeek, renderReconcile, lineForm, traceView, linkForm, cleanView, onAction, onModalChange, uploadWeek, download, weekStart, buildStmt };
 }

@@ -129,7 +129,7 @@ export function createDay(h) {
   const unitMap = (units) => { const m = new Map(); units.forEach((u) => [h.uname(u), h.ushort(u), c.unitName(u), u].forEach((n) => m.set(XL.norm(n), u))); return m; };
   async function uploadDay(file) {
     const units = h.writableUnits(); if (!units.length) { c.toast("You cannot edit any unit's cash flow"); return; } const bk = await XL.readBook(c, file); if (!bk) return; const { X, wb } = bk;
-    const uMap = unitMap(units), rep = { counts: {}, skip: 0, notes: [] }, bad = (sh, line, why) => { rep.skip++; rep.notes.push(`${sh} row ${line}: ${why}`); }; let nLog = 0, nBank = 0;
+    const uMap = unitMap(units), rep = { counts: {}, skip: 0, notes: [] }, bad = (sh, line, why) => { rep.skip++; rep.notes.push(`${sh} row ${line}: ${why}`); }; let nLog = 0, nBank = 0; const undo = [];
     const colln = XL.readSheets(X, wb, /colln$/i), banks = XL.readSheets(X, wb, /bank$/i); if (!colln.length && !banks.length) { c.toast("No “… Colln” or “… Bank” sheet found. Use the template from this page."); return; }
     await h.run(async () => {
       for (const sh of colln) {
@@ -141,11 +141,11 @@ export function createDay(h) {
           const bank = String(bankN).trim() ? bankOf(bankN) : h.lastBank(unit, it ? it.kind : /^p/i.test(String(kindN)) ? "out" : "in"); if (!bank) { bad(sh.name, line, "choose the bank"); continue; }
           if (it) { const have = sum(S.log.filter((l) => l.itemId === it.id && l.day === day), (l) => l.amount), diff = m - have; if (diff < -0.005) { rep.notes.push(`${sh.name} row ${line}: ${it.code} already has ${plain(have)} for this day, more than ${plain(m)}. Edit it in the app.`); continue; } if (diff <= 0.005) continue;
             const res = await c.api().saveCfLog(A(), { unit, day, kind: it.kind, bank, amount: Math.round(diff * 100) / 100, currency: it.currency, party: it.party, description: it.description, typeCode: it.typeCode, itemId: it.id, itemCode: it.code, note: "", fxRate: it.currency === "USD" ? fx() || "" : "" });
-            if (res && res.error) return res; touched.add(it.id); nLog++; }
+            if (res && res.error) return res; touched.add(it.id); nLog++; undo.push(async () => { const d = await c.api().deleteCf(A(), "cf_log", res.id); if (d && d.error) return d; return h.syncLine(it.id, 0, null, res.id); }); }
           else { const kind = /^c/i.test(String(kindN).trim()) ? "in" : /^p/i.test(String(kindN).trim()) ? "out" : ""; if (!kind) { bad(sh.name, line, "Collect or pay is empty"); continue; } if (!String(party).trim() && !String(desc).trim()) { bad(sh.name, line, "write who it is, or a description"); continue; }
             if (S.log.some((l) => l.unit === unit && l.day === day && !l.itemId && l.kind === kind && l.bank === bank && Math.abs(num(l.amount) - m) < 0.005 && XL.norm(l.party) === XL.norm(party))) continue;   // uploaded before
             const tc = S.types.find((t) => XL.norm(t.code) === XL.norm(typeN)), currency = ["ETB", "USD"].includes(String(cur).trim().toUpperCase()) ? String(cur).trim().toUpperCase() : "ETB";
-            const res = await c.api().saveCfLog(A(), { unit, day, kind, bank, amount: m, currency, party: String(party).trim(), description: String(desc).trim(), typeCode: tc ? tc.code : "", itemId: "", itemCode: "", note: "", fxRate: currency === "USD" ? fx() || "" : "" }); if (res && res.error) return res; nLog++; }
+            const res = await c.api().saveCfLog(A(), { unit, day, kind, bank, amount: m, currency, party: String(party).trim(), description: String(desc).trim(), typeCode: tc ? tc.code : "", itemId: "", itemCode: "", note: "", fxRate: currency === "USD" ? fx() || "" : "" }); if (res && res.error) return res; nLog++; undo.push(() => c.api().deleteCf(A(), "cf_log", res.id)); }
         }
         for (const id of touched) { const e = await h.syncLine(id, 0, day); if (e && e.error) return e; }
       }
@@ -156,13 +156,13 @@ export function createDay(h) {
           const bank = known.find((k) => XL.norm(k) === XL.norm(name)) || name, prev = h.effBank().filter((b) => b.unit === unit && b.bank === bank && b.day < day).sort((a, b) => b.day.localeCompare(a.day))[0], opening = prev ? num(prev.closing) : XL.money(r[1]);
           if (opening === null) { bad(sh.name, line, `${bank}: type the opening balance, this bank has no earlier balance`); continue; }
           const saved = S.bank.find((b) => b.unit === unit && b.bank === bank && b.day === day); if (saved && Math.abs(num(saved.inflow) - num(inn)) < 0.005 && Math.abs(num(saved.outflow) - num(out)) < 0.005) continue;
-          const res = await c.api().saveCfBank(A(), { unit, day, bank, opening, inflow: num(inn), outflow: num(out), closing: Math.round((opening + num(inn) - num(out)) * 100) / 100 }); if (res && res.error) return res; nBank++; }
+          const res = await c.api().saveCfBank(A(), { unit, day, bank, opening, inflow: num(inn), outflow: num(out), closing: Math.round((opening + num(inn) - num(out)) * 100) / 100 }); if (res && res.error) return res; nBank++; if (saved) { const sv = { unit, day, bank, opening: num(saved.opening), inflow: num(saved.inflow), outflow: num(saved.outflow), closing: num(saved.closing) }; undo.push(() => c.api().saveCfBank(A(), sv)); } }
       }
       return { ok: true };
     });
     rep.counts.a = nLog ? `Collections and payments: <b>${nLog}</b> movement${nLog > 1 ? "s" : ""} recorded.` : ""; rep.counts.b = nBank ? `Bank: <b>${nBank}</b> bank day${nBank > 1 ? "s" : ""} saved.` : "";
     const lines = Object.values(rep.counts).filter(Boolean); if (rep.skip) lines.push(`<b>${rep.skip}</b> row${rep.skip > 1 ? "s were" : " was"} not saved. Fix ${rep.skip > 1 ? "them" : "it"} in the file and upload again.`); if (!lines.length) lines.push("Nothing new to save. Everything in the file is already recorded.");
-    S.m = { type: "result", title: "Upload finished", lines, notes: rep.notes }; h.drawModal();
+    if (undo.length) S.uu = { label: "The daily upload", steps: undo }; S.m = { type: "result", title: "Upload finished", lines, notes: rep.notes }; h.drawModal();
   }
 
   async function onAction(el) {

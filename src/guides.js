@@ -10,7 +10,7 @@
 // Run  npm run check-help  after changing the app or this file: it lists guide wording that no longer matches the app.
 // "pages" uses the app's tab ids: dashboard, update, plan, mplan, approvals, support, fb, tasks, monthly, ceo, follow, activity, units, people.
 // Keep sentences short and name the buttons exactly as they appear on screen.
-export const GUIDES_VERSION = "2026-10-23.5";
+export const GUIDES_VERSION = "2026-10-23.6";
 
 export const GROUPS = [
   { id: "start", title: "Getting started", icon: "🚀", blurb: "Signing in, weeks, roles and finding your way around" },
@@ -901,6 +901,7 @@ export const GUIDES = [
       "Add a new line with **+ Add a line**. For a USD line choose USD and write the **exchange rate** for that week. It is kept with the week, so a new rate never changes earlier weeks.",
       "Use the **⋯** menu on a line to trace it, edit it or take it out of the week. The **⋯** menu at the top downloads or uploads the weekly Excel template and downloads what you see.",
       "Some lines are the same line with a different value in another week, for example a part payment. Use **Link to a line…** in the ⋯ menu of a line to join it to a line with a code. Tick the box to link the other weeks with the same name too. If no line fits, **create a new one**.",
+      "Made a mistake with an upload? A bar at the top offers **Undo** right after it. To clean up an earlier upload, use the ⋯ menu: **Remove duplicate lines…** finds lines imported from the old workbooks that now have a line with a code for the same name, or **Take out every line of this week…** clears the week's plan (the lines and their cash are kept).",
       "Actual comes from the daily Collections & payments. Weeks imported from the old weekly workbooks keep the actual that was reported then.",
     ],
     go: [["Cash flow", "cashflow"]],
