@@ -10,7 +10,7 @@
 // Run  npm run check-help  after changing the app or this file: it lists guide wording that no longer matches the app.
 // "pages" uses the app's tab ids: dashboard, update, plan, mplan, approvals, support, fb, tasks, monthly, ceo, follow, activity, units, people.
 // Keep sentences short and name the buttons exactly as they appear on screen.
-export const GUIDES_VERSION = "2026-10-23.7";
+export const GUIDES_VERSION = "2026-10-24.1";
 
 export const GROUPS = [
   { id: "start", title: "Getting started", icon: "🚀", blurb: "Signing in, weeks, roles and finding your way around" },
@@ -847,17 +847,17 @@ export const GUIDES = [
     kw: "project status progress phase activity monthly update rag green amber red physical capital milestone budget risk decision portfolio",
     intro: "The Projects page shows every project you can read with its status, colour, progress and the month of its last report. Click a project to open it.",
     steps: [
-      "Press **+ Add project** and fill in the name, type, owner unit, budget, start date and planned completion. Choose **Capital (physical)** for a building or plant.",
+      "Group PMO adds projects: press **+ Add project** and fill in the name, type, owner unit, budget, contract start and end date. Choose **Capital (physical)** for a building or plant.",
       "Under **Progress is taken from**, choose **phases and activities** (progress is worked out from the work done) or **the physical % reported each month** (you enter a cumulative % every month, best for slow physical projects).",
       "Set the current **Status** (Not started, In progress, On hold, Completed, Cancelled) and the **Colour** (Green, Amber, Red) on the project page. A suggested colour is shown when progress is behind the time used.",
-      "Use the filters at the top of the list to narrow by type, unit, colour or status, and **Download Excel** to take the list away.",
+      "Use the filters at the top of the list to narrow by type, unit, colour or status, **Download PDF** for a short, readable summary of the list, and **Download Excel** to take the details away. Open a project and press **Download PDF** for a one project brief.",
     ],
     why: [
-      "Time used is the share of the planned period that has passed. A project at 40% progress with 80% of its time used is behind.",
-      "Who can read a project: Group Strategy and the executive read all. Chiefs, GMs, planning heads and managers read the projects of their own unit, projects that list their unit as involved, and every project if they belong to the PMO.",
-      "Who can change it: Group Strategy, and the chief, GM, planning head or manager of the owner unit or of the PMO.",
+      "The list shows the contract start and end, and the days used out of the contract length (for example 245 of 365 days). Open a project to see the same as a percentage. A project at 40% progress with 80% of its time used is behind.",
+      "Who can read a project: Group PMO, Group Strategy, the CEO, the DCEO and the lead executive assistant read all of them. A unit's chief, GM or director and its planning head read that unit's projects, and projects that list their unit as involved. At Niyat Consultancy the department heads read its projects too.",
+      "Who can change it: Group PMO and Group Strategy.",
     ],
-    fix: [["I cannot see the Projects menu", "It is shown to chiefs, GMs, planning heads, managers, the executive and Group Strategy. Employees do not see it."], ["My project is missing", "You can only read projects of your own unit, or ones that list your unit as involved. Ask the owner unit to add your unit under Edit details."]],
+    fix: [["I cannot see the Projects menu", "It is shown to Group PMO, Group Strategy, the CEO, the DCEO, the lead executive assistant, and to the chief, GM, director and planning head of a unit (and the department heads of Niyat Consultancy). Everyone else does not see it."], ["My project is missing", "You can only read projects of your own unit, or ones that list your unit as involved. Ask Group PMO to add your unit under Edit details."]],
     go: [["Projects", "projects"]],
   },
   {

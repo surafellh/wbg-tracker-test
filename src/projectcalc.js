@@ -114,3 +114,12 @@ export function daysToEnd(p, today) {
   const b = d0(p.end), t = d0(today);
   return Number.isNaN(b) || Number.isNaN(t) ? null : Math.round((b - t) / dayMs);
 }
+
+// Days of the contract used: { used, total }. Both are whole days; used can pass total when the end date is missed.
+// Null when the project has no start and end date. A finished project stops counting at its actual end.
+export function daysUsed(p, today) {
+  const a = d0(p.start), b = d0(p.end); let t = d0(today);
+  if (Number.isNaN(a) || Number.isNaN(b) || Number.isNaN(t) || b <= a) return null;
+  const fin = d0(p.actualEnd); if (p.status === "Completed" && !Number.isNaN(fin)) t = fin;
+  return { used: Math.max(0, Math.round((t - a) / dayMs)), total: Math.round((b - a) / dayMs) };
+}

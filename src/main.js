@@ -54,7 +54,7 @@ applyPlugin(jsPDF); window.jspdf = { jsPDF }; window.XLSX = XLSX;
   // The signed-in person (from the database). The database checks every save again.
   state.requests = []; state.dash = { type: "", units: [], period: "week", pop: false, range: 8 }; state.dashData = null; state.dashKey = "";
   state.level = "tasks"; state.history = null; state.lastSave = null; state.base = {}; state.unlock = new Set(); state.reqNotes = {}; state.people = null; state.pu = {};
-  const auth = () => me ? { id: me.id || "", name: me.name || "", role: me.role, title: me.title || "", unit: me.unit || "", departments: me.departments || [] } : {};
+  const auth = () => me ? { id: me.id || "", raw: me.roleRaw || me.role, name: me.name || "", role: me.role, title: me.title || "", unit: me.unit || "", departments: me.departments || [] } : {};
   const isAppr = () => isAdmin(me);
   const isLenient = () => !!me && (me.role === "leader" || me.role === "planning");
   const canEdit = u => isAppr() || (unitMember(me, u) && me.role !== "staff");   // employees and division heads are view-only
@@ -1059,7 +1059,8 @@ applyPlugin(jsPDF); window.jspdf = { jsPDF }; window.XLSX = XLSX;
     weekChoices: () => { const t = thisMonday(); return [nextWeekOf(t), t, prevWeekOf(t), prevWeekOf(prevWeekOf(t)), prevWeekOf(prevWeekOf(prevWeekOf(t)))]; }, thisWeek: () => thisMonday(), ALL,
   });
   const PJ = createProjects({ state, esc, fmt, sortedUnits: () => sortedUnits(), unitName: id => unitName(id), todayIso, toast: (...a) => toast(...a), errText: e => errText(e), render: () => render(), db: () => db, api: () => api, auth: () => auth(),
-    libsReady: k => libsReady(k), sheetFromRows: (...a) => sheetFromRows(...a), writeXlsx: (...a) => writeXlsx(...a), XLSX: () => XLSX });
+    libsReady: k => libsReady(k), sheetFromRows: (...a) => sheetFromRows(...a), writeXlsx: (...a) => writeXlsx(...a), XLSX: () => XLSX,
+    newPdf: (...a) => newPdf(...a), pdfStyle: () => pdfStyle(), save: (...a) => save(...a) });
   const CF = createCash({ state, esc, fmt, sortedUnits: () => sortedUnits(), unitName: id => unitName(id), todayIso, toast: (...a) => toast(...a), errText: e => errText(e), render: () => render(), db: () => db, api: () => api, auth: () => auth(),
     libsReady: k => libsReady(k), sheetFromRows: (...a) => sheetFromRows(...a), writeXlsx: (...a) => writeXlsx(...a), saveFile: (...a) => save(...a), XLSX: () => XLSX });
   const DM = createMessages({
@@ -2215,7 +2216,7 @@ applyPlugin(jsPDF); window.jspdf = { jsPDF }; window.XLSX = XLSX;
   // ---------- Stage 4: top bar, grouped tabs, account menu, calendar picker ----------
   function renderNav(){
     const g = groupOf(state.tab);
-    document.querySelectorAll("#mainNav button").forEach(b => { b.setAttribute("aria-current", String(b.dataset.group === g)); if (b.dataset.group === "projects") b.hidden = !(me && ["super_admin", "executive", "leader", "planning", "manager"].includes(me.role)); if (b.dataset.group === "cashflow") b.hidden = !CF.canSee(); });
+    document.querySelectorAll("#mainNav button").forEach(b => { b.setAttribute("aria-current", String(b.dataset.group === g)); if (b.dataset.group === "projects") b.hidden = !PJ.canSee(); if (b.dataset.group === "cashflow") b.hidden = !CF.canSee(); });
     const subs = (GROUPS[g] || []).filter(t => (t !== "approvals" || isAppr() || pendingMine().length || toDecide().length) && (t !== "ceo" || canFeedback(me)));
     const nb = X.badgeCount();
     $("#subNav").innerHTML = subs.length > 1 ? subs.map(t => `<button role="tab" data-sub="${t}" aria-selected="${t === state.tab}">${SUB_LABEL[t]}${t === "fb" && nb ? ` <span class="badge">${nb}</span>` : ""}${t === "approvals" && pendingFor().length ? ` <span class="badge">${pendingFor().length}</span>` : ""}</button>`).join("") : "";

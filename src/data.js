@@ -123,7 +123,7 @@ function scopeRows(a, c, items) {
     if (c === "cftypes" || c === "cfsettings") return any ? items : [];
     return items.filter((x) => all || (fin && a.unit === x.unit));
   }
-  if (c === "projects") return items.filter((x) => ["super_admin", "executive"].includes(a.role) || (["leader", "planning", "manager"].includes(a.role) && (a.unit === x.unit || a.unit === "pmo" || (x.involved || []).includes(a.unit))));
+  if (c === "projects") { const raw = a.rawRole || a.role; return items.filter((x) => ["super_admin", "executive"].includes(a.role) || raw === "lea" || (["leader", "planning", "manager"].includes(a.role) && a.unit === "pmo") || (["leader", "planning"].includes(a.role) && (a.unit === x.unit || (x.involved || []).includes(a.unit))) || (a.role === "manager" && x.unit === "niyat-consultancy" && a.unit === x.unit)); }
   if (c === "requests") return items.filter((x) => U(x.unit));
   if (c === "support") return items.filter((x) => U(x.function) || (!!x.requesterUnit && ["leader", "planning", "manager", "staff"].includes(a.role) && a.unit === x.requesterUnit));
   if (c === "history") return items.filter((x) => U(x.tbl === "plans" ? x.old.unit_id : x.rowId));
@@ -411,6 +411,10 @@ function createLocalData() {
     { id: "hr.chief@wagwagoelectric.com", name: "Selam (Wagwago HR chief)", role: "chief", title: "Chief", unit: "wagwago-electric", departments: ["HR"] },
     { id: "design@wagwagoelectric.com", name: "Alem (Wagwago Design)", role: "staff", title: "", unit: "wagwago-electric", departments: ["Design and Engineering"] },
     { id: "planning@trucksload.net", name: "Trucksload planning (test)", role: "planning", title: "Planning", unit: "trucksload", departments: ["Planning"] },
+    { id: "lea@wagwagoelectric.com", name: "Lead executive assistant (test)", role: "lea", title: "LEA", unit: null, departments: [] },
+    { id: "pmo@wagwagoelectric.com", name: "Group PMO planning (test)", role: "planning", title: "Planning", unit: "pmo", departments: ["Planning"] },
+    { id: "niyat.dir@niyatconsultancy.com", name: "Niyat director (test)", role: "director", title: "Director", unit: "niyat-consultancy", departments: [] },
+    { id: "niyat.mgr@niyatconsultancy.com", name: "Niyat department head (test)", role: "manager", title: "Manager", unit: "niyat-consultancy", departments: ["Finance"] },
     { id: "chro@wagwagoelectric.com", name: "Group HR chief (test)", role: "chief", title: "Chief", unit: "hrm", departments: [] },
   ].map((p) => ({ email: p.id, status: "active", setupDone: true, invited: true, ...p }));
   const NEWBIE = { id: "new.person@wagwagoelectric.com", email: "new.person@wagwagoelectric.com", name: "", role: "staff", title: "", unit: null, departments: [], status: "active", setupDone: false, invited: false };
@@ -425,7 +429,7 @@ function createLocalData() {
   const prof = () => people().find((x) => x.id === curId()) || null;
   // the caller as the database sees them
   const viewOver = (p) => { try { const v = JSON.parse(sessionStorage.getItem(VIEWAS_KEY) || "null"); return v && p.role === "super_admin" && p.email === "surafel.h@wagwagoelectric.com" ? v : null; } catch (e) { return null; } };
-  const A = () => { const p = prof(); if (!(p && p.status === "active" && p.setupDone)) return {}; const v = viewOver(p); return { id: p.id, name: p.name, role: baseRole(v ? v.role : p.role), title: p.title, unit: v ? v.unit || "" : p.unit, departments: v ? v.departments || [] : p.departments || [] }; };
+  const A = () => { const p = prof(); if (!(p && p.status === "active" && p.setupDone)) return {}; const v = viewOver(p); return { id: p.id, name: p.name, role: baseRole(v ? v.role : p.role), rawRole: v ? v.role : p.role, title: p.title, unit: v ? v.unit || "" : p.unit, departments: v ? v.departments || [] : p.departments || [] }; };
   const meOut = (p) => (p ? { status: p.status, setupDone: p.setupDone, invited: p.invited, id: p.id, email: p.email, name: p.name, role: p.role, title: p.title, unit: p.unit, departments: p.departments || [], phone: p.phone || "", jobTitle: p.jobTitle || "" } : null);
   // what each collection shows this person (same as the row level security policies)
   function readFilter(c, items) { return scopeRows(A(), c, items); }
@@ -692,10 +696,10 @@ function createLocalData() {
     },
     saveProject(auth, row) {
       const unit = row.unit || ""; if (!unit || !String(row.name || "").trim()) return err("bad_request");
-      const w = (u) => auth.role === "super_admin" || (["leader", "planning", "manager"].includes(auth.role) && (auth.unit === u || auth.unit === "pmo"));
-      if (!w(unit)) return err("not_allowed");
+      const w = () => auth.role === "super_admin" || (["leader", "planning", "manager"].includes(auth.role) && auth.unit === "pmo");
+      if (!w()) return err("not_allowed");
       const old = row.id ? getStore("projects").find((x) => x.id === row.id) : null;
-      if (old && !w(old.unit)) return err("not_allowed");
+      if (old && !w()) return err("not_allowed");
       if (old && row.updatedAt && old.updatedAt && row.updatedAt !== old.updatedAt) return err("conflict");
       const name = (auth.name || "").trim(), now = new Date().toISOString();
       const rec = { code: "", directorate: "", sponsor: "", manager: "", budget: null, start: "", end: "", strategicLink: "", status: "In progress", rag: "Green", mode: "phases", involved: [], phases: [], updates: [], risks: [], decisions: [], notes: "", ...(old || {}), ...row,
@@ -704,7 +708,7 @@ function createLocalData() {
       addActivity(name, unit, "", { action: "project", summary: (old ? "Updated project: " : "Added project: ") + String(rec.name).slice(0, 120) });
       return ok({ id: rec.id, updatedAt: now });
     },
-    deleteProject(auth, id) { const o = getStore("projects").find((x) => x.id === id); if (!o) return ok(); if (!(auth.role === "super_admin" || (["leader", "planning", "manager"].includes(auth.role) && (auth.unit === o.unit || auth.unit === "pmo")))) return err("not_allowed"); del("projects", id); return ok(); },
+    deleteProject(auth, id) { const o = getStore("projects").find((x) => x.id === id); if (!o) return ok(); if (!(auth.role === "super_admin" || (["leader", "planning", "manager"].includes(auth.role) && auth.unit === "pmo"))) return err("not_allowed"); del("projects", id); return ok(); },
     // ----- sign-in (test mode: pick a person) -----
     async session() { const p = prof(); return p ? meOut(p) : null; },
     async me() { return meOut(prof()); },

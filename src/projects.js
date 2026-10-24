@@ -1,6 +1,6 @@
 // Projects: status and progress follow-up for business and capital (physical) projects.
 // Progress comes either from phases and activities (an activity can be linked to a weekly task) or from a cumulative physical % reported each month.
-import { TYPES, STATUSES, RAGS, ACT_STATUSES, isCapital, latestUpdate, sortedUpdates, activityState, phasePct, projectProgress, progressSource, timeElapsed, daysToEnd, suggestRag, currentPeriod, monthChange, monthsSinceUpdate, needsUpdate, pendingDecisions, openRisks, latestTasks } from "./projectcalc.js";
+import { TYPES, STATUSES, RAGS, ACT_STATUSES, isCapital, latestUpdate, sortedUpdates, activityState, phasePct, projectProgress, progressSource, timeElapsed, daysUsed, daysToEnd, suggestRag, currentPeriod, monthChange, monthsSinceUpdate, needsUpdate, pendingDecisions, openRisks, latestTasks } from "./projectcalc.js";
 
 const RISK_TYPES = ["Risk", "Issue"];
 const RISK_CATS = ["Schedule", "Budget / cost", "Scope", "Quality", "Procurement / supply", "Contractor / vendor", "Land / permits", "Resources / people", "Technical", "Other"];
@@ -8,7 +8,7 @@ const SEVERITY = ["Low", "Medium", "High", "Critical"];
 const RISK_STATUS = ["Open", "Mitigating", "Resolved", "Closed"];
 const DEC_STATUS = ["Pending", "Decided", "Closed"];
 const RAG_CLS = { Green: "g", Amber: "a", Red: "r" };
-const ROLES_SEE = ["super_admin", "executive", "leader", "planning", "manager"];
+const NIYAT = "niyat-consultancy";
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
 const num = (v) => (v === null || v === undefined || v === "" || Number.isNaN(Number(v)) ? null : Number(v));
 const clone = (o) => JSON.parse(JSON.stringify(o));
@@ -17,14 +17,21 @@ export function createProjects(c) {
   const { state, esc, fmt } = c;
   const S = (state.pj = { list: [], loaded: false, view: "list", id: null, f: { q: "", type: "", unit: "", rag: "", status: "active" }, links: {}, m: null, busy: false });
   const A = () => c.auth() || {};
-  const canSee = () => ROLES_SEE.includes(A().role);
-  const canEditP = (p) => { const a = A(); return a.role === "super_admin" || (["leader", "planning", "manager"].includes(a.role) && (a.unit === p.unit || a.unit === "pmo")); };
-  const canCreate = () => { const a = A(); return a.role === "super_admin" || (["leader", "planning", "manager"].includes(a.role) && !!a.unit); };
-  const unitChoices = () => { const a = A(); const all = c.sortedUnits(); return a.role === "super_admin" || a.unit === "pmo" ? all : all.filter((u) => u.id === a.unit); };
+  // Who sees what (the database enforces the same rules, see supabase/upgrade-23-projects.sql):
+  //  all projects: Group Strategy, CEO / DCEO, the lead executive assistant and the Group PMO function
+  //  a unit's own projects (and those that list the unit as involved): its chief / GM / director and planning head; for Niyat Consultancy also its department heads
+  //  edit: Group PMO and Group Strategy only
+  const inPmo = () => { const a = A(); return a.unit === "pmo" && ["leader", "planning", "manager"].includes(a.role); };
+  const seesAll = () => { const a = A(); return ["super_admin", "executive"].includes(a.role) || (a.raw || a.role) === "lea" || inPmo(); };
+  const canSee = () => { const a = A(); return seesAll() || (["leader", "planning"].includes(a.role) && !!a.unit) || (a.role === "manager" && a.unit === NIYAT); };
+  const canEditP = () => A().role === "super_admin" || inPmo();
+  const canCreate = () => canEditP();
+  const unitChoices = () => c.sortedUnits();
   const money = (n) => (num(n) === null ? "–" : "ETB " + Math.round(Number(n)).toLocaleString("en-US"));
   const pctTxt = (n) => (n === null || n === undefined ? "–" : n + "%");
   const ok = (res, msg) => { if (res && res.error) { c.toast(res.error === "conflict" ? "Someone else changed this project. Reload and try again." : c.errText(res)); return false; } if (msg) c.toast(msg); return true; };
   const find = (id) => S.list.find((p) => p.id === id);
+  const fd = (d) => { if (!d) return ""; const t = new Date(String(d).slice(0, 10) + "T00:00:00Z"); return Number.isNaN(t.getTime()) ? String(d) : t.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" }); };
   const monthName = (per) => { if (!per) return ""; const [y, m] = per.split("-"); return new Date(Date.UTC(+y, +m - 1, 1)).toLocaleDateString("en-GB", { month: "short", year: "numeric", timeZone: "UTC" }); };
 
   // ---------------- data ----------------
@@ -68,11 +75,11 @@ export function createProjects(c) {
   // progress in the list: a number that can be typed over, when it is set by hand; worked out from activities otherwise
   const calcFromPhases = (p) => p.mode !== "manual" && (p.phases || []).some((ph) => (ph.activities || []).length);
   function progressCell(p, pr) {
-    if (!canEditP(p) || p.status === "Completed" || calcFromPhases(p)) return `<div title="${p.status === "Completed" ? "Completed" : calcFromPhases(p) ? "Worked out from the activities. Open the project to change them." : ""}">${bar(pr)}</div>`;
+    if (!canEditP() || p.status === "Completed" || calcFromPhases(p)) return `<div title="${p.status === "Completed" ? "Completed" : calcFromPhases(p) ? "Worked out from the activities. Open the project to change them." : ""}">${bar(pr)}</div>`;
     return `<div class="pc"><div class="bar"><i style="width:${Math.min(100, pr || 0)}%"></i></div><input type="number" class="pj-pct" min="0" max="100" step="1" value="${pr ?? ""}" placeholder="–" data-pjpct="${esc(p.id)}" aria-label="Progress % of ${esc(p.name)}" title="Type the progress to date (cumulative %) and press Enter"><span class="small muted">%</span></div>`;
   }
   async function setProgress(el) {
-    const p = find(el.dataset.pjpct); if (!p || !canEditP(p)) return;
+    const p = find(el.dataset.pjpct); if (!p || !canEditP()) return;
     const raw = el.value.trim(), val = raw === "" ? null : Number(raw);
     if (val !== null && (Number.isNaN(val) || val < 0 || val > 100)) { c.toast("Progress must be between 0 and 100"); c.render(); return; }
     const per = currentPeriod(c.todayIso), lu = latestUpdate(p);
@@ -101,14 +108,14 @@ export function createProjects(c) {
     const card = (k, val, cls) => `<div class="stat ${cls || ""}"><div class="v">${val}</div><div class="k">${k}</div></div>`;
     const unitsIn = [...new Set(all.map((p) => p.unit))].map((id) => ({ id, name: c.unitName(id) })).sort((a, b) => a.name.localeCompare(b.name));
     const rows = list.map((p) => {
-      const pr = progressOf(p), te = timeElapsed(p, c.todayIso), lu = latestUpdate(p), late = needsUpdate(p, c.todayIso), dc = pendingDecisions(p).length;
+      const pr = progressOf(p), du = daysUsed(p, c.todayIso), lu = latestUpdate(p), late = needsUpdate(p, c.todayIso), dc = pendingDecisions(p).length;
       return `<tr class="clickable" data-pj="open" data-id="${esc(p.id)}" tabindex="0"><td><b>${esc(p.name)}</b><div class="small muted">${[p.code, p.directorate].filter(Boolean).map(esc).join(" · ")}</div></td>
         <td class="small">${esc(p.type)}</td><td class="small">${esc(c.unitName(p.unit))}</td><td><span class="pill ${stCls(p.status)}">${esc(p.status)}</span></td><td>${ragPill(p.status === "Completed" ? "Green" : p.rag)}</td>
-        <td style="min-width:150px">${progressCell(p, pr)}</td><td class="small">${p.end ? esc(fmt(p.end)) : '<span class="muted">–</span>'}${p.revisedEnd ? `<div class="muted">revised ${esc(fmt(p.revisedEnd))}</div>` : ""}${dueTag(p)}</td><td class="num small ${te !== null && te > 100 && p.status !== "Completed" ? "late" : ""}">${pctTxt(te)}</td>
+        <td style="min-width:150px">${progressCell(p, pr)}</td><td class="small">${p.start ? esc(fd(p.start)) : '<span class="muted">–</span>'}</td><td class="small">${p.end ? esc(fd(p.end)) : '<span class="muted">–</span>'}${p.revisedEnd ? `<div class="muted">revised ${esc(fd(p.revisedEnd))}</div>` : ""}${dueTag(p)}</td><td class="num small ${du && du.used > du.total && p.status !== "Completed" ? "late" : ""}">${du ? `${du.used.toLocaleString("en-US")} of ${du.total.toLocaleString("en-US")} days` : '<span class="muted">–</span>'}</td>
         <td class="small">${lu ? esc(monthName(lu.period)) : '<span class="muted">none</span>'}${late ? ' <span class="tag warn">update due</span>' : ""}${dc ? ` <span class="tag">${dc} decision${dc > 1 ? "s" : ""}</span>` : ""}</td></tr>`;
     }).join("");
     return `<div class="panel"><div class="panel-head"><div><h2>Projects</h2><div class="small muted">Status and progress of business and capital projects. Update monthly; physical projects move slowly.</div></div>
-      <div class="toolbar"><button class="btn" data-pj="xlsx">Download Excel</button>${canCreate() ? `<button class="btn primary" data-pj="new">+ Add project</button>` : ""}</div></div>
+      <div class="toolbar"><button class="btn" data-pj="pdf">Download PDF</button><button class="btn" data-pj="xlsx">Download Excel</button>${canCreate() ? `<button class="btn primary" data-pj="new">+ Add project</button>` : ""}</div></div>
       <div class="stats" style="padding:12px 16px;margin:0">${card("active projects", act.length)}${card("Green", cnt("Green"), "ok")}${card("Amber", cnt("Amber"), "warn")}${card("Red", cnt("Red"), "bad")}${card("monthly updates due", due)}${card("decisions pending", dec)}</div>
       <div class="toolbar" style="padding:0 16px 12px;border-bottom:1px solid var(--line)">
         <input type="search" data-pjf="q" placeholder="Search project, code, manager" value="${esc(f.q)}" aria-label="Search projects">
@@ -117,26 +124,26 @@ export function createProjects(c) {
         <select data-pjf="rag" aria-label="Status colour"><option value="">Any colour</option>${RAGS.map((r) => `<option ${f.rag === r ? "selected" : ""}>${r}</option>`).join("")}</select>
         <select data-pjf="status" aria-label="Status"><option value="active" ${f.status === "active" ? "selected" : ""}>Active</option><option value="all" ${f.status === "all" ? "selected" : ""}>All</option>${STATUSES.map((s) => `<option ${f.status === s ? "selected" : ""}>${s}</option>`).join("")}</select>
         <span class="small muted">${list.length} project${list.length === 1 ? "" : "s"}</span></div>
-      ${list.length ? `<div class="scroll"><table class="pj-table"><thead><tr><th>Project</th><th>Type</th><th>Owner</th><th>Status</th><th>Colour</th><th>Progress %</th><th>Contract end</th><th title="Share of the contract period that has passed">Time used</th><th>Last update</th></tr></thead><tbody>${rows}</tbody></table></div>`
-        : `<div class="empty"><b>${all.length ? "No projects match" : S.loaded ? "No projects yet" : "Loading projects…"}</b>${all.length ? "Change the filters above." : canCreate() ? "Use “Add project” to start following one." : "Projects of your unit appear here once they are added."}</div>`}</div>`;
+      ${list.length ? `<div class="scroll"><table class="pj-table"><thead><tr><th>Project</th><th>Type</th><th>Owner</th><th>Status</th><th>Colour</th><th>Progress %</th><th>Contract start</th><th>Contract end</th><th title="Days passed since the contract start, out of the contract length. Open a project to see the percentage.">Time used</th><th>Last update</th></tr></thead><tbody>${rows}</tbody></table></div>`
+        : `<div class="empty"><b>${all.length ? "No projects match" : S.loaded ? "No projects yet" : "Loading projects…"}</b>${all.length ? "Change the filters above." : canCreate() ? "Use “Add project” to start following one." : "Projects of your unit appear here once Group PMO adds them."}</div>`}</div>`;
   }
 
   // ---------------- one project ----------------
   function renderDetail(p) {
-    const ed = canEditP(p), pr = progressOf(p), te = timeElapsed(p, c.todayIso), sug = suggestRag(pr, te, p.status), lu = latestUpdate(p), manual = p.mode === "manual";
+    const ed = canEditP(), pr = progressOf(p), te = timeElapsed(p, c.todayIso), du = daysUsed(p, c.todayIso), sug = suggestRag(pr, te, p.status), lu = latestUpdate(p), manual = p.mode === "manual";
     ensureLinks(p.unit); (p.involved || []).forEach(ensureLinks);
     const late = needsUpdate(p, c.todayIso);
     const sel = (key, list, cur) => ed ? `<select data-pjset="${key}" aria-label="${key}">${opt(list, cur)}</select>` : `<b>${esc(cur)}</b>`;
     const kv = (k, val) => `<div class="pj-kv"><span class="small muted">${k}</span><div>${val || '<span class="muted">–</span>'}</div></div>`;
     const head = `<div class="panel"><div class="panel-head"><div><button class="btn small ghost" data-pj="back">‹ All projects</button>
         <h2 style="margin-top:6px">${esc(p.name)}</h2><div class="small muted">${[p.code, p.type, c.unitName(p.unit), p.directorate].filter(Boolean).map(esc).join(" · ")}</div></div>
-      <div class="toolbar">${ed ? `<button class="btn" data-pj="edit">Edit details</button>` : ""}</div></div>
+      <div class="toolbar"><button class="btn" data-pj="pdf-one" data-id="${esc(p.id)}">Download PDF</button>${ed ? `<button class="btn" data-pj="edit">Edit details</button>` : ""}</div></div>
       ${late && ed ? `<div class="banner warn" style="margin:0 16px 12px">${lu ? `Last monthly update was ${esc(monthName(lu.period))}.` : "No monthly update yet."} <button class="btn small" data-pj="upd-new">Report this month</button></div>` : ""}
       <div class="pj-status">
         <div class="pj-big"><div class="small muted">Overall progress</div>${bar(pr, "")}<div class="small muted">${esc(progressSource(p))}</div></div>
         <div class="pj-grid">
           ${kv("Status", sel("status", STATUSES, p.status))}${kv("Colour", ed ? `<select data-pjset="rag" aria-label="Colour">${opt(RAGS, p.rag)}</select> ${sug && sug !== p.rag ? `<span class="small muted">suggested: ${ragPill(sug)}</span>` : ""}` : ragPill(p.rag))}
-          ${kv("Contract period", p.start || p.end ? `${p.start ? esc(fmt(p.start)) : "?"} – ${p.end ? esc(fmt(p.end)) : "?"}` : "")}${kv("Time used", pctTxt(te) + dueTag(p))}${kv("Revised end", p.revisedEnd ? esc(fmt(p.revisedEnd)) : "")}${kv("Actual end", p.actualEnd ? esc(fmt(p.actualEnd)) : "")}${kv("Budget / contract value", money(p.budget))}
+          ${kv("Contract period", p.start || p.end ? `${p.start ? esc(fd(p.start)) : "?"} – ${p.end ? esc(fd(p.end)) : "?"}` : "")}${kv("Time used", (du ? `${du.used.toLocaleString("en-US")} of ${du.total.toLocaleString("en-US")} days${te !== null ? " · " + te + "%" : ""}` : pctTxt(te)) + dueTag(p))}${kv("Revised end", p.revisedEnd ? esc(fd(p.revisedEnd)) : "")}${kv("Actual end", p.actualEnd ? esc(fd(p.actualEnd)) : "")}${kv("Budget / contract value", money(p.budget))}
           ${kv("Sponsor", esc(p.sponsor))}${kv("Project manager", esc(p.manager))}${kv("Strategic link", esc(p.strategicLink))}${kv("Also involved", (p.involved || []).map((u) => `<span class="tag">${esc(c.unitName(u))}</span>`).join(" "))}
           ${isCapital(p) && lu ? kv("Financial spent", pctTxt(num(lu.financial))) : ""}
         </div>
@@ -185,7 +192,7 @@ export function createProjects(c) {
       ${rows ? `<div class="scroll"><table><thead><tr><th>Decision</th><th>Recommended option</th><th>Needed by</th><th>Status</th><th>Management response</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>` : `<div class="empty"><b>None recorded</b></div>`}</div>`;
   }
   function renderProjects() {
-    if (!canSee()) return `<div class="panel"><div class="empty"><b>Projects</b>Projects are shown to unit heads, planning heads, managers and the executive.</div></div>`;
+    if (!canSee()) return `<div class="panel"><div class="empty"><b>Projects</b>Projects are shown to Group PMO, Group Strategy, the CEO, the DCEO and the lead executive assistant, and to the chief, GM, director and planning head of the unit that owns them.</div></div>`;
     subscribe();
     const p = S.view === "detail" ? find(S.id) : null;
     if (S.view === "detail" && !p) { S.view = "list"; }
@@ -313,6 +320,8 @@ export function createProjects(c) {
     else if (x === "edit") { S.m = { type: "project", isNew: false, row: clone(p) }; drawModal(); }
     else if (x === "close") closeModal();
     else if (x === "xlsx") exportXlsx();
+    else if (x === "pdf") pdfList();
+    else if (x === "pdf-one") pdfOne(p || find(id));
     else if (x === "proj-save") {
       const r = m.row, row = { ...r, name: v("pf-name").trim(), code: v("pf-code").trim(), type: v("pf-type"), unit: v("pf-unit") || r.unit, directorate: v("pf-dir").trim(), sponsor: v("pf-spon").trim(), manager: v("pf-mgr").trim(), budget: num(v("pf-bud")), start: v("pf-start"), end: v("pf-end"), revisedEnd: v("pf-rev"), actualEnd: v("pf-act"), strategicLink: v("pf-link").trim(), mode: v("pf-mode"), status: v("pf-st"), notes: v("pf-notes").trim(),
         involved: [...document.querySelectorAll("#pjModalRoot [data-inv]:checked")].map((e) => e.dataset.inv).filter((u) => u !== (v("pf-unit") || r.unit)) };
@@ -385,7 +394,7 @@ export function createProjects(c) {
     else if (x === "dec-del") { if (!m.confirmDel) { m.confirmDel = true; drawModal(); return; } if (await commit(p, (q) => { q.decisions = q.decisions.filter((z) => z.id !== m.row.id); }, "Deleted")) closeModal(); }
   }
   async function onSet(el) {
-    const p = find(S.id); if (!p || !canEditP(p)) return;
+    const p = find(S.id); if (!p || !canEditP()) return;
     const k = el.dataset.pjset, val = el.value;
     await commit(p, (q) => { q[k] = val; }, k === "mode" ? "Saved" : "Saved");
   }
@@ -415,6 +424,57 @@ export function createProjects(c) {
     await c.writeXlsx(wb, `Projects ${c.todayIso}.xlsx`, "Excel saved");
   }
 
-  const count = () => (canSee() ? S.list.filter((p) => needsUpdate(p, c.todayIso) && canEditP(p)).length : 0);
-  return { renderProjects, subscribe, count };
+  // ---------------- PDF (simple and readable) ----------------
+  const pdfSt = () => { const b = c.pdfStyle(); b.styles = { ...b.styles, fontSize: 9.5, cellPadding: 5 }; b.headStyles = { ...b.headStyles, fontSize: 9.5 }; return b; };
+  const clip = (t, n) => { t = String(t || "").replace(/\s+/g, " ").trim(); return t.length > n ? t.slice(0, n - 1) + "…" : t; };
+  const daysTxt = (p) => { const du = daysUsed(p, c.todayIso); return du ? `${du.used.toLocaleString("en-US")} of ${du.total.toLocaleString("en-US")}` : "–"; };
+  const RAGC = { Green: [22, 128, 60], Amber: [200, 130, 0], Red: [190, 30, 30] };
+  function pdfFoot(doc, label) {
+    const n = doc.getNumberOfPages(), H = doc.internal.pageSize.getHeight();
+    for (let i = 1; i <= n; i++) { doc.setPage(i); doc.setFont("helvetica", "normal"); doc.setFontSize(8); doc.setTextColor(120, 120, 120); doc.text(`${label} · ${fd(c.todayIso)} · Page ${i} of ${n}`, 36, H - 18); }
+  }
+  async function pdfList() {
+    if (!c.libsReady("pdf")) return;
+    const list = filtered(), f = S.f;
+    const doc = c.newPdf("Projects", `${list.length} project${list.length === 1 ? "" : "s"}  ·  ${f.status === "active" ? "Active only" : f.status === "all" ? "All statuses" : f.status}  ·  as of ${fd(c.todayIso)}`);
+    const colour = (r) => ({ content: r || "–", styles: { textColor: RAGC[r] || [90, 90, 90], fontStyle: "bold" } });
+    doc.autoTable({ startY: 92, margin: { left: 30, right: 30 }, head: [["Project", "Owner", "Status", "Colour", "Progress", "Start", "End", "Days used", "Latest report"]],
+      body: list.length ? list.map((p) => { const lu = latestUpdate(p), pr = progressOf(p);
+        return [{ content: p.name + (p.code ? "\n" + p.code : ""), styles: { fontStyle: "bold" } }, c.unitName(p.unit), p.status, colour(p.status === "Completed" ? "Green" : p.rag), pr === null ? "–" : pr + "%", p.start ? fd(p.start) : "–", (p.end ? fd(p.end) : "–") + (p.revisedEnd ? "\nrevised " + fd(p.revisedEnd) : ""), daysTxt(p), lu ? monthName(lu.period) + (lu.accomplishments ? ": " + clip(lu.accomplishments, 120) : "") : "No report yet"]; })
+        : [[{ content: "No projects match the filters", colSpan: 9 }]],
+      columnStyles: { 0: { cellWidth: 135 }, 1: { cellWidth: 95 }, 2: { cellWidth: 58 }, 3: { cellWidth: 48 }, 4: { cellWidth: 58 }, 5: { cellWidth: 72 }, 6: { cellWidth: 80 }, 7: { cellWidth: 66 }, 8: { cellWidth: "auto" } }, ...pdfSt() });
+    pdfFoot(doc, "Projects");
+    await c.save(`Projects ${c.todayIso}.pdf`, doc.output("arraybuffer"), "PDF saved. Open it to print.");
+  }
+  async function pdfOne(p) {
+    if (!p || !c.libsReady("pdf")) return;
+    const pr = progressOf(p), te = timeElapsed(p, c.todayIso), lu = latestUpdate(p), du = daysUsed(p, c.todayIso), dl = daysToEnd(p, c.todayIso);
+    const doc = c.newPdf(p.name, [p.code, p.type, c.unitName(p.unit), p.directorate].filter(Boolean).join("  ·  ") + `  ·  as of ${fd(c.todayIso)}`);
+    const H = doc.internal.pageSize.getHeight(); let y = 92;
+    const section = (t) => { if (y > H - 110) { doc.addPage(); y = 50; } doc.setFont("helvetica", "bold"); doc.setFontSize(12); doc.setTextColor(92, 74, 16); doc.text(t, 36, y); y += 6; };
+    const table = (head, body, cols, extra) => { doc.autoTable({ startY: y, margin: { left: 36, right: 36 }, head: head ? [head] : undefined, body, columnStyles: cols || {}, ...pdfSt(), ...(extra || {}) }); y = doc.lastAutoTable.finalY + 18; };
+    section("At a glance");
+    const kv = [["Status", p.status], ["Colour", p.status === "Completed" ? "Green" : p.rag], ["Progress", pr === null ? "Not reported yet" : pr + "%  (" + progressSource(p).toLowerCase() + ")"],
+      ["Contract", `${p.start ? fd(p.start) : "?"} to ${p.end ? fd(p.end) : "?"}${p.revisedEnd ? "  ·  revised end " + fd(p.revisedEnd) : ""}${p.actualEnd ? "  ·  finished " + fd(p.actualEnd) : ""}`],
+      ["Time used", du ? `${du.used.toLocaleString("en-US")} of ${du.total.toLocaleString("en-US")} days${te !== null ? " (" + te + "%)" : ""}${dl !== null ? (dl < 0 ? "  ·  " + -dl + " days past the contract end" : "  ·  " + dl + " days left") : ""}` : (te !== null ? te + "%" : "–")],
+      ["Budget / contract value", money(p.budget)], ["Sponsor", p.sponsor || "–"], ["Project manager", p.manager || "–"], ["Strategic link", p.strategicLink || "–"],
+      ["Also involved", (p.involved || []).map((u) => c.unitName(u)).join(", ") || "–"]];
+    if (isCapital(p) && lu && num(lu.financial) !== null) kv.splice(3, 0, ["Financial spent", num(lu.financial) + "%"]);
+    table(null, kv, { 0: { cellWidth: 130, fontStyle: "bold" } }, { theme: "plain" });
+    if (p.notes) { doc.setFont("helvetica", "normal"); doc.setFontSize(9); doc.setTextColor(60, 60, 60); const t = doc.splitTextToSize(p.notes, 760); doc.text(t, 36, y - 6); y += t.length * 11 + 6; }
+    const phases = p.phases || [];
+    if (phases.length) { section("Phases"); table(["Phase", "Done", "Activities"], phases.map((ph) => { const pp = phasePct(ph, resolve), acts = ph.activities || []; return [ph.name, pp === null ? "–" : Math.round(pp) + "%", acts.length ? acts.map((a) => `${a.title} (${stateOf(a).pct}%)`).join("; ") : "–"]; }), { 0: { cellWidth: 170, fontStyle: "bold" }, 1: { cellWidth: 50 } }); }
+    section("Latest monthly report");
+    if (lu) { table(null, [["Month", monthName(lu.period) + (lu.by ? "  ·  reported by " + lu.by : "")], ["Accomplishments", lu.accomplishments || "–"], ["Concern", lu.concern || "–"], ["Plan for next month", lu.nextPlan || "–"], ["Decision required", lu.decisionNeeded || "–"]], { 0: { cellWidth: 130, fontStyle: "bold" } }, { theme: "plain" }); }
+    else { doc.setFont("helvetica", "normal"); doc.setFontSize(9); doc.setTextColor(90, 90, 90); doc.text("No monthly report yet.", 36, y + 8); y += 26; }
+    const rk = openRisks(p);
+    if (rk.length) { section(`Open risks and issues (${rk.length})`); table(["Type", "Description", "Severity", "Mitigation", "Owner"], rk.map((r) => [r.type || "Risk", r.title, r.severity || "", r.mitigation || "", r.owner || ""]), { 0: { cellWidth: 50 }, 2: { cellWidth: 55 }, 4: { cellWidth: 80 } }); }
+    const dc = pendingDecisions(p);
+    if (dc.length) { section(`Decisions needed (${dc.length})`); table(["Decision", "Recommended option", "Needed by"], dc.map((d) => [d.title, d.recommended || "", d.needBy ? fd(d.needBy) : ""]), { 2: { cellWidth: 80 } }); }
+    pdfFoot(doc, p.name);
+    await c.save(`Project - ${String(p.name).replace(/[\\/:*?"<>|]/g, "").slice(0, 50)} ${c.todayIso}.pdf`, doc.output("arraybuffer"), "PDF saved. Open it to print.");
+  }
+
+  const count = () => (canSee() && canEditP() ? S.list.filter((p) => needsUpdate(p, c.todayIso)).length : 0);
+  return { renderProjects, subscribe, count, canSee };
 }
