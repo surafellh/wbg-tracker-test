@@ -10,7 +10,7 @@
 // Run  npm run check-help  after changing the app or this file: it lists guide wording that no longer matches the app.
 // "pages" uses the app's tab ids: dashboard, update, plan, mplan, approvals, support, fb, tasks, monthly, ceo, follow, activity, units, people.
 // Keep sentences short and name the buttons exactly as they appear on screen.
-export const GUIDES_VERSION = "2026-10-24.1";
+export const GUIDES_VERSION = "2026-10-24.2";
 
 export const GROUPS = [
   { id: "start", title: "Getting started", icon: "🚀", blurb: "Signing in, weeks, roles and finding your way around" },
