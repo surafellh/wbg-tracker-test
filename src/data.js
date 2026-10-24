@@ -696,10 +696,10 @@ function createLocalData() {
     },
     saveProject(auth, row) {
       const unit = row.unit || ""; if (!unit || !String(row.name || "").trim()) return err("bad_request");
-      const w = () => auth.role === "super_admin" || (["leader", "planning", "manager"].includes(auth.role) && auth.unit === "pmo");
-      if (!w()) return err("not_allowed");
+      const w = (u) => auth.role === "super_admin" || (["leader", "planning", "manager"].includes(auth.role) && auth.unit === "pmo") || (auth.role === "planning" && !!auth.unit && auth.unit === u);
+      if (!w(unit)) return err("not_allowed");
       const old = row.id ? getStore("projects").find((x) => x.id === row.id) : null;
-      if (old && !w()) return err("not_allowed");
+      if (old && !w(old.unit)) return err("not_allowed");
       if (old && row.updatedAt && old.updatedAt && row.updatedAt !== old.updatedAt) return err("conflict");
       const name = (auth.name || "").trim(), now = new Date().toISOString();
       const rec = { code: "", directorate: "", sponsor: "", manager: "", budget: null, start: "", end: "", strategicLink: "", status: "In progress", rag: "Green", mode: "phases", involved: [], phases: [], updates: [], risks: [], decisions: [], notes: "", ...(old || {}), ...row,
