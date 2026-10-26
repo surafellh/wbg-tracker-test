@@ -10,7 +10,7 @@
 // Run  npm run check-help  after changing the app or this file: it lists guide wording that no longer matches the app.
 // "pages" uses the app's tab ids: dashboard, update, plan, mplan, approvals, support, fb, tasks, monthly, ceo, follow, activity, units, people.
 // Keep sentences short and name the buttons exactly as they appear on screen.
-export const GUIDES_VERSION = "2026-10-26.1";
+export const GUIDES_VERSION = "2026-10-26.2";
 
 export const GROUPS = [
   { id: "start", title: "Getting started", icon: "🚀", blurb: "Signing in, weeks, roles and finding your way around" },
@@ -898,8 +898,8 @@ export const GUIDES = [
     steps: [
       "Open **Cash flow**, then **Summary**. Pick the **As of** date (it rolls forward every day) and a unit, or leave all units.",
       "Use the **1 / 2 / 3** buttons to focus on one urgency. The table then shows only those steps.",
-      "In **What is counted**, tap a category to leave out the amount you do not expect to be collected or paid, for example related parties. A crossed-out category is left out of every figure on the page. Tap it again to count it. **Back to the saved settings** returns to what Setup says.",
-      "Read each row: **Bank now**, then for each step what is **still to be collected** (▲) and **still to be paid** (▼), and the position after it. Red means negative. What was already collected or paid is not counted again, so the figures change through the day as cash is recorded.",
+      "**What is counted** is the box on the left. Tap a category to leave out the amount you do not expect to be collected or paid, for example related parties. A crossed-out category is left out of every figure on the page. Tap it again to count it. **Back to the saved settings** returns to what Setup says. The arrow at the top of the box folds it away, and opens it again.",
+      "Read the ladder: **Bank balance now**, then what is **still to be collected** (▲), what is **still to be paid** (▼), and the **position** after each step. Red means negative. With several units, the table **By unit** shows the position after each step, with the amount to collect (green) and to pay (red) under it. What was already collected or paid is not counted again, so the figures change through the day as cash is recorded.",
       "**Financing needed now** is the shortfall within the coming month (step 1). The later steps are shown as \"more later\". The box below shows which units have spare cash to cover it. **Download PDF** gives the table on paper.",
       "Move over the line in **Bank balance by day** to see the amount for each day.",
     ],
@@ -907,17 +907,14 @@ export const GUIDES = [
   },
   {
     id: "cash-week", g: "cf", pages: ["cashflow"], title: "The weekly plan, as your cash flow statement",
-    kw: "weekly plan week monday saturday statement plan actual variance next week roll carry over unpaid code history trace template upload excel exchange rate usd planned this week",
-    intro: "The Weekly plan page looks like the weekly cash flow statement each unit already sends: Plan, Actual, Variance, % and the plan for next week. A week runs Monday to Saturday. Click a row to see the lines behind it.",
+    kw: "weekly plan week monday saturday statement plan actual variance next week unplanned payment download excel pdf",
+    intro: "The Weekly plan page is the weekly cash flow statement: Plan, Actual, Variance, % and the plan for next week. A week runs Monday to Saturday. It is for reading only: the plan comes from Collections & payments, and the actual fills in as cash is recorded each day.",
     steps: [
       "Open **Weekly plan** and pick the unit and the week with the arrows or the date box. Click a row such as **Credit collection** to open its lines: first the business units, then the categories, then the lines themselves.",
-      "**Planned this week** on a line is what you expect to collect or pay in that week. It can be less than the whole amount owed.",
-      "Lines still open from earlier weeks appear in the banner that lists the open lines not yet in the week. **Roll in with what is left** brings only the lines that are still open, with the amount left. Lines paid in full are not brought.",
-      "Add a new line with **+ Add a line**. For a USD line choose USD and write the **exchange rate** for that week. It is kept with the week, so a new rate never changes earlier weeks.",
-      "Use the **⋯** menu on a line to trace it, edit it or take it out of the week. The **⋯** menu at the top downloads or uploads the weekly Excel template and downloads what you see.",
-      "Some lines are the same line with a different value in another week, for example a part payment. Use **Link to a line…** in the ⋯ menu of a line to join it to a line with a code. Tick the box to link the other weeks with the same name too. If no line fits, **create a new one**.",
-      "Made a mistake with an upload? A bar at the top offers **Undo** right after it. To clean up an earlier upload, use the ⋯ menu: **Remove duplicate lines…** finds lines imported from the old workbooks that now have a line with a code for the same name, or **Take out every line of this week…** clears the week's plan (the lines and their cash are kept).",
-      "Actual comes from the daily Collections & payments. Weeks imported from the old weekly workbooks keep the actual that was reported then.",
+      "**Plan** is what was expected to be collected or paid in the week. **Actual** is what was recorded, day by day, in Collections & payments. **Var.** and **%** compare the two.",
+      "Cash collected or paid with no plan line appears in **Unplanned collections** and **Unplanned payments**, with the day, who and the bank.",
+      "To change the plan or record cash, go to **Collections & payments**: record the day in the **Actual** tab, or upload the next plan from the **Status** tab.",
+      "**Download Excel** and **Download PDF** give the statement as you see it.",
     ],
     go: [["Cash flow", "cashflow"]],
   },
@@ -928,8 +925,8 @@ export const GUIDES = [
     steps: [
       "**Plan:** three boxes, one for each month step (within one month, two months, three months). Collections are on the left and payments on the right, folded by category. Open a category to see its lines. **Open all** and **Fold all** do it for every category.",
       "**Actual:** pick the week with the arrows. Collections are at the top, payments below. For each line type what was collected or paid in the day it happened, Monday to Saturday, then press **Save**. **Planned**, **Collected** and **Remaining** are shown on every line.",
-      "If one day used more than one bank, open the **⋯** menu on the line and choose **Record in more than one bank**, or click a day that already shows \"2 banks\". Add a row for each bank. The line shows the day's total.",
-      "To work in Excel: **⋯**, **Download this week as a template**. Fill the day columns and use **Upload the filled week**. An empty day means no change, 0 removes that day's entry. A row with no code is cash with no line: write who it is and the bank.",
+      "Click a line (its code, name or category) or **Details** to open it on the right. Each day has a row for the bank and the amount. For a different bank on another day, type or pick that bank on that day. For two banks on one day, press **+ Another bank**. A bank that is not in the list yet is added when you save. **Save** records the week. The panel also lists what was recorded for the line, and by whom.",
+      "To work in Excel: **⋯**, **Download this week as a template**. Fill the day columns and use **Upload the filled week**. An empty day means no change, 0 removes that day's entry. A row with no code is cash with no line: write who it is and the bank. The file remembers what was recorded when you downloaded it. If someone changed a day in the app after that, your upload does not overwrite it: the result names the day and keeps the newer figure. A day you did not touch in the file is never changed.",
       "**Status:** where we stand as of the day chosen at the top. Collections on the left, payments on the right, by month step. **⋯**, **Download as Excel** gives one sheet per unit in that layout. Change an amount, move a line to another month block, add rows with no code for new lines, or write **DROP** in Remark to take a line off the plan, then **Upload a filled sheet as the plan**.",
       "Open **Bank** and type **In** and **Out** for each bank from the bank report. Closing is calculated. For several amounts type a sum such as 500000+250000. Press **Save day**. In its **⋯** menu, **Download daily template** and **Upload filled template** work with the two daily sheets (Colln and Bank).",
       "**Download PDF** on the Summary, Plan, Actual and Status gives a readable copy to print. **Reconcile** compares the bank report with the collections and payments from the day a unit first records them in the app.",
@@ -941,7 +938,7 @@ export const GUIDES = [
     kw: "download excel report weekly summary history reconciliation what i see this view",
     intro: "There is no separate reports page. Every page has a **⋯** menu at the top right, and its **Download this view** gives exactly what is on that page.",
     steps: [
-      "On **Weekly plan**: download this week (statement and lines) or every week's lines.",
+      "On **Weekly plan**: **Download Excel** and **Download PDF** give the statement for the week.",
       "On **Collections & payments**, **Bank**, **Reconcile** and **Forecast**: **Download this view**.",
       "A full copy of everything is the backup in **Setup**.",
     ],

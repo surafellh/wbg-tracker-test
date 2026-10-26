@@ -32,7 +32,7 @@ export function createWeek(h) {
     const next = {}; for (const w of S.week.filter((q) => units.includes(q.unit) && q.week === addDays(W, 7))) { const it = w.itemId ? items.get(w.itemId) : null; if (w.itemId && !it) continue; const k = w.kind + "|" + stmtOf(w, it); next[k] = (next[k] || 0) + num(w.planned) * rateOf({ currency: w.currency || (it && it.currency) || "ETB", rate: w.rate }, fxr); }
     const rows = {}; for (const l of lines) (rows[l.kind + "|" + l.stmt] = rows[l.kind + "|" + l.stmt] || []).push(l);
     const kinds = ["in", "out"].map((k) => { const list = STMT.filter((s) => s[0] === k).map(([, section, label]) => { const key = k + "|" + label, ls = rows[key] || []; return { key, label, section, lines: ls, plan: sum(ls, (x) => x.plan), actual: sum(ls, (x) => x.actual), next: next[key] || 0 }; });
-      const un = loose.filter((l) => l.kind === k), unplanned = { key: k + "|unplanned", label: "Not in the plan", section: "", lines: [], moves: un, plan: 0, actual: sum(un, logEtb), next: 0 };
+      const un = loose.filter((l) => l.kind === k), unplanned = { key: k + "|unplanned", label: k === "in" ? "Unplanned collections" : "Unplanned payments", section: "", lines: [], moves: un, plan: 0, actual: sum(un, logEtb), next: 0 };
       const all = [...list, unplanned]; return { kind: k, rows: all, plan: sum(all, (x) => x.plan), actual: sum(all, (x) => x.actual), next: sum(all, (x) => x.next) }; });
     const [cin, cout] = kinds, begin = hasBankBy(units, addDays(W, -1)) ? cashAt(units, addDays(W, -1)) : null, endDay = E < c.todayIso ? E : c.todayIso;
     return { W, E, started, units, in: cin, out: cout, begin, endPlan: (begin || 0) + cin.plan - cout.plan, endActual: (begin || 0) + cin.actual - cout.actual, endBank: started && hasBankBy(units, endDay) ? cashAt(units, endDay) : null,
@@ -42,11 +42,11 @@ export function createWeek(h) {
 
   // ---------------- the weekly plan screen ----------------
   function renderWeek() {
-    const units = h.scopeUnits(), W = S.wk, m = buildStmt(units, W), writable = h.writableUnits().length > 0, open = S.wx || (S.wx = {});
-    const lineRow = (l) => { const wr = h.canWrite(l.w.unit), cur = l.cur !== "ETB" ? ` <span class="tag" title="Rate used: ${esc(String(l.rate))}">${esc(l.cur)}</span>` : "";
-      return `<tr class="cf-sub"><td><span class="tag">${esc((l.it && l.it.code) || l.w.itemCode || "")}</span> <b>${esc(l.party || (l.description === "Weekly statement row" ? "Reported total for this row" : l.description))}</b>${!l.party && l.description === "Weekly statement row" ? '<span class="small muted"> · the unit reported one figure, no lines behind it</span>' : ""}${l.party && l.description ? `<span class="small muted"> · ${esc(l.description)}</span>` : ""}${l.w.rolled ? ' <span class="tag" title="Carried over from an earlier week">rolled</span>' : ""}${cur}${l.due ? `<span class="small muted"> · due ${esc(dMini(l.due))}</span>` : ""}${l.remark ? `<div class="small muted">${esc(l.remark)}</div>` : ""}</td>
+    const units = h.scopeUnits(), W = S.wk, m = buildStmt(units, W), open = S.wx || (S.wx = {});
+    const lineRow = (l) => { const cur = l.cur !== "ETB" ? ` <span class="tag" title="Rate used: ${esc(String(l.rate))}">${esc(l.cur)}</span>` : "";
+      return `<tr class="cf-sub"><td><span class="tag">${esc((l.it && l.it.code) || l.w.itemCode || "")}</span> <b>${esc(l.party || (l.description === "Weekly statement row" ? "Reported total for this row" : l.description))}</b>${!l.party && l.description === "Weekly statement row" ? '<span class="small muted"> · the unit reported one figure, no lines behind it</span>' : ""}${l.party && l.description ? `<span class="small muted"> · ${esc(l.description)}</span>` : ""}${cur}${l.due ? `<span class="small muted"> · due ${esc(dMini(l.due))}</span>` : ""}${l.remark ? `<div class="small muted">${esc(l.remark)}</div>` : ""}</td>
         <td class="num">${mny(l.plan, false)}</td><td class="num">${l.started === false ? "" : l.actual ? mny(l.actual, false) : '<span class="muted">–</span>'}</td><td></td><td></td><td></td>
-        <td class="cf-act">${h.menu([l.it ? [`data-cf="w-trace" data-id="${esc(l.it.id)}"`, "Trace this line"] : null, wr ? [`data-cf="w-edit" data-id="${esc(l.w.id)}"`, "Edit"] : null, wr && !l.it ? [`data-cf="w-link" data-id="${esc(l.w.id)}"`, "Link to a line…"] : null, wr ? [`data-cf="w-remove" data-id="${esc(l.w.id)}"`, "Take out of this week"] : null])}</td></tr>`; };
+        <td></td></tr>`; };
     // Opening a row shows its lines in steps: first by business unit (when more than one is shown), then by category, then the lines themselves.
     const grpRow = (key, label, n, plan, actual, depth, started) => `<tr class="cf-row clickable cf-g${depth}" data-cf="w-x" data-key="${esc(key)}" tabindex="0"><td style="padding-left:${12 + depth * 16}px"><span class="cf-caret">${open[key] ? "▾" : "▸"}</span> <b>${esc(label)}</b> <span class="small muted">${n} line${n === 1 ? "" : "s"}</span></td><td class="num">${plain(plan)}</td><td class="num">${started && actual ? plain(actual) : ""}</td><td colspan="4"></td></tr>`;
     const byKey = (ls, f) => { const mp = new Map(); ls.forEach((l) => { const k = f(l); (mp.get(k) || mp.set(k, []).get(k)).push(l); }); return [...mp.entries()].sort((a, b) => sum(b[1], (x) => x.plan) - sum(a[1], (x) => x.plan)); };
@@ -58,11 +58,11 @@ export function createWeek(h) {
     const block = (b, title, sub) => {
       const shown = b.rows.filter((r) => r.lines.length || r.next || r.actual || r.plan);
       const groups = ["operating", "investing", "financing", ""].map((s) => ({ s, rows: shown.filter((r) => r.section === s) })).filter((g) => g.rows.length);
-      const body = groups.map((g) => `${g.s ? `<tr class="cf-sec2"><td colspan="7">${esc(STMT_GROUP[g.s])}</td></tr>` : ""}${g.rows.map((r) => { const ex = open[r.key], un = !r.section, can = r.lines.length || (un && r.moves.length);
+      const body = groups.map((g) => `${g.s ? `<tr class="cf-sec2"><td colspan="7">${esc(STMT_GROUP[g.s])}</td></tr>` : ""}${g.rows.map((r) => { const un = !r.section, ex = un ? open[r.key] !== false : open[r.key], can = r.lines.length || (un && r.moves.length);
         return `<tr class="cf-row${can ? " clickable" : ""}" ${can ? `data-cf="w-x" data-key="${esc(r.key)}" tabindex="0"` : ""}><td>${can ? `<span class="cf-caret">${ex ? "▾" : "▸"}</span> ` : '<span class="cf-caret"> </span> '}${esc(r.label)}${can ? ` <span class="small muted">${r.lines.length || r.moves.length}</span>` : ""}</td>
           <td class="num">${r.plan ? plain(r.plan) : ""}</td><td class="num">${m.started ? (r.actual ? plain(r.actual) : "") : ""}</td><td class="num ${m.started && r.actual - r.plan < -0.5 ? "neg" : ""}">${m.started && (r.plan || r.actual) ? mny(r.actual - r.plan) : ""}</td><td class="num small">${m.started ? pctOf(r.actual, r.plan) : ""}</td><td class="num muted">${r.next ? plain(r.next) : ""}</td><td></td></tr>
           ${ex && r.lines.length ? nest(r, m.started) : ""}
-          ${ex && un ? r.moves.slice(0, 20).map((l) => `<tr class="cf-sub"><td class="small">${esc(dMini(l.day))} · ${esc(l.party || l.description || "")}${l.bank ? ` · ${esc(l.bank)}` : ""}</td><td></td><td class="num">${plain(logEtb(l))}</td><td colspan="4"></td></tr>`).join("") : ""}`; }).join("")}`).join("");
+          ${ex && un ? r.moves.map((l) => `<tr class="cf-sub"><td class="small">${esc(dMini(l.day))} · ${esc(l.party || l.description || "Paid or collected without a plan line")}${l.bank ? ` · ${esc(l.bank)}` : ""}</td><td></td><td class="num">${plain(logEtb(l))}</td><td colspan="4"></td></tr>`).join("") : ""}`; }).join("")}`).join("");
       return `<tr class="cf-sec"><td colspan="7"><b>${title}</b></td></tr>${body}<tr class="tot"><td>${sub}</td><td class="num">${plain(b.plan)}</td><td class="num">${m.started ? plain(b.actual) : ""}</td><td class="num ${m.started && b.actual - b.plan < -0.5 ? "neg" : ""}">${m.started ? mny(b.actual - b.plan) : ""}</td><td class="num small">${m.started ? pctOf(b.actual, b.plan) : ""}</td><td class="num">${b.next ? plain(b.next) : ""}</td><td></td></tr>`; };
     const bg = m.begin;
     const tbl = `<div class="scroll"><table class="cf-table cf-stmt"><thead><tr><th>Description</th><th>Plan</th><th title="What really moved, from the daily collections and payments">Actual</th><th>Var.</th><th>%</th><th title="The plan already entered for the next week">Next week</th><th></th></tr></thead><tbody>
@@ -73,12 +73,10 @@ export function createWeek(h) {
       <tr class="tot strong"><td>Ending cash</td><td class="num">${plain(m.endPlan)}</td><td class="num">${m.started ? plain(m.endActual) : ""}</td><td class="num ${m.started && m.endActual - m.endPlan < -0.5 ? "neg" : ""}">${m.started ? mny(m.endActual - m.endPlan) : ""}</td><td></td><td></td><td></td></tr>
       ${m.endBank !== null ? `<tr><td class="small muted">Bank balance at the end (bank report)</td><td></td><td class="num ${Math.abs(m.endBank - m.endActual) > TOLERANCE ? "neg" : ""}">${plain(m.endBank)}</td><td class="num ${Math.abs(m.endBank - m.endActual) > TOLERANCE ? "neg" : ""}">${Math.abs(m.endBank - m.endActual) > TOLERANCE ? mny(m.endBank - m.endActual) : ""}</td><td colspan="3" class="small muted">${Math.abs(m.endBank - m.endActual) > TOLERANCE ? "differs from the cash recorded" : "matches"}</td></tr>` : ""}
       </tbody></table></div>`;
-    const cand = m.cand.length ? `<div class="cf-note cf-roll"><span><b>${m.cand.length}</b> open line${m.cand.length > 1 ? "s" : ""} not in this week's plan (what is left of earlier weeks).</span>${writable ? `<button class="btn small primary" data-cf="w-roll-all">Roll in with what is left</button>` : ""}<button class="btn small ghost" data-cf="w-cand">${S.wcand ? "Hide" : "Show"}</button></div>
-      ${S.wcand ? `<div class="scroll"><table class="cf-table"><tbody>${m.cand.slice(0, 40).map((x) => `<tr><td><span class="tag">${esc(x.it.code || "")}</span></td><td><b>${esc(x.it.party || x.it.description || "")}</b></td><td class="small">${esc(h.ushort(x.it.unit))}</td><td class="small">${x.it.kind === "in" ? "Collect" : "Pay"}</td><td class="num">${plain(x.left)}</td><td><button class="btn small" data-cf="w-roll-one" data-id="${esc(x.it.id)}">Plan this week</button></td></tr>`).join("")}</tbody></table></div>${m.cand.length > 40 ? '<div class="small muted">and more. Use Roll in.</div>' : ""}` : ""}` : "";
-    const empty = !m.in.rows.some((r) => r.lines.length) && !m.out.rows.some((r) => r.lines.length) && !m.cand.length ? `<div class="empty"><b>No plan for this week yet</b>${writable ? "Add a line, or download the template, fill it in and upload it." : "Nothing has been planned for this week."}</div>` : "";
+    const empty = !m.in.rows.some((r) => r.lines.length) && !m.out.rows.some((r) => r.lines.length) && !m.in.actual && !m.out.actual ? `<div class="empty"><b>No plan for this week yet</b>Plans are loaded from Collections &amp; payments (Status tab: upload the next plan).</div>` : "";
     return `<div class="cf-body"><div class="cf-bar">${h.allUnits().length > 1 ? h.unitSel(S.scope) : ""}<span class="cf-wk"><button class="btn small" data-cf="w-shift" data-v="-7" aria-label="Previous week">‹</button><b title="Monday to Saturday">${esc(weekLabel(W))}</b><button class="btn small" data-cf="w-shift" data-v="7" aria-label="Next week">›</button><input type="date" data-cfc="wk" value="${esc(W)}" aria-label="Pick any day in the week" class="cf-datemini">${W !== weekStart(c.todayIso) ? '<button class="btn small ghost" data-cf="w-thisweek">This week</button>' : ""}</span>
-        <span class="cf-right">${writable ? `<button class="btn primary small" data-cf="w-new">+ Add a line</button>` : ""}${h.menu([['data-cf="w-xl-down"', "Download template for this week"], writable ? ['data-cf="w-pick-week"', "Upload filled template"] : null, ['data-cf="w-dl" data-v="week"', "Download this week (plan and actual)"], ['data-cf="w-dl" data-v="history"', "Download every week's lines"], writable ? ['data-cf="w-dup"', "Remove duplicate lines…"] : null, writable ? ['data-cf="w-clear"', "Take out every line of this week…"] : null])}<input type="file" id="cwUploadWeek" accept=".xlsx,.xls" hidden></span></div>
-      ${cand}${empty}${tbl}</div>`;
+        <span class="cf-right"><button class="btn small" data-cf="w-dl" data-v="week">Download Excel</button><button class="btn small" data-cf="w-pdf">Download PDF</button></span></div>
+      ${empty}${tbl}</div>`;
   }
 
   // ---------------- add / edit a line ----------------
@@ -215,6 +213,13 @@ export function createWeek(h) {
   }
 
   // ---------------- downloads of what is on screen ----------------
+  async function weekPdf() {
+    if (!c.libsReady("pdf")) return; const units = h.scopeUnits(), W = S.wk, m = buildStmt(units, W), rows = stmtRows(m, "").slice(3);
+    const doc = c.newPdf("Weekly cash flow", `${units.length === 1 ? h.uname(units[0]) : "All business units"}  ·  ${weekLabel(W)}`);
+    const fmt = (v) => (v === "" || v == null ? "" : typeof v === "number" ? plain(v) : v), body = rows.map((r) => { const head = r.length === 1 || /^(Total|Available|Ending|Beginning)/.test(String(r[0])); return [0, 1, 2, 3].map((i) => ({ content: fmt(r[i]), styles: { fontStyle: head ? "bold" : "normal", halign: i ? "right" : "left" } })); });
+    doc.autoTable({ startY: 92, margin: { left: 36, right: 36 }, head: [["Description", "Plan", "Actual", "Variance"]], body, ...c.pdfStyle() });
+    await c.save(`Weekly cash flow ${W}.pdf`, doc.output("arraybuffer"), "PDF saved. Open it to print.");
+  }
   const sheet = (X, wb, rows, w, name) => X.utils.book_append_sheet(wb, c.sheetFromRows(rows, w), name.slice(0, 31));
   function stmtRows(m, label) {
     const rows = [[label], [], ["Description", "Plan", "Actual", "Variance", "%", "Next week plan"], ["Beginning cash", m.begin === null ? "" : Math.round(m.begin), m.begin === null ? "" : Math.round(m.begin)]];
@@ -357,6 +362,7 @@ export function createWeek(h) {
     else if (x === "w-xl-down") await weekTemplate();
     else if (x === "w-pick-week") { const i = document.getElementById("cwUploadWeek"); if (i) i.click(); }
     else if (x === "w-dl") await download(el.dataset.v);
+    else if (x === "w-pdf") await weekPdf();
     else if (x === "w-rcrange") { S.rc.range = Number(el.dataset.v); c.render(); }
     else if (x === "w-rcall") { S.rc.all = el.dataset.v === "1"; c.render(); }
     else if (x === "w-goday") { S.scope = el.dataset.unit || S.scope; S.view = "coll"; h.setDay(el.dataset.day); }

@@ -81,7 +81,7 @@ export function createSheet(h) {
   }
   function dayCell(r, d, wr) {
     const ents = r.lg.filter((l) => l.day === d), tot = sum(ents, (l) => l.amount), id = r.it.id, key = id + "|" + d;
-    if (ents.length > 1) return `<td class="num cf-dc"><button type="button" class="cf-multi" data-cf="k-split" data-id="${esc(id)}" data-day="${esc(d)}" data-total="${tot}" title="Recorded in ${ents.length} banks. Click to see or change">${plain(tot)}<span class="small"> · ${ents.length} banks</span></button></td>`;
+    if (ents.length > 1) return `<td class="num cf-dc"><button type="button" class="cf-multi" data-cf="k-open" data-id="${esc(id)}" data-total="${tot}" title="Recorded in ${ents.length} banks. Click to see or change">${plain(tot)}<span class="small"> · ${ents.length} banks</span></button></td>`;
     const dr = K().kd[key], val = dr !== undefined ? dr : tot || "";
     return `<td class="num cf-dc">${wr ? `<input type="number" min="0" step="any" class="cf-amt" data-kd="1" data-id="${esc(id)}" data-day="${esc(d)}" data-was="${tot}" value="${esc(String(val))}" placeholder="" aria-label="${esc(dayHead(d, (new Date(d + "T00:00:00Z").getUTCDay() + 6) % 7))}">` : tot ? `<b>${plain(tot)}</b>` : '<span class="muted">–</span>'}${ents[0] && ents[0].bank ? `<div class="small muted cf-bk1">${esc(ents[0].bank)}</div>` : ""}</td>`;
   }
@@ -89,9 +89,9 @@ export function createSheet(h) {
     const days = weekDays(W), sun = addDays(W, 6), hasSun = rows.some((r) => r.lg.some((l) => l.day === sun)), cols = hasSun ? [...days, sun] : days, title = kind === "in" ? "Collections" : "Payments", verb = kind === "in" ? "Collected" : "Paid";
     const body = rows.map((r) => { const it = r.it, wr = h.canWrite(it.unit), banks = h.knownBanks(it.unit), kb = K().kb[it.id] || r.banks[0] || h.lastBank(it.unit, it.kind), t = h.typeByCode(it.typeCode);
       const bankCell = r.banks.length > 1 ? `<span class="tag" title="${esc(r.banks.join(", "))}">${r.banks.length} banks</span>` : wr && banks.length ? `<select class="cf-bank" data-kb="1" data-id="${esc(it.id)}" aria-label="Bank">${(kb && !banks.includes(kb) ? [kb, ...banks] : banks).map((b) => `<option ${b === kb ? "selected" : ""}>${esc(b)}</option>`).join("")}</select>` : `<span class="small muted">${esc(r.banks[0] || "no bank")}</span>`;
-      return `<tr data-krow="${esc(it.id)}" data-start="${r.start}"><td><span class="tag">${esc(it.code || "")}</span></td><td class="cf-who"><b>${esc(it.party || it.description || "")}</b>${cur(it)}${it.party && it.description ? `<div class="small muted">${esc(clip(it.description, 46))}${many ? " · " + esc(h.ushort(it.unit)) : ""}</div>` : many ? `<div class="small muted">${esc(h.ushort(it.unit))}</div>` : ""}</td>
-        <td class="small" title="${esc(t ? t.label || "" : "")}">${esc(it.typeCode || "–")}</td><td>${bankCell}</td><td class="num">${plain(r.planned)}</td><td class="num"><b data-kcol>${plain(r.coll)}</b></td><td class="num"><b data-krem>${plain(r.rem)}</b></td>${cols.map((d) => dayCell(r, d, wr)).join("")}
-        <td class="cf-act">${wr ? h.menu([[`data-cf="k-split" data-id="${esc(it.id)}" data-day=""`, "Record in more than one bank…"], [`data-cf="item-open" data-id="${esc(it.id)}"`, "Edit line"], [`data-cf="w-trace" data-id="${esc(it.id)}"`, "Trace through the weeks"]]) : ""}</td></tr>`; }).join("");
+      return `<tr data-krow="${esc(it.id)}" data-start="${r.start}" class="${K().pn === it.id ? "cf-sel" : ""}"><td class="cf-pick" data-cf="k-open" data-id="${esc(it.id)}" title="Open the details"><span class="tag">${esc(it.code || "")}</span></td><td class="cf-who cf-pick" data-cf="k-open" data-id="${esc(it.id)}" title="Open the details"><b>${esc(it.party || it.description || "")}</b>${cur(it)}${it.party && it.description ? `<div class="small muted">${esc(clip(it.description, 46))}${many ? " · " + esc(h.ushort(it.unit)) : ""}</div>` : many ? `<div class="small muted">${esc(h.ushort(it.unit))}</div>` : ""}</td>
+        <td class="small cf-pick" data-cf="k-open" data-id="${esc(it.id)}" title="${esc(t ? t.label || "" : "Open the details")}">${esc(it.typeCode || "–")}</td><td>${bankCell}</td><td class="num">${plain(r.planned)}</td><td class="num"><b data-kcol>${plain(r.coll)}</b></td><td class="num"><b data-krem>${plain(r.rem)}</b></td>${cols.map((d) => dayCell(r, d, wr)).join("")}
+        <td class="cf-act"><button type="button" class="btn small ghost" data-cf="k-open" data-id="${esc(it.id)}" aria-label="Open the details">Details ›</button></td></tr>`; }).join("");
     const colTot = (d) => sum(rows, (r) => conv(r.it, sum(r.lg.filter((l) => l.day === d), (l) => l.amount)));
     return `<section class="cf-card flush cf-kk"><div class="cf-split cf-pad"><h3>${title}</h3><span class="small muted">${rows.length} line${rows.length === 1 ? "" : "s"} · planned <b>${plain(sum(rows, (r) => conv(r.it, r.planned)))}</b> · ${verb.toLowerCase()} <b>${plain(sum(rows, (r) => conv(r.it, r.coll)))}</b> · remaining <b>${plain(sum(rows, (r) => conv(r.it, r.rem)))}</b></span></div>
       ${rows.length ? `<div class="scroll"><table class="cf-table cf-wkgrid"><thead><tr><th>Code</th><th>${kind === "in" ? "Customer" : "Payee"}</th><th>Category</th><th>Bank</th><th>Planned</th><th>${verb}</th><th>Remaining</th>${cols.map((d, i) => `<th class="cf-dh" title="${esc(dShort(d))}">${esc(dayHead(d, i))}${d === c.todayIso ? '<div class="small">today</div>' : ""}</th>`).join("")}<th></th></tr></thead><tbody>${body}<tr class="tot"><td colspan="4">Total</td><td class="num">${plain(sum(rows, (r) => conv(r.it, r.planned)))}</td><td class="num">${plain(sum(rows, (r) => conv(r.it, r.coll)))}</td><td class="num">${plain(sum(rows, (r) => conv(r.it, r.rem)))}</td>${cols.map((d) => `<td class="num">${colTot(d) ? plain(colTot(d)) : ""}</td>`).join("")}<td></td></tr></tbody></table></div>` : `<div class="empty"><b>Nothing for this week</b>No open ${kind === "in" ? "collections" : "payments"} and nothing recorded.</div>`}</section>`;
@@ -100,11 +100,12 @@ export function createSheet(h) {
     const units = h.scopeUnits(), many = units.length > 1, W = K().wk, rows = weekRows(units, W), n = Object.keys(K().kd).length, w = writable();
     const wkBar = `<span class="cf-wk"><button class="btn small" data-cf="k-shift" data-v="-7" aria-label="Previous week">‹</button><b title="Monday to Saturday">${esc(weekLabel(W))}</b><button class="btn small" data-cf="k-shift" data-v="7" aria-label="Next week">›</button><input type="date" data-kwk="1" value="${esc(W)}" aria-label="Pick any day in the week" class="cf-datemini">${W !== weekStart(c.todayIso) ? '<button class="btn small" data-cf="k-today">This week</button>' : ""}</span>`;
     return `${bar(`${wkBar}<span class="cf-right">${w ? `<button class="btn primary small" data-cf="k-save" id="ckSave" ${n ? "" : "disabled"}>${n ? `Save ${n} entr${n > 1 ? "ies" : "y"}` : "Save"}</button>` : ""}${h.menu([w ? ['data-cf="k-dl" data-v="wk"', "Download this week as a template"] : null, w ? ['data-cf="k-pick" data-v="wk"', "Upload the filled week"] : null, ['data-cf="k-dl" data-v="wkview"', "Download this view (Excel)"], ['data-cf="k-pdf" data-v="actual"', "Download PDF"]])}<input type="file" id="ckUploadWk" accept=".xlsx,.xls" hidden></span>`)}
-      <div class="small muted">Type what was collected or paid in the day it happened. The bank is the one shown on the line; for a day that used more than one bank use the ⋯ menu on the line, “Record in more than one bank”. Planned is the plan for the week (or what was left at the start of it).</div>${h.usdWarn()}
-      ${sectionActual("in", rows.filter((r) => r.it.kind === "in"), W, many)}${sectionActual("out", rows.filter((r) => r.it.kind === "out"), W, many)}`;
+      <div class="small muted">Type what was collected or paid in the day it happened. The bank is the one shown on the line; click a line (code, name or category) to open its details on the right: there you can record each day in one or more banks, including a new bank. Planned is the plan for the week (or what was left at the start of it).</div>${h.usdWarn()}
+      ${sectionActual("in", rows.filter((r) => r.it.kind === "in"), W, many)}${sectionActual("out", rows.filter((r) => r.it.kind === "out"), W, many)}${drawer(W, units)}`;
   }
   // live: the row's collected and remaining, the save button
   function onInput(t) {
+    if (t.dataset.pda !== undefined || t.dataset.pdb !== undefined) { onDrawerInput(); return; }
     if (t.dataset.kd) {
       const key = t.dataset.id + "|" + t.dataset.day, was = num(t.dataset.was), val = t.value; const kd = K().kd;
       if (val === "" ? was === 0 : num(val) === was) delete kd[key]; else kd[key] = val;
@@ -143,6 +144,42 @@ export function createSheet(h) {
       if (num(v) > 0 && !bank && !S.log.some((l) => l.itemId === id && l.day === day)) { c.toast("Choose the bank for " + (it.party || it.code)); return; } ops.push({ it, day, amt: num(v), bank }); }
     if (!ops.length) return; const ok = await h.run(() => commitDays(ops), `${ops.length} entr${ops.length > 1 ? "ies" : "y"} saved`); if (ok) { K().kd = {}; c.render(); }
   }
+
+
+  // ---------------- the line's details, on the right ----------------
+  const drawer = (W, units) => {
+    const k = K(), it = k.pn && S.items.find((q) => q.id === k.pn); if (!it) return ""; const wr = h.canWrite(it.unit), days = weekDays(W), sun = addDays(W, 6), lg = S.log.filter((l) => l.itemId === it.id), wk = lg.filter((l) => l.day >= W && l.day <= sun), cols = wk.some((l) => l.day === sun) ? [...days, sun] : days;
+    const start = h.viewOf(it, addDays(W, -1)).left, coll = sum(wk, (l) => l.amount), wl = S.week.find((w) => w.itemId === it.id && w.week === W), planned = Math.max(wl ? num(wl.planned) : start, coll), verb = it.kind === "in" ? "Collected" : "Paid", banks = h.knownBanks(it.unit), t = h.typeByCode(it.typeCode);
+    const dayBox = (d, i) => { const ents = k.pd && k.pd[d] ? k.pd[d] : wk.filter((l) => l.day === d).map((l) => ({ id: l.id, bank: l.bank, amount: l.amount }));
+      const row = (e, j) => `<div class="cf-prow"><input list="cf-pbanks" class="cf-pbank" data-pdb="${j}" value="${esc(e.bank || "")}" placeholder="${banks.length ? "Bank: pick or type a new one" : "Type the bank name"}" ${wr ? "" : "disabled"} aria-label="Bank"><input type="number" min="0" step="any" class="cf-amt" data-pda="${j}" value="${esc(String(e.amount === 0 ? "" : e.amount))}" placeholder="Amount" ${wr ? "" : "disabled"} aria-label="Amount"><input type="hidden" data-pdi="${j}" value="${esc(e.id || "")}">${wr ? `<button type="button" class="btn small ghost" data-cf="k-pdel" data-day="${esc(d)}" data-j="${j}" aria-label="Remove this bank">✕</button>` : ""}</div>`;
+      return `<div class="cf-pday" data-pday="${esc(d)}"><div class="cf-pd-h"><b>${esc(dayHead(d, i))}</b><span class="small muted">${esc(dMini(d))}${d === c.todayIso ? " · today" : ""}</span></div>${(ents.length ? ents : wr ? [{}] : []).map(row).join("")}${!ents.length && !wr ? '<div class="small muted">Nothing recorded</div>' : ""}${wr ? `<button type="button" class="btn small ghost" data-cf="k-padd" data-day="${esc(d)}">+ Another bank</button>` : ""}</div>`; };
+    const hist = lg.slice().sort((a, b) => (b.day + (b.updatedAt || "")).localeCompare(a.day + (a.updatedAt || ""))).slice(0, 12);
+    return `<aside class="cf-drawer" role="dialog" aria-label="Line details"><div class="cf-dr-h"><div><span class="tag">${esc(it.code || "")}</span> <b>${esc(it.party || it.description || "")}</b>${cur(it)}<div class="small muted">${esc(it.party ? it.description || "" : "")}${units.length > 1 ? " · " + esc(h.uname(it.unit)) : ""}</div></div><button type="button" class="btn small" data-cf="k-pclose" aria-label="Close">✕</button></div>
+      <div class="cf-dr-meta small"><span>Category <b>${esc(it.typeCode || "none")}</b>${t && t.label && t.label !== t.code ? ` · ${esc(t.label)}` : ""}</span><span>Line total <b>${plain(it.amount)}</b> ${esc(it.currency)}</span><span>Due <b>${esc(it.expected ? dShort(it.expected) : "not set")}</b></span></div>
+      <div class="cf-dr-tot"><div><small>Planned this week</small><b>${plain(planned)}</b></div><div><small>${verb}</small><b data-pcoll>${plain(coll)}</b></div><div><small>Remaining</small><b data-prem>${plain(Math.max(0, start - coll))}</b></div></div>
+      <datalist id="cf-pbanks">${banks.map((b) => `<option value="${esc(b)}">`).join("")}</datalist>
+      <div class="cf-dr-b" data-pstart="${start}">${wr ? '<div class="small muted">Write what was ' + verb.toLowerCase() + ' on each day, with the bank. A day that used two banks gets two rows. A bank that is not in the list is added when you save.</div>' : ""}${cols.map(dayBox).join("")}</div>
+      ${hist.length ? `<details class="cf-dr-hist"><summary>What was recorded for this line (${lg.length})</summary>${hist.map((l) => `<div class="small"><b>${esc(dMini(l.day))}</b> · ${esc(l.bank || "no bank")} · ${plain(l.amount)}<span class="muted"> · ${esc(l.updatedBy || l.createdBy || "")}${l.updatedAt ? " " + esc(String(l.updatedAt).slice(0, 16).replace("T", " ")) : ""}</span></div>`).join("")}</details>` : ""}
+      <div class="cf-dr-f">${wr ? `<button type="button" class="btn small ghost" data-cf="item-open" data-id="${esc(it.id)}">Edit line</button>` : ""}<button type="button" class="btn small ghost" data-cf="w-trace" data-id="${esc(it.id)}">Trace</button><span class="cf-right"><button type="button" class="btn" data-cf="k-pclose">Close</button>${wr ? '<button type="button" class="btn primary" data-cf="k-psave">Save</button>' : ""}</span></div></aside>`;
+  };
+  const readDrawer = () => { const out = {}; document.querySelectorAll(".cf-drawer [data-pday]").forEach((box) => { out[box.dataset.pday] = [...box.querySelectorAll(".cf-prow")].map((r) => ({ id: r.querySelector("[data-pdi]").value, bank: r.querySelector("[data-pdb]").value.trim(), amount: r.querySelector("[data-pda]").value })); }); return out; };
+  async function saveDrawer() {
+    const k = K(), it = S.items.find((q) => q.id === k.pn); if (!it || !h.canWrite(it.unit)) return; const pd = readDrawer(), W = k.wk, E = weekEnd(W);
+    for (const [d, rs] of Object.entries(pd)) { const used = rs.filter((r) => num(r.amount) > 0); if (used.some((r) => !r.bank)) { c.toast("Choose or type the bank on every row (" + dMini(d) + ")"); return; } if (new Set(used.map((r) => r.bank.toLowerCase())).size !== used.length) { c.toast("A bank appears twice on " + dMini(d) + ". Add the amounts together."); return; } }
+    const ok = await h.run(async () => {
+      let logged = sum(S.log.filter((l) => l.itemId === it.id && (l.day < W || l.day > E)), (l) => l.amount), latest = "";
+      for (const [d, rs] of Object.entries(pd)) { const have = S.log.filter((l) => l.itemId === it.id && l.day === d), keep = new Set(rs.filter((r) => r.id && num(r.amount) > 0).map((r) => r.id));
+        for (const e of have) if (!keep.has(e.id)) { const x = await c.api().deleteCf(A(), "cf_log", e.id); if (x && x.error) return x; }
+        for (const r of rs) { const amt = Math.round(num(r.amount) * 100) / 100; if (!(amt > 0)) continue; const e = r.id ? have.find((q) => q.id === r.id) : null;
+          if (!e || e.bank !== r.bank || Math.abs(num(e.amount) - amt) > 0.005) { const res = await c.api().saveCfLog(A(), h.logRow({ ...(e || { unit: it.unit, day: d, kind: it.kind, currency: it.currency, party: it.party, description: it.description, typeCode: it.typeCode, itemId: it.id, itemCode: it.code, note: "", fxRate: it.currency === "USD" ? fx() || "" : "" }), id: e ? e.id : undefined, bank: r.bank, amount: amt })); if (res && res.error) return res; }
+          logged += amt; if (d > latest) latest = d; } }
+      const full = logged >= num(it.amount) - 0.005;
+      if (full && it.status === "open" && logged > 0) { const r = await c.api().saveCfItem(A(), h.itemRow({ ...it, status: "settled", settledOn: latest || c.todayIso })); if (r && r.error) return r; }
+      else if (!full && it.status === "settled") { const r = await c.api().saveCfItem(A(), h.itemRow({ ...it, status: "open", settledOn: "" })); if (r && r.error) return r; }
+      return { ok: true }; }, "Saved");
+    if (ok) { k.pd = null; c.render(); }
+  }
+  function onDrawerInput() { const pd = readDrawer(), b = document.querySelector(".cf-dr-b"); if (!b) return; const start = num(b.dataset.pstart), tot = sum(Object.values(pd).flat(), (r) => num(r.amount)); const a = document.querySelector("[data-pcoll]"), r = document.querySelector("[data-prem]"); if (a) a.textContent = plain(tot); if (r) r.textContent = plain(Math.max(0, start - tot)); }
 
   // ---------------- one day in several banks ----------------
   function openSplit(id, day) {
@@ -197,6 +234,7 @@ export function createSheet(h) {
     const units = h.scopeUnits().filter((u) => viewOnly || h.canWrite(u)); if (!units.length) { c.toast("You can only download the template for a unit you can edit"); return; }
     const W = K().wk, days = weekDays(W), banksAll = [...new Set(units.flatMap((u) => h.knownBanks(u)))], types = S.types.filter((t) => t.active).map((t) => t.code);
     const wb = await XL.newBook(c, (col) => { col(1, banksAll.length ? banksAll : [""], "L_Bank"); col(2, types.length ? types : [""], "L_Type"); }); if (!wb) return;
+    const snap = [["Unit", "Code", "Day", "Amount when downloaded", "Downloaded at " + new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 16).replace("T", " ")]];
     for (const u of units) {
       const ws = wb.addWorksheet(`${shortName(u)} Week`.slice(0, 31), { views: [{ state: "frozen", ySplit: 5 }] }), rows = weekRows([u], W);
       ws.getCell("A1").value = "Business unit"; ws.getCell("B1").value = h.uname(u); ws.getCell("A2").value = "Week starting (Monday)"; ws.getCell("B2").value = XL.toDate(W); ws.getCell("B2").numFmt = "yyyy-mm-dd"; XL.bold(ws.getCell("A1")); XL.bold(ws.getCell("A2"));
@@ -209,7 +247,7 @@ export function createSheet(h) {
         const mine = rows.filter((x) => x.it.kind === kind), first = r;
         mine.forEach((x) => { const bank = x.banks.length > 1 ? "Several banks" : x.banks[0] || h.lastBank(x.it.unit, kind);
           [x.it.code, x.it.party, x.it.description, x.it.typeCode, bank, Math.round(x.planned * 100) / 100].forEach((v, i) => { ws.getCell(r, i + 1).value = v; XL.fill(ws.getCell(r, i + 1), XL.GREY); });
-          days.forEach((d, i) => { const t = sum(x.lg.filter((l) => l.day === d), (l) => l.amount); ws.getCell(r, 9 + i).value = t > 0 ? Math.round(t * 100) / 100 : ""; ws.getCell(r, 9 + i).numFmt = "#,##0.00"; });
+          days.forEach((d, i) => { const t = sum(x.lg.filter((l) => l.day === d), (l) => l.amount); if (x.it.code) snap.push([h.uname(u), x.it.code, d, Math.round(t * 100) / 100]); ws.getCell(r, 9 + i).value = t > 0 ? Math.round(t * 100) / 100 : ""; ws.getCell(r, 9 + i).numFmt = "#,##0.00"; });
           ws.getCell(r, 7).value = { formula: `SUM(I${r}:N${r})` }; ws.getCell(r, 8).value = { formula: `MAX(0,F${r}-G${r})` }; [6, 7, 8].forEach((ci) => { ws.getCell(r, ci).numFmt = "#,##0.00"; XL.fill(ws.getCell(r, ci), XL.GREY); }); r++; });
         const spare = 8, last = r + spare - 1;
         for (let k = 0; k < spare; k++) { ws.getCell(r + k, 7).value = { formula: `SUM(I${r + k}:N${r + k})` }; ws.getCell(r + k, 7).numFmt = "#,##0.00"; XL.fill(ws.getCell(r + k, 7), XL.GREY); for (let ci = 9; ci <= 14; ci++) ws.getCell(r + k, ci).numFmt = "#,##0.00"; }
@@ -219,12 +257,14 @@ export function createSheet(h) {
       }
       widths.forEach((wd, i) => { ws.getColumn(i + 1).width = wd; });
     }
-    XL.infoSheet(wb, "How to fill in the week", ["One sheet for each business unit. Collections are at the top, payments below. The week is in cell B2 of the sheet.", "Each line shows its plan for the week. Type the cash that moved in the day columns, Monday to Saturday. Collected, Remaining and the totals are worked out.", "A day with more than one bank is shown as one total. Change it in the app with “Record in more than one bank”.", "Empty day = no change. 0 = remove that day's entry. Upload never deletes anything else.", "Cash with no line: add a row at the bottom of a block, leave the code empty, write who it is, the category and the bank."]);
+    { const sw = wb.addWorksheet("Snapshot", { state: "hidden" }); snap.forEach((row, i) => row.forEach((v, j) => { sw.getCell(i + 1, j + 1).value = v; })); }
+    XL.infoSheet(wb, "How to fill in the week", ["The file remembers what was recorded when you downloaded it. If you upload it after someone changed a day in the app, your figure for that day is not applied and the newer one is kept: the upload result lists those days.", "One bank for each line: the Bank column is used for new cash. If a day used another bank, record that day in the app (open the line, add a bank).", "One sheet for each business unit. Collections are at the top, payments below. The week is in cell B2 of the sheet.", "Each line shows its plan for the week. Type the cash that moved in the day columns, Monday to Saturday. Collected, Remaining and the totals are worked out.", "A day with more than one bank is shown as one total. Change it in the app with “Record in more than one bank”.", "Empty day = no change. 0 = remove that day's entry. Upload never deletes anything else.", "Cash with no line: add a row at the bottom of a block, leave the code empty, write who it is, the category and the bank."]);
     await c.saveFile(`${viewOnly ? "Week" : "Weekly template"} ${W}.xlsx`, await wb.xlsx.writeBuffer(), "Excel saved");
   }
   async function uploadWeek(file) {
     const units = h.writableUnits(); if (!units.length) { c.toast("You cannot edit any unit's cash flow"); return; } const bk = await XL.readBook(c, file); if (!bk) return; const { X, wb } = bk;
     const uMap = new Map(); units.forEach((u) => [h.uname(u), h.ushort(u), c.unitName(u), u].forEach((n) => uMap.set(XL.norm(n), u)));
+    const snapSh = XL.readSheets(X, wb, /^snapshot$/i)[0], snap = snapSh ? new Map(snapSh.rows.slice(1).map((q) => [XL.norm(q[0]) + "|" + String(q[1]).trim().toUpperCase() + "|" + String(q[2]).slice(0, 10), num(q[3])])) : null, dl = snapSh && snapSh.rows[0] ? String(snapSh.rows[0][4] || "").replace("Downloaded at ", "") : "";
     const sheets = XL.readSheets(X, wb, /week$/i); if (!sheets.length) { c.toast("No “… Week” sheet found. Use the template from this page."); return; }
     const rep = { skip: 0, notes: [], n: 0, created: 0 }, bad = (sh, line, why) => { rep.skip++; rep.notes.push(`${sh} row ${line}: ${why}`); }, ops = [], news = [];
     for (const sh of sheets) {
@@ -235,7 +275,9 @@ export function createSheet(h) {
         const cells = days.map((d, k) => ({ d, v: XL.money(r[8 + k]) })).filter((x) => x.v !== null); if (!cells.length) continue;
         const bankN = String(r[4]).trim(), bank = /several/i.test(bankN) ? "" : known.find((k) => XL.norm(k) === XL.norm(bankN)) || bankN;
         if (a) { const it = S.items.find((q) => q.unit === unit && q.code && q.code.toUpperCase() === a.toUpperCase()); if (!it) { bad(sh.name, line, `no line with code ${a}`); continue; } if (it.kind !== kind) { bad(sh.name, line, `${a} is a ${it.kind === "in" ? "collection" : "payment"}, it is in the ${kind === "in" ? "collections" : "payments"} block`); continue; }
-          for (const { d, v } of cells) { const have = sum(S.log.filter((l) => l.itemId === it.id && l.day === d), (l) => l.amount), ents = S.log.filter((l) => l.itemId === it.id && l.day === d); if (Math.abs(have - v) < 0.005) continue; if (ents.length > 1) { rep.notes.push(`${sh.name} row ${line}: ${a} on ${dMini(d)} is in ${ents.length} banks. Change it in the app.`); continue; } if (v > 0 && !bank && !ents[0] && !h.lastBank(unit, kind)) { bad(sh.name, line, "choose the bank"); continue; } ops.push({ it, day: d, amt: v, bank, line: `${sh.name} row ${line}` }); } }
+          for (const { d, v } of cells) { const have = sum(S.log.filter((l) => l.itemId === it.id && l.day === d), (l) => l.amount), ents = S.log.filter((l) => l.itemId === it.id && l.day === d); if (Math.abs(have - v) < 0.005) continue;
+            if (snap) { const key = XL.norm(h.uname(unit)) + "|" + a.toUpperCase() + "|" + d; if (snap.has(key)) { const was = snap.get(key); if (Math.abs(v - was) < 0.005) continue; if (Math.abs(have - was) > 0.005) { rep.kept = (rep.kept || 0) + 1; rep.notes.push(`${sh.name} row ${line}: ${a} on ${dMini(d)}: the file says ${plain(v)}, but the app now has ${plain(have)} (changed after the file was downloaded${dl ? " on " + dl : ""}). Kept ${plain(have)}.`); continue; } } }
+            if (ents.length > 1) { rep.notes.push(`${sh.name} row ${line}: ${a} on ${dMini(d)} is in ${ents.length} banks. Change it in the app.`); continue; } if (v > 0 && !bank && !ents[0] && !h.lastBank(unit, kind)) { bad(sh.name, line, "choose the bank"); continue; } ops.push({ it, day: d, amt: v, bank, line: `${sh.name} row ${line}` }); } }
         else { const party = String(r[1]).trim(), desc = String(r[2]).trim(); if (!party && !desc) { bad(sh.name, line, "write who it is, or a description"); continue; } const b = bank || h.lastBank(unit, kind); if (!b) { bad(sh.name, line, "choose the bank"); continue; } const tc = S.types.find((t) => XL.norm(t.code) === XL.norm(r[3]));
           for (const { d, v } of cells) { if (v <= 0) continue; if (S.log.some((l) => l.unit === unit && l.day === d && !l.itemId && l.kind === kind && l.bank === b && Math.abs(num(l.amount) - v) < 0.005 && XL.norm(l.party) === XL.norm(party))) continue; news.push({ unit, day: d, kind, bank: b, amount: v, currency: "ETB", party, description: desc, typeCode: tc ? tc.code : "", itemId: "", itemCode: "", note: "", fxRate: "" }); } }
       }
@@ -244,7 +286,7 @@ export function createSheet(h) {
       if (ops.length) { const res = await commitDays(ops); if (res && res.error) return res; rep.n += ops.length; }
       for (const row of news) { const res = await c.api().saveCfLog(A(), h.logRow(row)); if (res && res.error) return res; rep.created++; }
       return { ok: true }; });
-    const lines = []; if (rep.n) lines.push(`Collections and payments: <b>${rep.n}</b> day entr${rep.n > 1 ? "ies" : "y"} saved.`); if (rep.created) lines.push(`Cash with no line: <b>${rep.created}</b> new entr${rep.created > 1 ? "ies" : "y"}.`); if (rep.skip) lines.push(`<b>${rep.skip}</b> row${rep.skip > 1 ? "s were" : " was"} not saved. Fix ${rep.skip > 1 ? "them" : "it"} in the file and upload again.`); if (!lines.length) lines.push("Nothing new to save. Everything in the file is already recorded.");
+    const lines = []; if (rep.n) lines.push(`Collections and payments: <b>${rep.n}</b> day entr${rep.n > 1 ? "ies" : "y"} saved.`); if (rep.created) lines.push(`Cash with no line: <b>${rep.created}</b> new entr${rep.created > 1 ? "ies" : "y"}.`); if (rep.kept) lines.push(`<b>${rep.kept}</b> day${rep.kept > 1 ? "s were" : " was"} changed in the app after you downloaded the file, so the newer figure was kept (listed below).`); if (rep.skip) lines.push(`<b>${rep.skip}</b> row${rep.skip > 1 ? "s were" : " was"} not saved. Fix ${rep.skip > 1 ? "them" : "it"} in the file and upload again.`); if (!lines.length) lines.push("Nothing new to save. Everything in the file is already recorded.");
     S.m = { type: "result", title: "Upload finished", lines, notes: rep.notes }; h.drawModal();
   }
   async function weekView() {
@@ -351,6 +393,11 @@ export function createSheet(h) {
     else if (x === "k-shift") { k.wk = addDays(k.wk, Number(v)); k.kd = {}; c.render(); }
     else if (x === "k-today") { k.wk = weekStart(c.todayIso); k.kd = {}; c.render(); }
     else if (x === "k-save") await saveGrid();
+    else if (x === "k-open") { k.pn = el.dataset.id; k.pd = null; c.render(); }
+    else if (x === "k-pclose") { k.pn = null; k.pd = null; c.render(); }
+    else if (x === "k-padd") { k.pd = readDrawer(); (k.pd[el.dataset.day] = k.pd[el.dataset.day] || []).push({ id: "", bank: "", amount: "" }); c.render(); }
+    else if (x === "k-pdel") { k.pd = readDrawer(); const rs = k.pd[el.dataset.day] || []; rs.splice(Number(el.dataset.j), 1); c.render(); }
+    else if (x === "k-psave") await saveDrawer();
     else if (x === "k-split") openSplit(el.dataset.id, el.dataset.day || "");
     else if (x === "k-split-add" && m) { readSplit(); const it = S.items.find((q) => q.id === m.itemId); m.rows.push({ id: "", bank: it ? h.lastBank(it.unit, it.kind) : "", amount: "" }); h.drawModal(); }
     else if (x === "k-split-del" && m) { readSplit(); m.rows.splice(Number(el.dataset.i), 1); if (!m.rows.length) m.rows.push({ id: "", bank: "", amount: "" }); h.drawModal(); }
