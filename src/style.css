@@ -1139,3 +1139,39 @@ tr.dim td{opacity:.55}.fut td{opacity:.9}
 .dm-msg.mine .dm-b .btn{color:inherit}
 .dm-link{margin-top:6px}
 .dm-row{display:block;width:100%;text-align:left}
+
+/* Cash flow: Collections & payments (Plan, Actual, Status) and the live Summary */
+.cf-ktabs{display:flex;align-items:center;gap:6px;flex-wrap:wrap;border-bottom:1px solid var(--line,rgba(128,128,128,.25));padding-bottom:8px}
+.cf-ktab{border:1px solid var(--line,rgba(128,128,128,.3));background:transparent;color:inherit;border-radius:999px;padding:7px 18px;font:inherit;font-weight:600;cursor:pointer}
+.cf-ktab.on{background:var(--accent,#f5c518);color:#2a2208;border-color:transparent}
+.cf-khint{margin-left:8px}
+.cf-two{display:grid;grid-template-columns:1fr 1fr;gap:16px;align-items:start}
+@media (max-width:1000px){.cf-two{grid-template-columns:1fr}}
+.cf-side{min-width:0;border:1px solid var(--line,rgba(128,128,128,.22));border-radius:12px;overflow:hidden}
+.cf-side-h{display:flex;justify-content:space-between;align-items:center;padding:10px 14px;background:rgba(127,127,127,.08)}
+.cf-mini th,.cf-mini td{padding:6px 10px}
+.cf-mini tr.cf-g1 td{background:rgba(245,197,24,.10)}
+.cf-g1 .cf-caret,.cf-g2 .cf-caret{display:inline-block;width:1em}
+.cf-stmt tr.cf-g1 td,.cf-stmt tr.cf-g2 td{background:rgba(127,127,127,.08);font-size:.95em}
+.cf-wkgrid th.cf-dh{text-align:center;min-width:92px;white-space:nowrap}
+.cf-wkgrid td.cf-dc{text-align:center;vertical-align:top;padding:4px 6px}
+.cf-wkgrid input.cf-amt{width:92px;text-align:right}
+.cf-wkgrid .cf-bk1{font-size:11px;line-height:1.1;margin-top:2px}
+.cf-wkgrid select.cf-bank{max-width:130px}
+.cf-multi{border:1px dashed var(--line,rgba(128,128,128,.5));background:rgba(245,197,24,.12);border-radius:8px;padding:6px 8px;font:inherit;cursor:pointer;color:inherit}
+.cf-asof{margin:2px 0}
+.cf-stepc{min-width:210px;text-align:left}
+.cf-stepc .cf-line{display:flex;justify-content:space-between;gap:10px;font-size:.92em}
+.cf-line.in b{color:#1e7e4a}.cf-line.out b{color:#c0262d}
+.cf-stepc .cf-pos{margin-top:3px;padding-top:3px;border-top:1px solid var(--line,rgba(128,128,128,.3));font-weight:700;text-align:right}
+.cf-count .cf-cnt-grp{margin-top:8px}
+.cf-cnt-h{font-size:13px}
+.cf-count .cf-chip:not(.on){text-decoration:line-through;opacity:.6}
+.cf-wkgrid{font-size:.92em}
+.cf-wkgrid th,.cf-wkgrid td{padding:6px 7px}
+.cf-wkgrid td.cf-who{min-width:170px}
+.cf-wkgrid td.num,.cf-wkgrid th{white-space:nowrap}
+.cf-wkgrid input.cf-amt{width:78px;padding:6px 6px}
+.cf-wkgrid th.cf-dh{min-width:84px}
+.cf-wkgrid select.cf-bank{max-width:96px;padding:5px 4px}
+.cf-wkgrid .tag{white-space:nowrap}

@@ -153,10 +153,12 @@ export const DEFAULT_TYPES = [
   ["Rental C", "Rental car", "out", "operating"], ["Rental HO", "Rent, head office", "out", "operating"], ["Utility", "Utilities", "out", "operating"], ["LC RM", "LC, raw materials", "out", "operating"], ["Custom G", "Customs", "out", "operating"], ["Construction", "Construction", "out", "investing"],
 ].map(([code, label, kind, section, expected], i) => ({ id: "def-" + code, code, label, kind, section, group: "", description: "", expected: expected !== false, confirmed: false, active: true, sort: (i + 1) * 10 }));
 
-// ---------- weeks (Saturday to Friday, like the rest of the tracker) ----------
-export const weekStart = (iso) => { const d = new Date(D(iso)).getUTCDay(); return addDays(String(iso).slice(0, 10), -((d + 1) % 7)); };
-export const weekEnd = (w) => addDays(w, 6);
-export const weekLabel = (w) => { const a = String(w).slice(0, 10), b = weekEnd(a), [ya, ma, da] = a.split("-").map(Number), [yb, mb, db] = b.split("-").map(Number); return `${da} ${MONTHS[ma - 1]}${ya !== yb ? " " + ya : ""} to ${db} ${MONTHS[mb - 1]} ${yb}`; };
+// ---------- weeks (Monday to Saturday; a Sunday belongs to the week before it) ----------
+export const weekStart = (iso) => { const d = new Date(D(iso)).getUTCDay(); return addDays(String(iso).slice(0, 10), -((d + 6) % 7)); };
+export const weekEnd = (w) => addDays(w, 6);      // the Sunday: cash that moves on a Sunday still counts in the week
+export const weekDays = (w) => [0, 1, 2, 3, 4, 5].map((k) => addDays(w, k));   // Monday to Saturday
+export const DAYN = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+export const weekLabel = (w) => { const a = String(w).slice(0, 10), b = addDays(a, 5), [ya, ma, da] = a.split("-").map(Number), [yb, mb, db] = b.split("-").map(Number); return `${da} ${MONTHS[ma - 1]}${ya !== yb ? " " + ya : ""} to ${db} ${MONTHS[mb - 1]} ${yb}`; };
 // Money in a day range for one planned line, from the movements (rows with a day and an amount).
 export const movedIn = (log, itemId, from, to) => sum(log.filter((l) => l.itemId === itemId && l.day >= from && l.day <= to), (l) => l.amount);
 // Reconcile one bank on one day: what the bank says came in and went out against what the collections and payments add up to.

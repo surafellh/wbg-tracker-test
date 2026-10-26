@@ -3,9 +3,10 @@
 // Shown to Group Finance, unit Finance departments, Group Strategy, CEO and DCEO.
 import { createWeek } from "./cashweek.js";
 import { createDay } from "./cashday.js";
+import { createSheet } from "./cashsheet.js";
 import { SECTIONS, PLAN_SECTIONS, PRIORITIES, CURRENCIES, bucketCode, BUCKET_TEXT, FIN_UNITS_FALLBACK, IMPLIED_DAYS, num, sum, addDays, addMonths, monthOf, keyOf, periods, periodLabel, periodEnd, isOpenAt, etb, bankAt, bankDays, position, funding, timeline, byType, planByMonth, HORIZON, MONTHS } from "./cashcalc.js";
 
-const weekStartOf = (iso) => { const d = new Date(iso + "T00:00:00Z").getUTCDay(); return addDays(iso, -((d + 1) % 7)); };
+const weekStartOf = (iso) => { const d = new Date(iso + "T00:00:00Z").getUTCDay(); return addDays(iso, -((d + 6) % 7)); };
 const clone = (o) => JSON.parse(JSON.stringify(o));
 const SHORT = { "wagwago-electric": "Wagwago Trading", trucksload: "TrucksLoad", geez: "Geez", "niyat-consultancy": "Niyat", "wanza-logistics": "Wanza" };
 const FULL = { "wagwago-electric": "Wagwago Trading (Electric and Corporate)" };
@@ -132,32 +133,49 @@ export function createCash(c) {
     if (!canSee()) return `<div class="cf"><div class="empty"><b>Cash flow</b>Cash flow is shown to Group Finance, the Finance departments of the business units, Group Strategy and the executive.</div></div>`;
     subscribe();
     const nav = `<div class="cf-nav"><div class="cf-tabs">${TABS.map((t) => `<button class="cf-tab${S.view === t[0] ? " on" : ""}" data-cf="view" data-v="${t[0]}">${t[1]}</button>`).join("")}</div></div>`;
-    const body = { summary: renderSummary, week: () => W.renderWeek(), coll: () => D.renderColl(), bank: () => D.renderBank(), recon: () => W.renderReconcile(), forecast: renderForecast, setup: renderSetup }[S.view]();
+    const body = { summary: renderSummary, week: () => W.renderWeek(), coll: () => K.renderColl(), bank: () => D.renderBank(), recon: () => W.renderReconcile(), forecast: renderForecast, setup: renderSetup }[S.view]();
     return `<div class="cf">${dayBar()}${undoBar()}${nav}${S.loaded < 3 ? `<div class="small muted cf-pad">Loading…</div>` : ""}${body}</div>`;
   }
 
+  // Which categories count. Visible on the Summary: tap a category to leave it out of (or bring it back into) every figure.
+  function countedBox(units, asOf) {
+    const ts = typesEff().filter((t) => t.active), its = effItems(asOf).filter((it) => units.includes(it.unit) && S.bk[it.bucket]);
+    const amt = (code, kind) => sum(its.filter((it) => (it.typeCode || "") === code && it.kind === kind), (it) => etb(it, fx())), grp = (kind, title) => {
+      const own = ts.filter((t) => t.kind === kind || !t.kind), noType = amt("", kind);
+      return `<div class="cf-cnt-grp"><div class="cf-cnt-h"><b>${title}</b></div><div class="cf-chips">${own.map((t) => ({ t, a: amt(t.code, kind) })).filter((x) => x.a > 0 || !x.t.expected).map(({ t, a }) => chip(t.expected, `data-cf="type-on" data-code="${esc(t.code)}"`, `${esc(t.code)} <span class="muted">${a ? compact(a) : ""}</span>`, (t.label && t.label !== t.code ? t.label + ". " : "") + (t.description || "") + (t.expected ? " Counted. Tap to leave out." : " Left out. Tap to count it."))).join("")}${noType ? `<span class="cf-chip on" title="Lines with no category are always counted">No category <span class="muted">${compact(noType)}</span></span>` : ""}</div></div>`; };
+    const off = ts.filter((t) => !t.expected).length;
+    return `<section class="cf-card cf-count"><div class="cf-split"><h3>What is counted</h3><span class="small muted">${off ? `${off} categor${off > 1 ? "ies" : "y"} left out` : "Everything is counted"}${Object.keys(S.typeOn).length ? ` · <button class="btn small" data-cf="type-reset">Back to the saved settings</button>` : ""}</span></div>
+      <div class="small muted">Tap a category to leave out the amount you do not expect to be collected or paid (for example related parties). The tables and totals below change straight away. The saved setting for each category is in Setup.</div>${grp("in", "To collect")}${grp("out", "To pay")}</section>`;
+  }
   // ---------------- Summary ----------------
   function renderSummary() {
-    const units = scopeUnits(), asOf = S.asOf, pos = position(inScope(units, asOf), effBank(), typesEff(), asOf, units, { fx: fx() }), t = pos.total, fu = funding(pos);
+    const units = scopeUnits(), asOf = S.asOf, pos = position(inScope(units, asOf), effBank(), typesEff(), asOf, units, { fx: fx() }), t = pos.total, posNow = { rows: pos.rows.map((r) => ({ ...r, b: [r.b[0]], need: Math.max(0, -r.b[0]) })), total: { ...pos.total, b: [pos.total.b[0]], need: Math.max(0, -pos.total.b[0]), needUnits: sum(pos.rows, (r) => Math.max(0, -r.b[0])) } }, fu = funding(posNow), nowNeed = Math.max(0, -t.b[0]);
     const days = bankDays(effBank(), units).filter((d) => d <= asOf), last = days[days.length - 1] || "", sel = [1, 2, 3].filter((b) => S.bk[b]);
     const lastB = sel.length ? sel[sel.length - 1] : 0, endBal = lastB ? t.b[lastB - 1] : t.bank;
-    const stepHead = sel.map((b) => `<th>After ${b} − ${b}${b}</th>`).join("");
-    const row = (r, tot) => `<tr class="${tot ? "tot" : ""}${r.need > 0 ? " cf-bad" : ""}"><td><b>${tot ? "Total" : esc(uname(r.unit))}</b>${!tot && !r.hasBank ? '<div class="small muted">no bank balance yet</div>' : !tot && r.bankDay && r.bankDay !== last ? `<div class="small muted">bank as of ${esc(dShort(r.bankDay))}</div>` : ""}</td>
-      <td class="num">${money(r.bank)}</td>${sel.map((b) => `<td class="num"><b>${money(r.b[b - 1], false)}</b><div class="small muted">+${compact(r.c[b - 1])} · −${compact(r.p[b - 1])}</div></td>`).join("")}<td class="num">${r.need > 0 ? `<b class="neg">${plain(r.need)}</b>` : '<span class="muted">–</span>'}</td></tr>`;
+    // what already moved, from the daily log: today and this week (Monday to the chosen day)
+    const wk0 = weekStartOf(asOf), moved = (u, from) => { const ls = S.log.filter((l) => (u === "all" ? units.includes(l.unit) : l.unit === u) && l.day >= from && l.day <= asOf); return { in: sum(ls.filter((l) => l.kind === "in"), (l) => etb(l, fx())), out: sum(ls.filter((l) => l.kind === "out"), (l) => etb(l, fx())) }; };
+    const needNow = (r) => Math.max(0, -r.b[0]), STEPN = { 1: "within a month", 2: "within two months", 3: "long term" };
+    const stepHead = sel.map((b) => `<th title="${esc(BUCKET_TEXT[b])}">Step ${b}<div class="small muted">${STEPN[b]} · ${b} / ${b}${b}</div></th>`).join("");
+    const stepCell = (r, b) => `<td class="num cf-stepc"><div class="cf-line in">▲ To collect <b>+${compact(r.c[b - 1])}</b></div><div class="cf-line out">▼ To pay <b>−${compact(r.p[b - 1])}</b></div><div class="cf-pos ${r.b[b - 1] < 0 ? "neg" : ""}">= ${money(r.b[b - 1], false)}</div></td>`;
+    const mvTxt = (u) => { const d = moved(u, asOf), w = moved(u, wk0); return d.in || d.out || w.in || w.out ? `<div class="small muted">Cash recorded: today in ${compact(d.in)}, out ${compact(d.out)} · this week in ${compact(w.in)}, out ${compact(w.out)}</div>` : ""; };
+    const row = (r, tot) => `<tr class="${tot ? "tot" : ""}${needNow(r) > 0 ? " cf-bad" : ""}"><td><b>${tot ? "Total" : esc(uname(r.unit))}</b>${!tot && !r.hasBank ? '<div class="small muted">no bank balance yet</div>' : !tot && r.bankDay ? `<div class="small muted">bank balance of ${esc(dShort(r.bankDay))}${r.bankDay !== last ? "" : ""}</div>` : ""}${mvTxt(tot ? "all" : r.unit)}</td>
+      <td class="num"><b>${money(r.bank)}</b></td>${sel.map((b) => stepCell(r, b)).join("")}<td class="num">${needNow(r) > 0 ? `<b class="neg">${plain(needNow(r))}</b>` : '<span class="muted">None</span>'}${r.need > needNow(r) ? `<div class="small muted">more later: ${plain(r.need - needNow(r))}</div>` : ""}</td></tr>`;
     const hasData = pos.rows.some((r) => r.hasBank || r.c.some(Boolean) || r.p.some(Boolean));
-    const fund = !hasData ? "" : t.need > 0
-      ? `<p class="lead"><b>The group would fall to ${money(Math.min(...t.b.slice(0, Math.max(1, lastB))), false)} at its lowest.</b> That is the amount to finance from outside the group, once the units use each other's spare cash.</p>`
-      : fu.short.length ? `<p class="lead"><b>The group stays positive, but ${fu.short.length} unit${fu.short.length > 1 ? "s run" : " runs"} short.</b> Units with spare cash can cover them, for example by a sister company loan.</p>`
-      : `<p class="lead"><b>No deficit.</b> Every unit stays above zero in the steps shown.</p>`;
+    const fund = !hasData ? "" : nowNeed > 0
+      ? `<p class="lead"><b>Financing needed now: ${plain(nowNeed)}.</b> This is the shortfall within the coming month: the bank balance plus what is due to be collected, minus what is due to be paid (step 1 − 11). ${t.need > nowNeed ? `Later steps would need ${plain(t.need - nowNeed)} more.` : ""}</p>`
+      : fu.short.length ? `<p class="lead"><b>The group is positive now, but ${fu.short.length} unit${fu.short.length > 1 ? "s run" : " runs"} short.</b> Units with spare cash can cover them, for example by a sister company loan.</p>`
+      : `<p class="lead"><b>No shortfall now.</b> ${t.need > 0 ? `Later steps would need ${plain(t.need)}: see the table.` : "Every unit stays above zero in the steps shown."}</p>`;
     const fundDetail = !hasData || !(fu.short.length || fu.rich.length) ? "" : `${fu.short.length ? `<div class="small">Short: ${fu.short.map((r) => `<b>${esc(ushort(r.unit))}</b> needs ${plain(r.need)}`).join(" · ")}</div>` : ""}${fu.rich.length ? `<div class="small">Spare cash: ${fu.rich.map((r) => `<b>${esc(ushort(r.unit))}</b> ${plain(r.spare)}`).join(" · ")}</div>` : ""}${fu.short.length ? `<div class="small">Covered inside the group: <b>${plain(Math.min(fu.internal, fu.spare))}</b>. Needs outside financing or later payment dates: <b class="${fu.external > 0 ? "neg" : ""}">${plain(fu.external)}</b>.</div>` : ""}`;
     return `<div class="cf-body">
-      <div class="cf-filters">${allUnits().length > 1 ? unitSel(S.scope) : ""}${urgencyChips()}${typeToggles()}</div>
+      <div class="cf-filters">${allUnits().length > 1 ? unitSel(S.scope) : ""}${urgencyChips()}</div>
+      ${countedBox(units, asOf)}
       ${usdWarn()}
-      <div class="cf-stats">${stat("Bank balance", compact(t.bank), last ? "as of " + dShort(last) : "none entered")}${stat("To collect", compact(sum(sel, (b) => t.c[b - 1])), sel.map((b) => `${b}: ${compact(t.c[b - 1])}`).join(" · ") || "no urgency chosen", "good")}${stat("To pay", compact(sum(sel, (b) => t.p[b - 1])), sel.map((b) => `${b}${b}: ${compact(t.p[b - 1])}`).join(" · ") || "no urgency chosen", "warn")}${stat("Balance at the end", `<span class="${endBal < 0 ? "neg" : ""}">${compact(endBal)}</span>`, sel.length ? `after ${lastB} − ${lastB}${lastB}` : "bank only")}${stat("Financing needed", t.need > 0 ? `<span class="neg">${compact(t.need)}</span>` : "None", "from outside the group", t.need > 0 ? "bad" : "")}</div>
-      <section class="cf-card"><h3>Position, step by step</h3><div class="small muted">The bank balance, plus what is collected, minus what is paid. <b>1 − 11</b> within a month, <b>2 − 22</b> within two months, <b>3 − 33</b> long term. Use the 1 · 2 · 3 buttons above to focus.</div>
-        ${hasData ? `<div class="scroll"><table class="cf-table"><thead><tr><th>Unit</th><th>Bank</th>${stepHead}<th>Financing need</th></tr></thead><tbody>${pos.rows.map((r) => row(r)).join("")}${pos.rows.length > 1 ? row({ ...t, unit: "all" }, true) : ""}</tbody></table></div>` : `<div class="empty"><b>Nothing to show yet</b>Add bank balances and collections and payments under Enter.</div>`}
-        ${t.skipped ? `<div class="small muted">Not counted (types switched off in “Counted types”): ${plain(t.skipped)}.</div>` : ""}</section>
-      ${hasData ? `<section class="cf-card"><h3>Deficit and how to finance it</h3>${fund}${fundDetail}${writableUnits().length && t.need > 0 ? `<div class="toolbar"><button class="btn" data-cf="plan-fin">Add a financing line to the plan</button></div>` : ""}</section>` : ""}
+      <div class="cf-asof small muted">Live position as of <b>${esc(dShort(asOf))}</b>${asOf === c.todayIso ? " " + new Date().toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" }) : ""}. Bank balances and what is left to collect or pay change as the day's cash is recorded.</div>
+      <div class="cf-stats">${stat("Bank balance now", compact(t.bank), last ? "last recorded " + dShort(last) : "none entered")}${stat("Still to collect", compact(sum(sel, (b) => t.c[b - 1])), sel.map((b) => `${b}: ${compact(t.c[b - 1])}`).join(" · ") || "no step chosen", "good")}${stat("Still to pay", compact(sum(sel, (b) => t.p[b - 1])), sel.map((b) => `${b}${b}: ${compact(t.p[b - 1])}`).join(" · ") || "no step chosen", "warn")}${stat("Balance at the end", `<span class="${endBal < 0 ? "neg" : ""}">${compact(endBal)}</span>`, sel.length ? `after step ${lastB}` : "bank only")}${stat("Financing needed now", nowNeed > 0 ? `<span class="neg">${compact(nowNeed)}</span>` : "None", "within a month, from outside the group", nowNeed > 0 ? "bad" : "")}</div>
+      <section class="cf-card"><div class="cf-split"><h3>Position, step by step</h3><button class="btn small" data-cf="k-pdf" data-v="summary">Download PDF</button></div><div class="small muted">Start with the bank balance. Each step then adds what is <b style="color:var(--ok,#1a7f37)">still to be collected</b> (▲) and takes away what is <b style="color:var(--bad,#b3261e)">still to be paid</b> (▼), to give the position. <b>Step 1</b> is what falls due within a month, step 2 within two months, step 3 long term; each step builds on the one before. What has already been collected or paid is no longer counted. Use the 1 · 2 · 3 buttons above to choose steps.</div>
+        ${hasData ? `<div class="scroll"><table class="cf-table"><thead><tr><th>Unit</th><th>Bank now</th>${stepHead}<th title="The shortfall within the coming month (step 1)">Financing needed now</th></tr></thead><tbody>${pos.rows.map((r) => row(r)).join("")}${pos.rows.length > 1 ? row({ ...t, unit: "all" }, true) : ""}</tbody></table></div>` : `<div class="empty"><b>Nothing to show yet</b>Add bank balances and collections and payments under Enter.</div>`}
+        ${t.skipped ? `<div class="small muted">Left out (categories switched off above): ${plain(t.skipped)}.</div>` : ""}</section>
+      ${hasData ? `<section class="cf-card"><h3>Shortfall now, and how to finance it</h3>${fund}${fundDetail}${writableUnits().length && t.need > 0 ? `<div class="toolbar"><button class="btn" data-cf="plan-fin">Add a financing line to the plan</button></div>` : ""}</section>` : ""}
       <section class="cf-card"><div class="cf-split"><h3>Bank balance by day</h3><span class="cf-group">${[30, 60, 90, 0].map((n) => chip(S.range === n, `data-cf="range" data-v="${n}"`, n ? n + " days" : "All")).join("")}</span></div>${chart(units, asOf)}</section></div>`;
   }
   let pts = [];
@@ -307,7 +325,7 @@ export function createCash(c) {
   }
   function drawModal() {
     const root = ensureRoot(), m = S.m; if (!m) { root.innerHTML = ""; return; }
-    const body = { item: itemForm, log: logForm, bank: bankForm, plan: planForm, type: typeForm, result: resultView, weekline: (q) => W.lineForm(q), trace: (q) => W.traceView(q), linkline: (q) => W.linkForm(q), clean: (q) => W.cleanView(q) }[m.type](m);
+    const body = { item: itemForm, log: logForm, bank: bankForm, plan: planForm, type: typeForm, result: resultView, weekline: (q) => W.lineForm(q), trace: (q) => W.traceView(q), ksplit: (q) => K.splitForm(q), linkline: (q) => W.linkForm(q), clean: (q) => W.cleanView(q) }[m.type](m);
     root.innerHTML = `<div class="overlay"><div class="modal wide xmodal" role="dialog" aria-modal="true">${body}</div></div>`;
     const first = root.querySelector("input[type=text], input[type=number]"); if (first && m.isNew && !m.focused) { m.focused = true; first.focus(); }
   }
@@ -412,6 +430,7 @@ export function createCash(c) {
     const x = el.dataset.cf, id = el.dataset.id, m = S.m, it = id ? S.items.find((q) => q.id === id) : null;
     if (x && x.startsWith("w-")) { await W.onAction(el); return; }
     if (x && x.startsWith("d-")) { await D.onAction(el); return; }
+    if (x && x.startsWith("k-")) { await K.onAction(el); return; }
     if (x === "view") { S.view = el.dataset.v; c.render(); }
     else if (x === "today") setDay(c.todayIso);
     else if (x === "mode") { S.mode = el.dataset.v; c.render(); }
@@ -530,7 +549,7 @@ export function createCash(c) {
   const main = document.getElementById("main");
   main.addEventListener("click", (e) => { if (e.target.closest("select,input,label")) return; const el = e.target.closest("[data-cf]"); if (el) { if (el.tagName === "A") e.preventDefault(); onAction(el); } });
   main.addEventListener("keydown", (e) => { const el = e.target.closest && e.target.closest("tr[data-cf]"); if (el && (e.key === "Enter" || e.key === " ") && !e.target.closest("select,input,button")) { e.preventDefault(); onAction(el); } });
-  main.addEventListener("change", (e) => { const t = e.target; if (t.id === "cfUploadDay" || t.id === "cwUploadWeek") { if (t.files[0]) (t.id === "cwUploadWeek" ? W.uploadWeek : D.uploadDay)(t.files[0]); t.value = ""; return; } if (!t.dataset) return; if (t.dataset.dr) { onDraft(t); return; } if (t.dataset.cfq) onQuick(t); else if (t.dataset.cfc) onControl(t); else if (t.dataset.cff && t.dataset.cff !== "q") onFilter(t); });
+  main.addEventListener("change", (e) => { const t = e.target; if (t.id === "cfUploadDay" || t.id === "cwUploadWeek" || t.id === "ckUploadWk" || t.id === "ckUploadSt") { if (t.files[0]) ({ cwUploadWeek: W.uploadWeek, ckUploadWk: K.uploadWeek, ckUploadSt: K.uploadStatus }[t.id] || D.uploadDay)(t.files[0]); t.value = ""; return; } if (!t.dataset) return; if (t.dataset.kb) { K.onBank(t); return; } if (t.dataset.kwk) { K.onWeek(t); return; } if (t.dataset.kd) { K.onInput(t); return; } if (t.dataset.dr) { onDraft(t); return; } if (t.dataset.cfq) onQuick(t); else if (t.dataset.cfc) onControl(t); else if (t.dataset.cff && t.dataset.cff !== "q") onFilter(t); });
   const onBank = (t) => {
     const key = t.dataset.key, d = S.bd[key] || (S.bd[key] = {}), tr = t.closest("tr"), k = t.dataset.bd; d[k] = t.value;
     const g = (n) => (tr.querySelector(`[data-bd="${n}"]`) || {}).value, openCell = tr.querySelector('[data-bd="open"]'), oc = openCell ? null : tr.querySelector("td.num"), opening = openCell ? num(openCell.value) : num(String(oc ? oc.textContent : 0).replace(/,/g, "")), inn = sumExpr(g("in")), out = sumExpr(g("out"));
@@ -539,7 +558,7 @@ export function createCash(c) {
     const set = (id, val) => { const e = document.getElementById(id); if (e) e.textContent = plain(val); }; set("cfTotIn", tot("in")); set("cfTotOut", tot("out")); set("cfTotClose", tot("close"));
   };
   const onDraft = (t) => { const d = S.dr[t.dataset.id] || (S.dr[t.dataset.id] = {}); d[t.dataset.dr] = t.value; const b = document.getElementById("cfDrSave"), n = draftCount(); if (b) { b.disabled = !n; b.textContent = n ? `Save ${n} entr${n > 1 ? "ies" : "y"}` : "Save entries"; } const row = t.closest("tr"); if (row) { row.classList.toggle("cf-fill", num(d.amt) > 0); const lf = row.querySelector("[data-left-of]"); if (lf && t.dataset.dr === "amt") lf.textContent = plain(Math.max(0, num(t.dataset.left) - num(t.value))); } };
-  main.addEventListener("input", (e) => { const t = e.target; if (t.dataset && t.dataset.bd) { onBank(t); return; } if (t.dataset && t.dataset.dr) { onDraft(t); return; } if (t.dataset && t.dataset.cfd === "q") { clearTimeout(onFilter.d); onFilter.d = setTimeout(() => { S.dq.q = t.value; S.dq.show = 30; c.render(); const e2 = document.querySelector('[data-cfd="q"]'); if (e2) { e2.focus(); e2.setSelectionRange(e2.value.length, e2.value.length); } }, 250); return; } if (t.dataset && t.dataset.cff === "q") { clearTimeout(onFilter.t); onFilter.t = setTimeout(() => onFilter(t), 250); } });
+  main.addEventListener("input", (e) => { const t = e.target; if (t.dataset && t.dataset.kd) { K.onInput(t); return; } if (t.dataset && t.dataset.kq) { K.onSearch(t); return; } if (t.dataset && t.dataset.bd) { onBank(t); return; } if (t.dataset && t.dataset.dr) { onDraft(t); return; } if (t.dataset && t.dataset.cfd === "q") { clearTimeout(onFilter.d); onFilter.d = setTimeout(() => { S.dq.q = t.value; S.dq.show = 30; c.render(); const e2 = document.querySelector('[data-cfd="q"]'); if (e2) { e2.focus(); e2.setSelectionRange(e2.value.length, e2.value.length); } }, 250); return; } if (t.dataset && t.dataset.cff === "q") { clearTimeout(onFilter.t); onFilter.t = setTimeout(() => onFilter(t), 250); } });
   main.addEventListener("pointermove", hover); main.addEventListener("pointerleave", unhover, true); main.addEventListener("pointerdown", hover);
   document.addEventListener("keydown", (e) => { if (e.key === "Escape" && S.m) closeModal(); });
   document.addEventListener("click", (e) => { document.querySelectorAll("details.cf-menu[open]").forEach((d) => { if (!d.contains(e.target) || e.target.closest(".cf-menu-item")) d.open = false; }); });
@@ -559,7 +578,20 @@ export function createCash(c) {
     await c.writeXlsx(wb, `Cash flow types ${c.todayIso}.xlsx`, "Excel saved");
   }
 
-  const hh = { S, c, esc, A, plain, money, scopeUnits, writableUnits, allUnits, canWrite, unitSel, stat, chip, viewOf, effBank, knownBanks, lastBank, ushort, uname, typeHint, typeOptions, typeByCode, field, v, unitOpts, itemRow, logRow, run, drawModal, closeModal, setDay, fx, menu, usdWarn, draftOf, draftCount, sumExpr, syncLine };
-  const W = createWeek(hh), D = createDay(hh);
+  async function summaryPdf() {
+    if (!c.libsReady("pdf")) return; const units = scopeUnits(), asOf = S.asOf, pos = position(inScope(units, asOf), effBank(), typesEff(), asOf, units, { fx: fx() }), t = pos.total, sel = [1, 2, 3].filter((b) => S.bk[b]);
+    const doc = c.newPdf("Cash flow position", `${units.length === 1 ? uname(units[0]) : "All business units"}  ·  as of ${dShort(asOf)}  ·  step by step`), n = (v) => ({ content: plain(v), styles: { halign: "right" } });
+    const head = [["Unit", "Bank now", ...sel.flatMap((b) => [`Step ${b} collect`, `Step ${b} pay`, `Position ${b}`]), "Financing needed now"]];
+    const line = (r, name) => [{ content: name, styles: { fontStyle: "bold" } }, n(r.bank), ...sel.flatMap((b) => [n(r.c[b - 1]), n(r.p[b - 1]), { content: plain(r.b[b - 1]), styles: { halign: "right", fontStyle: "bold", textColor: r.b[b - 1] < 0 ? [190, 30, 30] : [30, 30, 30] } }]), n(Math.max(0, -r.b[0]))];
+    const st = c.pdfStyle(); st.styles = { ...st.styles, fontSize: 8.5, cellPadding: 4 }; st.headStyles = { ...st.headStyles, fontSize: 8 };
+    doc.autoTable({ startY: 92, margin: { left: 30, right: 30 }, head, body: [...pos.rows.map((r) => line(r, uname(r.unit))), ...(pos.rows.length > 1 ? [line({ ...t }, "Total")] : [])], ...st });
+    let y = doc.lastAutoTable.finalY + 14; doc.setFontSize(8.5); doc.setTextColor(90, 90, 90); doc.text("Bank now, plus what is still to be collected, minus what is still to be paid. Step 1 is within a month, step 2 within two months, step 3 long term; each step builds on the one before. Financing needed now is the shortfall of step 1.", 30, y, { maxWidth: 780 }); y += 26;
+    const off = S.types.filter((q) => q.active && !typesEff().find((e) => e.code === q.code).expected).map((q) => q.code); if (off.length || t.skipped) { doc.text(`Left out of the totals: ${off.join(", ") || "none"} (${plain(t.skipped)}).`, 30, y); }
+    const pgs = doc.getNumberOfPages(), H = doc.internal.pageSize.getHeight(); for (let i = 1; i <= pgs; i++) { doc.setPage(i); doc.setFontSize(8); doc.setTextColor(120, 120, 120); doc.text(`Cash flow position · ${dShort(c.todayIso)} · Page ${i} of ${pgs}`, 36, H - 18); }
+    await c.save(`Cash flow position ${asOf}.pdf`, doc.output("arraybuffer"), "PDF saved. Open it to print.");
+  }
+
+  const hh = { S, c, esc, A, plain, money, scopeUnits, writableUnits, allUnits, canWrite, unitSel, stat, chip, viewOf, effBank, knownBanks, lastBank, ushort, uname, typeHint, typeOptions, typeByCode, field, v, unitOpts, itemRow, logRow, run, drawModal, closeModal, setDay, fx, menu, usdWarn, draftOf, draftCount, sumExpr, syncLine, typesEff, summaryPdf };
+  const W = createWeek(hh), D = createDay(hh), K = createSheet(hh);
   return { renderCash, subscribe, canSee };
 }

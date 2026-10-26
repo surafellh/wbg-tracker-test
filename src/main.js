@@ -1062,7 +1062,7 @@ applyPlugin(jsPDF); window.jspdf = { jsPDF }; window.XLSX = XLSX;
     libsReady: k => libsReady(k), sheetFromRows: (...a) => sheetFromRows(...a), writeXlsx: (...a) => writeXlsx(...a), XLSX: () => XLSX,
     newPdf: (...a) => newPdf(...a), pdfStyle: () => pdfStyle(), save: (...a) => save(...a) });
   const CF = createCash({ state, esc, fmt, sortedUnits: () => sortedUnits(), unitName: id => unitName(id), todayIso, toast: (...a) => toast(...a), errText: e => errText(e), render: () => render(), db: () => db, api: () => api, auth: () => auth(),
-    libsReady: k => libsReady(k), sheetFromRows: (...a) => sheetFromRows(...a), writeXlsx: (...a) => writeXlsx(...a), saveFile: (...a) => save(...a), XLSX: () => XLSX });
+    libsReady: k => libsReady(k), sheetFromRows: (...a) => sheetFromRows(...a), writeXlsx: (...a) => writeXlsx(...a), saveFile: (...a) => save(...a), save: (...a) => save(...a), newPdf: (...a) => newPdf(...a), pdfStyle: () => pdfStyle(), XLSX: () => XLSX });
   const DM = createMessages({
     esc, toast: (...a) => toast(...a), errText: e => errText(e), db: () => db, api: () => api, auth: () => auth(), unitName: id => unitName(id),
     badge: () => { const n = DM.unreadCount(), b = $("#msgCount"); if (b) { b.textContent = n; b.hidden = !n; } },
