@@ -14,7 +14,7 @@ const clip = (t, n) => { t = String(t || "").replace(/\s+/g, " ").trim(); return
 
 export function createSheet(h) {
   const { S, c, esc, A } = h, plain = h.plain, fx = h.fx;
-  const K = () => S.ck || (S.ck = { tab: "plan", wk: weekStart(c.todayIso), wkFor: "", open: {}, all: false, q: "", kd: {}, kb: {}, fold: {}, pn: null, pd: null, pwarn: false });
+  const K = () => S.ck || (S.ck = { tab: "plan", wk: weekStart(c.todayIso), wkFor: "", open: {}, all: false, q: "", kd: {}, kb: {}, fold: {}, pn: null, pd: null, pwarn: false, nf: null, dn: { range: "month", from: "", to: "", by: "day" } });
   const isOpen = (key) => (key in K().open ? K().open[key] : K().all);
   const conv = (it, v) => num(v) * rateOf(it, fx());
   const catOf = (it) => it.typeCode || "No category";
@@ -40,10 +40,10 @@ export function createSheet(h) {
 
   // ---------------- shell ----------------
   function renderColl() {
-    const k = K(), tabs = [["plan", "Plan"], ["actual", "Actual"], ["status", "Status"]];
+    const k = K(), tabs = [["plan", "Plan"], ["actual", "Actual"], ["done", "Collected & paid"], ["status", "Status"]];
     if (k.wkFor !== S.day) { k.wk = weekStart(S.day); k.wkFor = S.day; }
-    const nav = `<div class="cf-ktabs" role="tablist">${tabs.map((t) => `<button class="cf-ktab${k.tab === t[0] ? " on" : ""}" role="tab" aria-selected="${k.tab === t[0]}" data-cf="k-tab" data-v="${t[0]}">${t[1]}</button>`).join("")}<span class="small muted cf-khint">${k.tab === "plan" ? "What is planned, by month" : k.tab === "actual" ? "What came in and went out, day by day" : "What is left to collect and pay, as of the day chosen above"}</span></div>`;
-    return `<div class="cf-body">${nav}${{ plan: renderPlan, actual: renderActual, status: renderStatus }[k.tab]()}</div>`;
+    const nav = `<div class="cf-ktabs" role="tablist">${tabs.map((t) => `<button class="cf-ktab${k.tab === t[0] ? " on" : ""}" role="tab" aria-selected="${k.tab === t[0]}" data-cf="k-tab" data-v="${t[0]}">${t[1]}</button>`).join("")}<span class="small muted cf-khint">${k.tab === "plan" ? "What is planned, by month" : k.tab === "actual" ? "What came in and went out, day by day" : k.tab === "done" ? "Everything collected and paid, and when" : "What is left to collect and pay, as of the day chosen above"}</span></div>`;
+    return `<div class="cf-body">${nav}${{ plan: renderPlan, actual: renderActual, done: renderDone, status: renderStatus }[k.tab]()}</div>`;
   }
   const bar = (right) => `<div class="cf-bar">${h.allUnits().length > 1 ? h.unitSel(S.scope) : ""}<input type="search" data-kq="1" placeholder="Search" value="${esc(K().q)}" aria-label="Search" class="cf-s">${right || ""}</div>`;
 const addPlan = () => (writable() ? `<div class="cf-addplan"><button type="button" class="btn primary" data-cf="k-pick" data-v="status">+ Add weekly plan</button><span class="small muted">Upload the plan for the coming week: an Excel sheet with collections and payments, by month. New lines are added, changed amounts are updated and lines marked DROP are taken off.</span><button type="button" class="btn small" data-cf="k-dl" data-v="status">Download the sheet to fill in</button><input type="file" id="ckUploadSt" accept=".xlsx,.xls" hidden></div>` : "");
@@ -68,6 +68,86 @@ const addPlan = () => (writable() ? `<div class="cf-addplan"><button type="butto
       <div class="small muted">The plan as of <b>${esc(dShort(S.day))}</b>: lines still open, by month step. Open a category to see its lines.</div>${addPlan()}${skippedNote(skipped)}${h.usdWarn()}${[1, 2, 3].map(box).join("")}`;
   }
 
+
+  // ---------------- planned and unplanned cash of the week ----------------
+  function pvu(units, W, rows) {
+    const E = weekEnd(W), loose = S.log.filter((l) => units.includes(l.unit) && l.day >= W && l.day <= E && !l.itemId);
+    const one = (kind, title) => { const rs = rows.filter((r) => r.it.kind === kind), pl = rs.filter((r) => !r.it.unplanned), up = rs.filter((r) => r.it.unplanned), lo = loose.filter((l) => l.kind === kind);
+      const planned = sum(pl, (r) => conv(r.it, r.planned)), done = sum(pl, (r) => conv(r.it, r.coll)), u = sum(up, (r) => conv(r.it, r.coll)), n = sum(lo, (l) => conv(l, l.amount)), all = done + u + n;
+      return `<tr><td><b>${title}</b></td><td class="num">${plain(planned)}</td><td class="num">${plain(done)}</td><td class="num small">${planned ? Math.round((done / planned) * 100) + "%" : ""}</td><td class="num">${u ? plain(u) : '<span class="muted">–</span>'}<div class="small muted">${up.length ? up.length + " line" + (up.length > 1 ? "s" : "") : ""}</div></td><td class="num">${n ? plain(n) : '<span class="muted">–</span>'}<div class="small muted">${lo.length ? lo.length + " entr" + (lo.length > 1 ? "ies" : "y") : ""}</div></td><td class="num"><b>${plain(all)}</b></td><td class="num small">${all ? Math.round(((u + n) / all) * 100) + "%" : ""}</td></tr>`; };
+    return `<section class="cf-card"><div class="cf-split"><h3>Planned and unplanned, this week</h3><span class="small muted">Unplanned is cash on a line added in the week, or cash with no line.</span></div><div class="scroll"><table class="cf-table"><thead><tr><th></th><th class="num">Planned</th><th class="num">Done on planned lines</th><th class="num">%</th><th class="num">Unplanned lines</th><th class="num">Cash with no line</th><th class="num">All cash</th><th class="num" title="Share of all cash that was not planned">Unplanned share</th></tr></thead><tbody>${one("in", "Collections")}${one("out", "Payments")}</tbody></table></div></section>`;
+  }
+
+  // ---------------- a new line, from the right (cash that was not in the plan) ----------------
+  const readNew = () => { const o = {}; document.querySelectorAll(".cf-drawer [data-nl]").forEach((e) => { o[e.dataset.nl] = e.value; }); return o; };
+  const newDirty = () => { if (K().pn !== "__new" || !document.querySelector(".cf-drawer")) return false; const f = readNew(); return !!(String(f.party || "").trim() || String(f.desc || "").trim() || num(f.amt) > 0 || num(f.total) > 0); };
+  const newDrawer = () => {
+    const k = K(), f = k.nf || {}, wu = h.writableUnits(), unit = f.unit && wu.includes(f.unit) ? f.unit : wu.includes(S.scope) ? S.scope : wu[0], kind = f.kind || "in", W = k.wk, day = f.day || (c.todayIso >= W && c.todayIso <= addDays(W, 6) ? c.todayIso : W), banks = h.knownBanks(unit), verb = kind === "in" ? "collected" : "paid";
+    return `<aside class="cf-drawer" role="dialog" aria-label="Add a line"><div class="cf-dr-h"><div><b>Add a line</b><div class="small muted">For cash that was not in the plan. It is marked <b>Unplanned</b> and counted in the planned and unplanned comparison.</div></div><button type="button" class="btn small" data-cf="k-pclose" aria-label="Close">✕</button></div>
+      ${k.pwarn ? `<div class="cf-dr-warn"><b>You have a line that is not saved.</b><span class="small">Save it, or discard it to close.</span><span class="cf-group"><button type="button" class="btn small primary" data-cf="k-nsave">Save</button><button type="button" class="btn small" data-cf="k-pdiscard">Discard</button></span></div>` : ""}
+      <div class="cf-dr-b"><div class="xgrid">
+        ${h.field("nl-unit", "Business unit", `<select id="nl-unit" data-nl="unit" ${wu.length > 1 ? "" : "disabled"}>${wu.map((u) => `<option value="${esc(u)}" ${u === unit ? "selected" : ""}>${esc(h.uname(u))}</option>`).join("")}</select>`)}
+        ${h.field("nl-kind", "Collection or payment", `<select id="nl-kind" data-nl="kind"><option value="in" ${kind === "in" ? "selected" : ""}>Collection (money in)</option><option value="out" ${kind === "out" ? "selected" : ""}>Payment (money out)</option></select>`)}
+        ${h.field("nl-party", kind === "in" ? "Customer" : "Payee", `<input type="text" id="nl-party" data-nl="party" value="${esc(f.party || "")}">`)}
+        ${h.field("nl-type", "Category", `<select id="nl-type" data-nl="type">${h.typeOptions(kind, f.type || "", false)}</select>`)}
+        ${h.field("nl-desc", "Description", `<input type="text" id="nl-desc" data-nl="desc" value="${esc(f.desc || "")}">`, true)}
+        ${h.field("nl-day", "Day", `<input type="date" id="nl-day" data-nl="day" value="${esc(day)}">`)}
+        ${h.field("nl-bank", "Bank", `<input list="cf-nbanks" id="nl-bank" data-nl="bank" value="${esc(f.bank || h.lastBank(unit, kind) || "")}" placeholder="Pick or type a new one"><datalist id="cf-nbanks">${banks.map((b) => `<option value="${esc(b)}">`).join("")}</datalist>`)}
+        ${h.field("nl-amt", "Amount " + verb, `<input type="number" min="0" step="any" id="nl-amt" data-nl="amt" value="${esc(f.amt || "")}">`)}
+        ${h.field("nl-total", "Total of the line (optional)", `<input type="number" min="0" step="any" id="nl-total" data-nl="total" value="${esc(f.total || "")}"><div class="small muted">Only if more is still to come. The rest stays open on the line.</div>`)}
+      </div></div>
+      <div class="cf-dr-f"><span class="cf-right"><button type="button" class="btn" data-cf="k-pclose">Close</button><button type="button" class="btn primary" data-cf="k-nsave">Save</button></span></div></aside>`;
+  };
+  async function saveNew() {
+    const k = K(), f = readNew(), unit = f.unit, kind = f.kind, amt = Math.round(num(f.amt) * 100) / 100, total = Math.max(amt, Math.round(num(f.total) * 100) / 100), bank = String(f.bank || "").trim(), party = String(f.party || "").trim(), desc = String(f.desc || "").trim();
+    if (!unit || !h.canWrite(unit)) { c.toast("You cannot add lines to this unit"); return; } if (!party && !desc) { c.toast("Write who it is, or a description"); return; } if (!(amt > 0)) { c.toast("Write the amount"); return; } if (!bank) { c.toast("Choose or type the bank"); return; } if (!f.day) { c.toast("Choose the day"); return; }
+    const ok = await h.run(async () => {
+      const full = amt >= total - 0.005;
+      const r = await c.api().saveCfItem(A(), h.itemRow({ unit, kind, party, description: desc, ref: "", typeCode: f.type || "", bucket: 1, amount: total, total: "", currency: "ETB", priority: "Normal", expected: "", status: full ? "settled" : "open", settledOn: full ? f.day : "", note: "Added in Collections & payments, not in the plan", enteredOn: f.day, section: "operating", unplanned: true, firstWeek: "" })); if (r && r.error) return r;
+      const l = await c.api().saveCfLog(A(), h.logRow({ unit, day: f.day, kind, bank, amount: amt, currency: "ETB", party, description: desc, typeCode: f.type || "", itemId: r.id, itemCode: "", note: "", fxRate: "" })); if (l && l.error) return l;
+      return { ok: true }; }, "Line added");
+    if (ok) { k.pn = null; k.nf = null; k.pwarn = false; k.wk = weekStart(f.day); c.render(); }
+  }
+
+  // ---------------- Collected & paid: what moved, and when ----------------
+  const doneRange = () => { const d = K().dn, t = c.todayIso; if (d.range === "week") return [weekStart(t), t]; if (d.range === "month") return [t.slice(0, 8) + "01", t]; if (d.range === "30") return [addDays(t, -29), t]; return [d.from || addDays(t, -29), d.to || t]; };
+  function doneRows(units) {
+    const [from, to] = doneRange(), q = K().q.trim().toLowerCase(), items = new Map(S.items.map((i) => [i.id, i]));
+    return S.log.filter((l) => units.includes(l.unit) && l.day >= from && l.day <= to && (!q || `${l.party} ${l.description} ${l.itemCode} ${l.bank} ${l.typeCode}`.toLowerCase().includes(q)))
+      .map((l) => { const it = l.itemId ? items.get(l.itemId) : null; return { l, it, code: (it && it.code) || l.itemCode || "", party: l.party || (it && it.party) || "", desc: l.description || (it && it.description) || "", cat: l.typeCode || (it && it.typeCode) || "", left: it ? h.viewOf(it, c.todayIso).left : null, amt: conv(l, l.amount) }; })
+      .sort((a, b) => b.l.day.localeCompare(a.l.day) || b.amt - a.amt);
+  }
+  function doneBlock(kind, rows, many) {
+    const k = K(), by = k.dn.by, title = kind === "in" ? "Collected" : "Paid", key = "done-" + kind, tot = sum(rows, (r) => r.amt), open = !k.fold[key];
+    const line = (r, showDay) => `<tr class="cf-sub"><td class="small">${showDay ? esc(dShort(r.l.day)) : ""}</td><td>${r.code ? `<span class="tag">${esc(r.code)}</span>` : '<span class="small muted">no line</span>'}</td><td><b>${esc(r.party || r.desc)}</b>${r.party && r.desc ? `<div class="small muted">${esc(clip(r.desc, 60))}</div>` : ""}${many ? `<span class="small muted">${esc(h.ushort(r.l.unit))}</span>` : ""}</td><td class="small">${esc(r.cat || "")}</td><td class="small">${esc(r.l.bank || "")}</td><td class="num">${plain(r.amt)}</td><td class="num small">${r.left === null ? "" : r.left > 0.5 ? plain(r.left) + " left" : '<span class="muted">complete</span>'}</td></tr>`;
+    let body = "";
+    if (by === "day") { const days = [...new Set(rows.map((r) => r.l.day))]; body = days.map((d) => { const ds = rows.filter((r) => r.l.day === d); return `<tr class="cf-g1"><td colspan="5"><b>${esc(dShort(d))}</b> <span class="small muted">${ds.length} entr${ds.length > 1 ? "ies" : "y"}</span></td><td class="num"><b>${plain(sum(ds, (r) => r.amt))}</b></td><td></td></tr>${ds.map((r) => line(r, false)).join("")}`; }).join(""); }
+    else { const m = new Map(); rows.forEach((r) => { const key2 = (r.party || r.desc || "No name"); (m.get(key2) || m.set(key2, []).get(key2)).push(r); }); body = [...m.entries()].sort((a, b) => sum(b[1], (r) => r.amt) - sum(a[1], (r) => r.amt)).map(([nm, ds]) => `<tr class="cf-g1"><td colspan="5"><b>${esc(nm)}</b> <span class="small muted">${ds.length} entr${ds.length > 1 ? "ies" : "y"}</span></td><td class="num"><b>${plain(sum(ds, (r) => r.amt))}</b></td><td></td></tr>${ds.map((r) => line(r, true)).join("")}`).join(""); }
+    return `<section class="cf-card flush cf-kk"><div class="cf-split cf-pad"><button type="button" class="cf-fold" data-cf="k-fold" data-v="${key}" aria-expanded="${open}"><span class="cf-caret">${open ? "▾" : "▸"}</span><h3>${title}</h3></button><span class="small muted">${rows.length} entr${rows.length === 1 ? "y" : "ies"} · <b>${plain(tot)}</b></span></div>
+      ${!open ? "" : rows.length ? `<div class="scroll"><table class="cf-table cf-done"><thead><tr><th>${by === "day" ? "" : "Day"}</th><th>Code</th><th>${kind === "in" ? "Customer" : "Payee"}</th><th>Category</th><th>Bank</th><th class="num">Amount</th><th class="num">Line now</th></tr></thead><tbody>${body}<tr class="tot"><td colspan="5">Total</td><td class="num">${plain(tot)}</td><td></td></tr></tbody></table></div>` : `<div class="empty"><b>Nothing ${kind === "in" ? "collected" : "paid"} in this period</b>Cash is recorded in the Actual tab.</div>`}</section>`;
+  }
+  function renderDone() {
+    const units = h.scopeUnits(), many = units.length > 1, d = K().dn, [from, to] = doneRange(), rows = doneRows(units), chip = h.chip;
+    const rc = (v, t) => chip(d.range === v, `data-cf="k-drange" data-v="${v}"`, t);
+    return `${bar(`<span class="cf-group">${rc("week", "This week")}${rc("month", "This month")}${rc("30", "Last 30 days")}${rc("custom", "Pick dates")}</span>${d.range === "custom" ? `<span class="cf-wk"><input type="date" data-kdn="from" value="${esc(from)}" class="cf-datemini" aria-label="From"><span class="small muted">to</span><input type="date" data-kdn="to" value="${esc(to)}" class="cf-datemini" aria-label="To"></span>` : ""}<span class="cf-group">${chip(d.by === "day", 'data-cf="k-dby" data-v="day"', "By day")}${chip(d.by === "party", 'data-cf="k-dby" data-v="party"', "By customer or payee")}</span><span class="cf-right"><button class="btn small" data-cf="k-ddl">Download Excel</button><button class="btn small" data-cf="k-pdf" data-v="done">Download PDF</button></span>`)}
+      <div class="small muted">Everything recorded as collected or paid from <b>${esc(dShort(from))}</b> to <b>${esc(dShort(to))}</b>, with the day, the bank and what is left on each line now. Nothing is cleared: a paid line stays here.</div>${h.usdWarn()}
+      ${doneBlock("in", rows.filter((r) => r.l.kind === "in"), many)}${doneBlock("out", rows.filter((r) => r.l.kind === "out"), many)}`;
+  }
+  async function doneExcel() {
+    if (!c.libsReady("xlsx")) return; const X = c.XLSX(), wb = X.utils.book_new(), units = h.scopeUnits(), [from, to] = doneRange(), rows = doneRows(units).slice().sort((a, b) => a.l.day.localeCompare(b.l.day));
+    const out = [[`Collected and paid, ${dShort(from)} to ${dShort(to)}`], [], ["Day", "Unit", "Collected or paid", "Code", "Customer or payee", "Description", "Category", "Bank", "Amount (ETB)", "Left on the line now"]];
+    rows.forEach((r) => out.push([r.l.day, h.uname(r.l.unit), r.l.kind === "in" ? "Collected" : "Paid", r.code, r.party, r.desc, r.cat, r.l.bank || "", Math.round(r.amt * 100) / 100, r.left === null ? "" : Math.round(r.left * 100) / 100]));
+    X.utils.book_append_sheet(wb, c.sheetFromRows(out, [12, 26, 14, 12, 30, 34, 14, 22, 16, 18]), "Collected and paid"); await c.writeXlsx(wb, `Collected and paid ${from} to ${to}.xlsx`, "Excel saved");
+  }
+  async function pdfDone() {
+    if (!c.libsReady("pdf")) return; const units = h.scopeUnits(), many = units.length > 1, [from, to] = doneRange(), rows = doneRows(units).slice().sort((a, b) => a.l.day.localeCompare(b.l.day));
+    const doc = c.newPdf("Collected and paid", `${scopeText()}  ·  ${dShort(from)} to ${dShort(to)}`); let y = 92;
+    for (const kind of ["in", "out"]) { const rs = rows.filter((r) => r.l.kind === kind); y = secTitle(doc, kind === "in" ? "Collected" : "Paid", y); if (!rs.length) { doc.setFontSize(9); doc.setTextColor(120, 120, 120); doc.text("Nothing in this period.", 36, y + 12); y += 30; continue; }
+      const body = rs.map((r) => [dMini(r.l.day), clip(r.party || r.desc, 40) + (many ? " · " + h.ushort(r.l.unit) : ""), r.code, r.cat, r.l.bank || "", { content: plain(r.amt), styles: { halign: "right" } }]); body.push([{ content: "Total", colSpan: 5, styles: { fontStyle: "bold" } }, { content: plain(sum(rs, (r) => r.amt)), styles: { fontStyle: "bold", halign: "right" } }]);
+      doc.autoTable({ startY: y, margin: { left: 36, right: 36 }, head: [["Day", kind === "in" ? "Customer" : "Payee", "Code", "Category", "Bank", "Amount"]], body, ...pdfSt() }); y = doc.lastAutoTable.finalY + 18; }
+    foot(doc, "Collected and paid"); await c.save(`Collected and paid ${from} to ${to}.pdf`, doc.output("arraybuffer"), "PDF saved. Open it to print.");
+  }
+
   // ---------------- Actual (the week) ----------------
   function weekRows(units, W) {
     const E = weekEnd(W), q = K().q.trim().toLowerCase(), prev = addDays(W, -1), rows = [];
@@ -90,7 +170,7 @@ const addPlan = () => (writable() ? `<div class="cf-addplan"><button type="butto
     const days = weekDays(W), sun = addDays(W, 6), hasSun = rows.some((r) => r.lg.some((l) => l.day === sun)), cols = hasSun ? [...days, sun] : days, title = kind === "in" ? "Collections" : "Payments", verb = kind === "in" ? "Collected" : "Paid";
     const body = rows.map((r) => { const it = r.it, wr = h.canWrite(it.unit), banks = h.knownBanks(it.unit), kb = K().kb[it.id] || r.banks[0] || h.lastBank(it.unit, it.kind), t = h.typeByCode(it.typeCode);
       const bankCell = r.banks.length > 1 ? `<span class="tag" title="${esc(r.banks.join(", "))}">${r.banks.length} banks</span>` : wr && banks.length ? `<select class="cf-bank" data-kb="1" data-id="${esc(it.id)}" aria-label="Bank">${(kb && !banks.includes(kb) ? [kb, ...banks] : banks).map((b) => `<option ${b === kb ? "selected" : ""}>${esc(b)}</option>`).join("")}</select>` : `<span class="small muted">${esc(r.banks[0] || "no bank")}</span>`;
-      return `<tr data-krow="${esc(it.id)}" data-start="${r.start}" class="${K().pn === it.id ? "cf-sel" : ""}"><td class="cf-pick" data-cf="k-open" data-id="${esc(it.id)}" title="Open the details"><span class="tag">${esc(it.code || "")}</span></td><td class="cf-who cf-pick" data-cf="k-open" data-id="${esc(it.id)}" title="Open the details"><b>${esc(it.party || it.description || "")}</b>${cur(it)}${it.party && it.description ? `<div class="small muted">${esc(clip(it.description, 46))}${many ? " · " + esc(h.ushort(it.unit)) : ""}</div>` : many ? `<div class="small muted">${esc(h.ushort(it.unit))}</div>` : ""}</td>
+      return `<tr data-krow="${esc(it.id)}" data-start="${r.start}" class="${K().pn === it.id ? "cf-sel" : ""}"><td class="cf-pick" data-cf="k-open" data-id="${esc(it.id)}" title="Open the details"><span class="tag">${esc(it.code || "")}</span></td><td class="cf-who cf-pick" data-cf="k-open" data-id="${esc(it.id)}" title="Open the details"><b>${esc(it.party || it.description || "")}</b>${cur(it)}${it.unplanned ? ' <span class="tag" title="Not in the plan">Unplanned</span>' : ""}${it.party && it.description ? `<div class="small muted">${esc(clip(it.description, 46))}${many ? " · " + esc(h.ushort(it.unit)) : ""}</div>` : many ? `<div class="small muted">${esc(h.ushort(it.unit))}</div>` : ""}</td>
         <td class="small cf-pick" data-cf="k-open" data-id="${esc(it.id)}" title="${esc(t ? t.label || "" : "Open the details")}">${esc(it.typeCode || "–")}</td><td>${bankCell}</td><td class="num">${plain(r.planned)}</td><td class="num"><b data-kcol>${plain(r.coll)}</b></td><td class="num"><b data-krem>${plain(r.rem)}</b></td>${cols.map((d) => dayCell(r, d, wr)).join("")}
         <td class="cf-act"><button type="button" class="btn small ghost" data-cf="k-open" data-id="${esc(it.id)}" aria-label="Open the details">Details ›</button></td></tr>`; }).join("");
     const colTot = (d) => sum(rows, (r) => conv(r.it, sum(r.lg.filter((l) => l.day === d), (l) => l.amount)));
@@ -100,9 +180,9 @@ const addPlan = () => (writable() ? `<div class="cf-addplan"><button type="butto
   function renderActual() {
     const units = h.scopeUnits(), many = units.length > 1, W = K().wk, rows = weekRows(units, W), n = Object.keys(K().kd).length, w = writable();
     const wkBar = `<span class="cf-wk"><button class="btn small" data-cf="k-shift" data-v="-7" aria-label="Previous week">‹</button><b title="Monday to Saturday">${esc(weekLabel(W))}</b><button class="btn small" data-cf="k-shift" data-v="7" aria-label="Next week">›</button><input type="date" data-kwk="1" value="${esc(W)}" aria-label="Pick any day in the week" class="cf-datemini">${W !== weekStart(c.todayIso) ? '<button class="btn small" data-cf="k-today">This week</button>' : ""}</span>`;
-    return `${bar(`${wkBar}<span class="cf-right">${w ? `<button class="btn primary small" data-cf="k-save" id="ckSave" ${n ? "" : "disabled"}>${n ? `Save ${n} entr${n > 1 ? "ies" : "y"}` : "Save"}</button>` : ""}${h.menu([w ? ['data-cf="k-dl" data-v="wk"', "Download this week as a template"] : null, w ? ['data-cf="k-pick" data-v="wk"', "Upload the filled week"] : null, ['data-cf="k-dl" data-v="wkview"', "Download this view (Excel)"], ['data-cf="k-pdf" data-v="actual"', "Download PDF"]])}<input type="file" id="ckUploadWk" accept=".xlsx,.xls" hidden></span>`)}
+    return `${bar(`${wkBar}<span class="cf-right">${w ? `<button class="btn small" data-cf="k-newline">+ Add a line</button><button class="btn primary small" data-cf="k-save" id="ckSave" ${n ? "" : "disabled"}>${n ? `Save ${n} entr${n > 1 ? "ies" : "y"}` : "Save"}</button>` : ""}${h.menu([w ? ['data-cf="k-dl" data-v="wk"', "Download this week as a template"] : null, w ? ['data-cf="k-pick" data-v="wk"', "Upload the filled week"] : null, ['data-cf="k-dl" data-v="wkview"', "Download this view (Excel)"], ['data-cf="k-pdf" data-v="actual"', "Download PDF"]])}<input type="file" id="ckUploadWk" accept=".xlsx,.xls" hidden></span>`)}
       <div class="small muted">Type what was collected or paid in the day it happened. The bank is the one shown on the line; click a line (code, name or category) to open its details on the right: there you can record each day in one or more banks, including a new bank. Planned is the plan for the week (or what was left at the start of it).</div>${h.usdWarn()}
-      ${sectionActual("in", rows.filter((r) => r.it.kind === "in"), W, many)}${sectionActual("out", rows.filter((r) => r.it.kind === "out"), W, many)}${drawer(W, units)}`;
+      ${pvu(units, W, rows)}${sectionActual("in", rows.filter((r) => r.it.kind === "in"), W, many)}${sectionActual("out", rows.filter((r) => r.it.kind === "out"), W, many)}${drawer(W, units)}`;
   }
   // live: the row's collected and remaining, the save button
   function onInput(t) {
@@ -149,6 +229,7 @@ const addPlan = () => (writable() ? `<div class="cf-addplan"><button type="butto
 
   // ---------------- the line's details, on the right ----------------
   const drawer = (W, units) => {
+    if (K().pn === "__new") return newDrawer();
     const k = K(), it = k.pn && S.items.find((q) => q.id === k.pn); if (!it) return ""; const wr = h.canWrite(it.unit), days = weekDays(W), sun = addDays(W, 6), lg = S.log.filter((l) => l.itemId === it.id), wk = lg.filter((l) => l.day >= W && l.day <= sun), cols = wk.some((l) => l.day === sun) ? [...days, sun] : days;
     const start = h.viewOf(it, addDays(W, -1)).left, coll = sum(wk, (l) => l.amount), wl = S.week.find((w) => w.itemId === it.id && w.week === W), planned = Math.max(wl ? num(wl.planned) : start, coll), verb = it.kind === "in" ? "Collected" : "Paid", banks = h.knownBanks(it.unit), t = h.typeByCode(it.typeCode);
     const dayBox = (d, i) => { const ents = k.pd && k.pd[d] ? k.pd[d] : wk.filter((l) => l.day === d).map((l) => ({ id: l.id, bank: l.bank, amount: l.amount }));
@@ -186,14 +267,14 @@ const addPlan = () => (writable() ? `<div class="cf-addplan"><button type="butto
   // ---------------- open, close and unsaved changes of the details panel ----------------
   const sigOf = (pd) => JSON.stringify(Object.keys(pd).sort().map((d) => [d, pd[d].filter((r) => num(r.amount) > 0).map((r) => String(r.bank || "").trim().toLowerCase() + "|" + num(r.amount)).sort()]));
   function isDirty() {
-    const k = K(); if (!k.pn || !document.querySelector(".cf-drawer")) return false; const now = readDrawer(), base = {};
+    const k = K(); if (k.pn === "__new") return newDirty(); if (!k.pn || !document.querySelector(".cf-drawer")) return false; const now = readDrawer(), base = {};
     Object.keys(now).forEach((d) => { base[d] = S.log.filter((l) => l.itemId === k.pn && l.day === d).map((l) => ({ bank: l.bank, amount: l.amount })); });
     return sigOf(now) !== sigOf(base);
   }
   // returns true when the panel had to stay open because of unsaved changes
   function tryClose() {
     const k = K(); if (!k.pn) return false;
-    if (isDirty()) { k.pd = readDrawer(); k.pwarn = true; c.render(); return true; }
+    if (isDirty()) { if (k.pn === "__new") k.nf = readNew(); else k.pd = readDrawer(); k.pwarn = true; c.render(); return true; }
     k.pn = null; k.pd = null; k.pwarn = false; c.render(); return false;
   }
   function onOutside(e) {
@@ -414,9 +495,14 @@ const addPlan = () => (writable() ? `<div class="cf-addplan"><button type="butto
     else if (x === "k-shift") { k.wk = addDays(k.wk, Number(v)); k.kd = {}; c.render(); }
     else if (x === "k-today") { k.wk = weekStart(c.todayIso); k.kd = {}; c.render(); }
     else if (x === "k-save") await saveGrid();
-    else if (x === "k-open") { if (k.pn === el.dataset.id) tryClose(); else if (k.pn && isDirty()) { k.pd = readDrawer(); k.pwarn = true; c.render(); } else { k.pn = el.dataset.id; k.pd = null; k.pwarn = false; c.render(); } }
+    else if (x === "k-open") { if (k.pn === el.dataset.id) tryClose(); else if (k.pn && isDirty()) { if (k.pn === "__new") k.nf = readNew(); else k.pd = readDrawer(); k.pwarn = true; c.render(); } else { k.pn = el.dataset.id; k.pd = null; k.nf = null; k.pwarn = false; c.render(); } }
     else if (x === "k-pclose") tryClose();
-    else if (x === "k-pdiscard") { k.pn = null; k.pd = null; k.pwarn = false; c.render(); }
+    else if (x === "k-pdiscard") { k.pn = null; k.pd = null; k.nf = null; k.pwarn = false; c.render(); }
+    else if (x === "k-newline") { if (k.pn && isDirty()) { if (k.pn === "__new") k.nf = readNew(); else k.pd = readDrawer(); k.pwarn = true; c.render(); } else { k.pn = "__new"; k.nf = null; k.pd = null; k.pwarn = false; c.render(); } }
+    else if (x === "k-nsave") await saveNew();
+    else if (x === "k-drange") { k.dn.range = v; if (v === "custom" && !k.dn.from) { k.dn.from = addDays(c.todayIso, -29); k.dn.to = c.todayIso; } c.render(); }
+    else if (x === "k-dby") { k.dn.by = v; c.render(); }
+    else if (x === "k-ddl") await doneExcel();
     else if (x === "k-fold") { k.fold[v] = !k.fold[v]; c.render(); }
     else if (x === "k-padd") { k.pd = readDrawer(); (k.pd[el.dataset.day] = k.pd[el.dataset.day] || []).push({ id: "", bank: "", amount: "" }); c.render(); }
     else if (x === "k-pdel") { k.pd = readDrawer(); const rs = k.pd[el.dataset.day] || []; rs.splice(Number(el.dataset.j), 1); c.render(); }
@@ -428,9 +514,11 @@ const addPlan = () => (writable() ? `<div class="cf-addplan"><button type="butto
     else if (x === "k-split-save") await saveSplit();
     else if (x === "k-dl") { if (v === "wk") await weekTemplate(false); else if (v === "wkview") await weekView(); else await statusExcel(); }
     else if (x === "k-pick") { const i = document.getElementById(v === "wk" ? "ckUploadWk" : "ckUploadSt"); if (i) i.click(); }
-    else if (x === "k-pdf") { if (v === "plan") await pdfPlan(false); else if (v === "status") await pdfPlan(true); else if (v === "actual") await pdfActual(); else await h.summaryPdf(); }
+    else if (x === "k-pdf") { if (v === "plan") await pdfPlan(false); else if (v === "status") await pdfPlan(true); else if (v === "done") await pdfDone(); else if (v === "actual") await pdfActual(); else await h.summaryPdf(); }
   }
   function onSearch(t) { K().q = t.value; clearTimeout(onSearch.t); onSearch.t = setTimeout(() => { c.render(); const e = document.querySelector('[data-kq]'); if (e) { e.focus(); e.setSelectionRange(e.value.length, e.value.length); } }, 250); }
+  function onDone(t) { K().dn[t.dataset.kdn] = t.value; c.render(); }
+  function onNewChange() { K().nf = readNew(); c.render(); }
   function onWeek(t) { if (t.value) { K().wk = weekStart(t.value); K().kd = {}; c.render(); } }
-  return { onOutside, renderColl, onAction, onInput, onBank, onSearch, onWeek, splitForm, uploadWeek, uploadStatus };
+  return { onDone, onNewChange, onOutside, renderColl, onAction, onInput, onBank, onSearch, onWeek, splitForm, uploadWeek, uploadStatus };
 }

@@ -1222,3 +1222,19 @@ tr.dim td{opacity:.55}.fut td{opacity:.9}
 .cf-addplan{display:flex;flex-wrap:wrap;gap:10px;align-items:center;border:1px dashed var(--brand,#f5c518);border-radius:12px;padding:12px 14px}
 .cf-addplan .btn.primary{padding:10px 18px}
 .cf-card.flush .cf-split{cursor:default}
+
+.cf-cntdd{position:relative}
+.cf-cnt-pop{position:absolute;z-index:40;top:calc(100% + 6px);left:0;width:min(720px,92vw);max-height:70vh;overflow:auto;background:var(--surface);color:var(--ink);border:1px solid var(--line);border-radius:12px;box-shadow:0 12px 32px rgba(0,0,0,.28);padding:12px;display:grid;gap:10px}
+.cf-cnt-top{display:flex;flex-wrap:wrap;gap:8px;justify-content:space-between;align-items:center}
+.cf-cnt-cols{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:14px}
+.cf-cnt-h{display:flex;justify-content:space-between;align-items:center;margin-bottom:4px}
+.cf-chk{all:unset;box-sizing:border-box;cursor:pointer;display:flex;align-items:center;gap:8px;width:100%;padding:5px 6px;border-radius:6px}
+.cf-chk:hover{background:var(--surface-2)}
+.cf-box{width:18px;height:18px;border:1.5px solid var(--muted);border-radius:4px;display:inline-flex;align-items:center;justify-content:center;font-size:13px;line-height:1;flex:none}
+.cf-chk.on .cf-box{background:var(--brand,#f5c518);border-color:var(--brand,#f5c518);color:#2a2208}
+.cf-chk-n{flex:1;min-width:0}.cf-chk-a{font-variant-numeric:tabular-nums}
+.cf-drawer .xgrid{grid-template-columns:1fr 1fr;gap:10px}.cf-drawer .field.wide{grid-column:1/-1}
+
+.cf-sum.wide{display:block}
+
+.cf-done th,.cf-wkgrid th:nth-child(-n+4){text-align:left}.cf-done th.num,.cf-wkgrid th.num{text-align:right}

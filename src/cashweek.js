@@ -13,8 +13,8 @@ export function createWeek(h) {
   const { S, c, esc, A } = h, plain = h.plain, mny = h.money;
 
   // ---------------- the numbers behind a week ----------------
-  const cashAt = (units, day) => { const eb = h.effBank(); return sum(units, (u) => bankAt(eb, u, day).total); };
-  const hasBankBy = (units, day) => { const eb = h.effBank(); return units.some((u) => bankAt(eb, u, day).has); };
+  const cashAt = (units, day) => { const eb = h.realBank(); return sum(units, (u) => bankAt(eb, u, day).total); };
+  const hasBankBy = (units, day) => { const eb = h.realBank(); return units.some((u) => bankAt(eb, u, day).has); };
   const logEtb = (l) => num(l.amount) * rateOf(l, h.fx());
 
   // Everything the statement needs for a set of units and one week.
@@ -198,7 +198,7 @@ export function createWeek(h) {
   // ---------------- reconcile ----------------
   // Only days from when a unit starts recording daily collections and payments are checked; earlier history has no daily lines to check against.
   const reconRows = (units, from, to) => { const start = {}; S.log.forEach((l) => { if (l.bank && (!start[l.unit] || l.day < start[l.unit])) start[l.unit] = l.day; });
-    return { start, rows: reconcileRows(h.effBank().filter((b) => !b.synthetic), S.log, units, from, to, h.fx()).filter((x) => start[x.unit] && x.day >= start[x.unit]) }; };
+    return { start, rows: reconcileRows(h.realBank(), S.log, units, from, to, h.fx()).filter((x) => start[x.unit] && x.day >= start[x.unit]) }; };
   function renderReconcile() {
     const units = h.scopeUnits(), r = S.rc, to = S.day > c.todayIso ? c.todayIso : S.day, from = addDays(to, -(r.range - 1)), { start, rows } = reconRows(units, from, to);
     const bad = rows.filter((x) => x.flags.length), shown = r.all ? rows : bad, chip = h.chip;

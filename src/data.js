@@ -658,7 +658,7 @@ function createLocalData() {
       put("cflog", rec); return ok({ id: rec.id });
     },
     saveCfWeek(auth, row) {
-      const unit = row.unit || "", week = row.week || ""; if (!unit || !/^\d{4}-\d{2}-\d{2}$/.test(week) || new Date(week + "T00:00:00Z").getUTCDay() !== 6) return err("bad_request");
+      const unit = row.unit || "", week = row.week || ""; if (!unit || !/^\d{4}-\d{2}-\d{2}$/.test(week) || new Date(week + "T00:00:00Z").getUTCDay() !== 1) return err("bad_request");
       if (!cfWrite(auth, unit)) return err("not_allowed");
       const it = row.itemId ? getStore("cfitems").find((x) => x.id === row.itemId && x.unit === unit) : null; if (row.itemId && !it) return err("bad_request"); if (!it && !["in", "out"].includes(row.kind)) return err("bad_request");
       const id = it ? `${unit}|${week}|${it.id}` : (row.id || Date.now().toString(36) + Math.random().toString(36).slice(2, 8)), old = getStore("cfweek").find((x) => x.id === id), name = (auth.name || "").trim(), now = new Date().toISOString();

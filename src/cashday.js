@@ -55,13 +55,13 @@ export function createDay(h) {
 
   // ---------------- Bank ----------------
   function bankRows(units, D) {
-    const eb = h.effBank(), rows = S.log.filter((l) => l.day === D && units.includes(l.unit)), out = [];
+    const eb = h.realBank(), rows = S.log.filter((l) => l.day === D && units.includes(l.unit)), out = [];
     for (const u of units) { const banks = [...new Set([...h.knownBanks(u), ...rows.filter((r) => r.unit === u && r.bank).map((r) => r.bank)])];
       for (const bk of banks) {
         const prev = eb.filter((b) => b.unit === u && b.bank === bk && b.day < D).sort((a, b) => b.day.localeCompare(a.day))[0], saved = S.bank.find((b) => b.unit === u && b.bank === bk && b.day === D);
         const mine = rows.filter((r) => r.unit === u && r.bank === bk), itIn = sum(mine.filter((r) => r.kind === "in"), (r) => num(r.amount)), itOut = sum(mine.filter((r) => r.kind === "out"), (r) => num(r.amount));
         const key = `${u}|${bk}|${D}`, d = S.bd[key] || {}, opening = prev ? num(prev.closing) : saved ? num(saved.opening) : num(d.open);
-        const inn = d.in !== undefined ? d.in : saved ? num(saved.inflow) : itIn || "", outv = d.out !== undefined ? d.out : saved ? num(saved.outflow) : itOut || "";
+        const inn = d.in !== undefined ? d.in : saved ? num(saved.inflow) : "", outv = d.out !== undefined ? d.out : saved ? num(saved.outflow) : "";
         const nIn = h.sumExpr(inn) || 0, nOut = h.sumExpr(outv) || 0;
         out.push({ unit: u, bank: bk, key, opening, hasPrev: !!prev, inn, out: outv, nIn, nOut, close: Math.round((opening + nIn - nOut) * 100) / 100, saved, itIn, itOut });
       } }
@@ -153,7 +153,7 @@ export function createDay(h) {
         const unit = uMap.get(XL.norm(sh.rows[0] && sh.rows[0][5])), day = XL.serialToIso(sh.rows[1] && sh.rows[1][5]); if (!unit) { bad(sh.name, 1, "unit not found or not yours"); continue; } if (!day) { bad(sh.name, 2, "the day is missing"); continue; }
         const known = h.knownBanks(unit);
         for (let i = 4; i < sh.rows.length; i++) { const r = sh.rows[i], line = i + 1, name = String(r[0]).trim(); if (!name || /total/i.test(name)) continue; const inn = XL.money(r[2]), out = XL.money(r[3]); if (inn === null && out === null) continue;
-          const bank = known.find((k) => XL.norm(k) === XL.norm(name)) || name, prev = h.effBank().filter((b) => b.unit === unit && b.bank === bank && b.day < day).sort((a, b) => b.day.localeCompare(a.day))[0], opening = prev ? num(prev.closing) : XL.money(r[1]);
+          const bank = known.find((k) => XL.norm(k) === XL.norm(name)) || name, prev = h.realBank().filter((b) => b.unit === unit && b.bank === bank && b.day < day).sort((a, b) => b.day.localeCompare(a.day))[0], opening = prev ? num(prev.closing) : XL.money(r[1]);
           if (opening === null) { bad(sh.name, line, `${bank}: type the opening balance, this bank has no earlier balance`); continue; }
           const saved = S.bank.find((b) => b.unit === unit && b.bank === bank && b.day === day); if (saved && Math.abs(num(saved.inflow) - num(inn)) < 0.005 && Math.abs(num(saved.outflow) - num(out)) < 0.005) continue;
           const res = await c.api().saveCfBank(A(), { unit, day, bank, opening, inflow: num(inn), outflow: num(out), closing: Math.round((opening + num(inn) - num(out)) * 100) / 100 }); if (res && res.error) return res; nBank++; if (saved) { const sv = { unit, day, bank, opening: num(saved.opening), inflow: num(saved.inflow), outflow: num(saved.outflow), closing: num(saved.closing) }; undo.push(() => c.api().saveCfBank(A(), sv)); } }
