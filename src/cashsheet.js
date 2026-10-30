@@ -6,7 +6,7 @@
 import { bucketCode, num, sum, addDays, MONTHS, etb, rateOf, countsIn, weekStart, weekEnd, weekDays, weekLabel, DAYN } from "./cashcalc.js";
 import * as XL from "./cashxl.js";
 
-const BUCKET_NAME = { 1: "Within one month", 2: "Within two months", 3: "Within three months, long term" };
+const BUCKET_NAME = { 1: "Within one month (this month)", 2: "Within two months (next month)", 3: "Within three months (the month after), long term" };
 const dShort = (iso) => { if (!iso) return ""; const [y, m, d] = String(iso).slice(0, 10).split("-").map(Number); return `${d} ${MONTHS[m - 1]} ${y}`; };
 const dMini = (iso) => { const [, m, d] = String(iso).slice(0, 10).split("-").map(Number); return `${d} ${MONTHS[m - 1]}`; };
 const dayHead = (iso, k) => `${DAYN[k]} ${Number(String(iso).slice(8, 10))}`;

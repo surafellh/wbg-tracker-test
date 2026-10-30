@@ -118,10 +118,8 @@ function scopeRows(a, c, items) {
   if (c === "messages") return a.id ? items.filter((x) => x.fromId === a.id || x.toId === a.id) : [];
   if (c === "actions") return items.filter((x) => own(x.unit));
   if (c.startsWith("cf")) {
-    const fin = (a.departments || []).some((d) => /^fin/i.test(String(d)));
-    const all = ["super_admin", "executive"].includes(a.role) || a.unit === "group-finance-function", any = all || (!!a.unit && fin);
-    if (c === "cftypes" || c === "cfsettings") return any ? items : [];
-    return items.filter((x) => all || (fin && a.unit === x.unit));
+    const all = a.role === "super_admin" || a.unit === "group-finance-function";
+    return all ? items : [];
   }
   if (c === "projects") { const raw = a.rawRole || a.role; return items.filter((x) => ["super_admin", "executive"].includes(a.role) || raw === "lea" || (["leader", "planning", "manager"].includes(a.role) && a.unit === "pmo") || (["leader", "planning"].includes(a.role) && (a.unit === x.unit || (x.involved || []).includes(a.unit))) || (a.role === "manager" && x.unit === "niyat-consultancy" && a.unit === x.unit)); }
   if (c === "requests") return items.filter((x) => U(x.unit));
@@ -444,9 +442,8 @@ function createLocalData() {
   const leadOk = (a, unit) => unitLead(a, unit);
   const ok = (x) => Promise.resolve({ ok: true, ...(x || {}) });
   const err = (e, x) => Promise.resolve({ error: e, ...(x || {}) });
-  const cfFin = (a) => (a.departments || []).some((d) => /^fin/i.test(String(d)));
-  const cfWrite = (a, u) => a.role === "super_admin" || a.unit === "group-finance-function" || (!!u && a.unit === u && cfFin(a));
-  const cfWriteAny = (a) => a.role === "super_admin" || a.unit === "group-finance-function" || (!!a.unit && cfFin(a));
+  const cfWrite = (a) => a.role === "super_admin" || a.unit === "group-finance-function";
+  const cfWriteAny = (a) => cfWrite(a);
   const planId = (w, u) => `${w}_${u}`;
   const savePlanRaw = (auth, plan, source) => {
     const id = planId(plan.week, plan.unit), at = new Date().toISOString();

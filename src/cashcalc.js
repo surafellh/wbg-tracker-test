@@ -1,6 +1,6 @@
 // Cash flow rules (pure functions, no screen code).
 // Finance's own coding is kept: collections are 1, 2, 3 and payables 11, 22, 33.
-//   1 / 11 = within a month or short period, 2 / 22 = within two months, 3 / 33 = long term.
+//   1 / 11 = this calendar month, 2 / 22 = next month, 3 / 33 = the month after (long term). "Within a month" means within the month we are in, not the next 30 days.
 // The balance is worked out in steps: bank balance, then 1 minus 11, then 2 minus 22, then 3 minus 33.
 
 export const SECTIONS = [["operating", "Operating"], ["investing", "Investing"], ["financing", "Financing"], ["intercompany", "Intercompany"], ["other", "Other"]];
@@ -8,7 +8,7 @@ export const PLAN_SECTIONS = SECTIONS.slice(0, 3);
 export const PRIORITIES = ["High", "Normal", "Low"];
 export const CURRENCIES = ["ETB", "USD"];
 export const bucketCode = (kind, b) => (kind === "in" ? String(b) : String(b) + String(b));
-export const BUCKET_TEXT = { 1: "within a month", 2: "within two months", 3: "long term" };
+export const BUCKET_TEXT = { 1: "this month", 2: "next month", 3: "the month after, long term" };
 export const FIN_UNITS_FALLBACK = ["wagwago-electric", "trucksload", "geez", "niyat-consultancy", "wanza-logistics"];
 
 const n = (v) => (v === null || v === undefined || v === "" || Number.isNaN(Number(v)) ? 0 : Number(v));
@@ -38,8 +38,12 @@ export const etb = (it, fx) => n(it.amount) * rateOf(it, fx);
 export const typeOf = (types, code) => (types || []).find((t) => t.code === code) || null;
 export const countsIn = (it, types, incl) => { if (incl) return true; const t = typeOf(types, it.typeCode); return !t || t.expected !== false; };
 // Where an open item falls on the calendar: its expected date, or a date worked out from its urgency code.
+// Code 1 / 11 means this calendar month (so on 28 Oct it falls in October, by 31 Oct), 2 / 22 the next month, 3 / 33 the month after.
+// A line with no expected date is placed on the last day of its month. Counted from the date given: today for the forecast, the day a line was entered for its plan.
+export const monthEnd = (ym) => addDays(addMonths(ym, 1) + "-01", -1);
 export const IMPLIED_DAYS = { 1: 30, 2: 60, 3: 120 };
-export const dateOf = (it, asOf) => (it.expected ? String(it.expected).slice(0, 10) : addDays(asOf, IMPLIED_DAYS[it.bucket] || 30));
+export const impliedDate = (bucket, from) => monthEnd(addMonths(monthOf(from), (Number(bucket) || 1) - 1));
+export const dateOf = (it, asOf) => (it.expected ? String(it.expected).slice(0, 10) : impliedDate(it.bucket, asOf));
 
 // ---------- bank ----------
 export function bankAt(bank, unit, asOf) {

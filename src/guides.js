@@ -896,7 +896,7 @@ export const GUIDES = [
   {
     id: "cash-position", g: "cf", pages: ["cashflow"], title: "Reading the cash summary",
     kw: "cash flow summary bank balance collections payables 1 11 2 22 3 33 deficit financing as of counted categories exclude not expected live pdf",
-    intro: "The Summary starts from the bank balance, then adds what is collected and subtracts what is paid, step by step. Code 1 and 11 are within a month, 2 and 22 within two months, 3 and 33 long term. Single digits are collections, double digits are payments.",
+    intro: "The Summary starts from the bank balance, then adds what is collected and subtracts what is paid, step by step. Code 1 and 11 mean this calendar month (on 28 October that is October, not November), 2 and 22 next month, 3 and 33 the month after. Single digits are collections, double digits are payments. Only Group Finance (and the super admin who looks after the app) can open Cash flow.",
     steps: [
       "Open **Cash flow**, then **Summary**. Pick the **As of** date (it rolls forward every day) and a unit, or leave all units.",
       "Use the **1 / 2 / 3** buttons to focus on one urgency. The table then shows only those steps.",

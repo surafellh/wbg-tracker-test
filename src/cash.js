@@ -1,10 +1,10 @@
 // Cash flow. Seven tabs: Summary, Weekly plan (the weekly statement), Collections & payments and Bank (the two daily sheets),
 // Reconcile, Forecast (plan against actual, by type, monthly forecast lines) and Setup.
-// Shown to Group Finance, unit Finance departments, Group Strategy, CEO and DCEO.
+// Shown to Group Finance only (and the super admin who looks after the app).
 import { createWeek } from "./cashweek.js";
 import { createDay } from "./cashday.js";
 import { createSheet } from "./cashsheet.js";
-import { SECTIONS, PLAN_SECTIONS, PRIORITIES, CURRENCIES, bucketCode, BUCKET_TEXT, FIN_UNITS_FALLBACK, IMPLIED_DAYS, num, sum, addDays, addMonths, monthOf, keyOf, periods, periodLabel, periodEnd, isOpenAt, etb, bankAt, bankDays, position, funding, timeline, byType, planByMonth, HORIZON, MONTHS } from "./cashcalc.js";
+import { SECTIONS, PLAN_SECTIONS, PRIORITIES, CURRENCIES, bucketCode, BUCKET_TEXT, FIN_UNITS_FALLBACK, impliedDate, num, sum, addDays, addMonths, monthOf, keyOf, periods, periodLabel, periodEnd, isOpenAt, etb, bankAt, bankDays, position, funding, timeline, byType, planByMonth, HORIZON, MONTHS } from "./cashcalc.js";
 
 const weekStartOf = (iso) => { const d = new Date(iso + "T00:00:00Z").getUTCDay(); return addDays(iso, -((d + 6) % 7)); };
 const clone = (o) => JSON.parse(JSON.stringify(o));
@@ -20,12 +20,11 @@ export function createCash(c) {
   const S = (state.cf = { items: [], itemsAll: [], logAll: [], undo: null, calOpen: false, calMonth: "", types: [], bank: [], log: [], plan: [], settings: {}, loaded: 0, view: "summary", asOf: c.todayIso, scope: "all", bk: { 1: true, 2: true, 3: true }, typeOn: {}, mode: "month", day: c.todayIso, range: 60, dr: {}, bd: {}, dq: { kind: "", q: "", show: 30 }, busy: false, m: null, week: [], wk: weekStartOf(c.todayIso), rc: { range: 14, all: false }, rp: { from: "" },
     lf: { kind: "", type: "", status: "active", q: "", show: 40 }, pf: { from: "", unit: "all" } });
   const A = () => c.auth() || {};
-  const finDept = () => (A().departments || []).some((d) => /^fin/i.test(String(d)));
-  const full = () => ["super_admin", "executive"].includes(A().role) || A().unit === "group-finance-function";
+  const full = () => A().role === "super_admin" || A().unit === "group-finance-function";
   const admin = () => A().role === "super_admin" || A().unit === "group-finance-function";
-  const canSee = () => full() || (!!A().unit && finDept());
-  const canWrite = (u) => admin() || (!!u && A().unit === u && finDept());
-  const canWriteAny = () => admin() || (!!A().unit && finDept());
+  const canSee = () => full();
+  const canWrite = () => admin();
+  const canWriteAny = () => admin();
   const allUnits = () => { const bu = c.sortedUnits().filter((u) => u.type === "Business unit").map((u) => u.id); const ids = bu.length ? bu : FIN_UNITS_FALLBACK; return full() ? ids : [A().unit]; };
   const scopeUnits = () => (S.scope === "all" || !allUnits().includes(S.scope) ? allUnits() : [S.scope]);
   const writableUnits = () => allUnits().filter((u) => canWrite(u));
@@ -93,7 +92,7 @@ export function createCash(c) {
   const knownBanks = (unit) => { const all = [...new Set([...S.bank.filter((b) => b.unit === unit).map((b) => b.bank), ...S.log.filter((l) => l.unit === unit && l.bank).map((l) => l.bank)])].sort(); const named = all.filter((b) => b !== "All banks"); return named.length ? named : all; };
   // The bank a unit used last for money in or out: the default on the day sheet.
   const lastBank = (unit, kind) => { const l = S.log.filter((q) => q.unit === unit && q.bank && q.kind === kind).sort((a, b) => b.day.localeCompare(a.day))[0]; return l ? l.bank : knownBanks(unit)[0] || ""; };
-  const planDate = (it, asOf) => (it.expected ? String(it.expected).slice(0, 10) : addDays(it.enteredOn && it.enteredOn > "2000" ? it.enteredOn : asOf, IMPLIED_DAYS[it.bucket] || 30));
+  const planDate = (it, asOf) => (it.expected ? String(it.expected).slice(0, 10) : impliedDate(it.bucket, it.enteredOn && it.enteredOn > "2000" ? it.enteredOn : asOf));
 
   // ---------------- shared pieces ----------------
   const chip = (on, attrs, label, tip) => `<button type="button" class="cf-chip${on ? " on" : ""}" ${attrs} aria-pressed="${on}" ${tip ? `title="${esc(tip)}"` : ""}>${label}</button>`;
@@ -132,7 +131,7 @@ export function createCash(c) {
   const undoBar = () => (S.uu ? `<div class="cf-note cf-undo">${esc(S.uu.label)} was applied. <button class="btn small" data-cf="w-undo-up">Undo</button> <button class="btn small ghost" data-cf="w-undo-x">Dismiss</button></div>` : "") + (S.undo ? `<div class="cf-note cf-undo">${esc(S.undo.label)} was deleted. <button class="btn small" data-cf="undo">Undo</button> <button class="btn small ghost" data-cf="undo-x">Dismiss</button></div>` : "");
   // ---------------- page shell ----------------
   function renderCash() {
-    if (!canSee()) return `<div class="cf"><div class="empty"><b>Cash flow</b>Cash flow is shown to Group Finance, the Finance departments of the business units, Group Strategy and the executive.</div></div>`;
+    if (!canSee()) return `<div class="cf"><div class="empty"><b>Cash flow</b>Cash flow is shown to Group Finance only.</div></div>`;
     subscribe();
     const nav = `<div class="cf-nav"><div class="cf-tabs">${TABS.map((t) => `<button class="cf-tab${S.view === t[0] ? " on" : ""}" data-cf="view" data-v="${t[0]}">${t[1]}</button>`).join("")}</div></div>`;
     const body = { summary: renderSummary, week: () => W.renderWeek(), coll: () => K.renderColl(), bank: () => D.renderBank(), recon: () => W.renderReconcile(), forecast: renderForecast, setup: renderSetup }[S.view]();
@@ -156,7 +155,7 @@ export function createCash(c) {
     const realNow = sum(units, (u) => bankAt(realBank(), u, asOf).total), lastB = sel.length ? sel[sel.length - 1] : 0, endBal = lastB ? t.b[lastB - 1] : t.bank;
     // what already moved, from the daily log: today and this week (Monday to the chosen day)
     const wk0 = weekStartOf(asOf), moved = (u, from) => { const ls = S.log.filter((l) => (u === "all" ? units.includes(l.unit) : l.unit === u) && l.day >= from && l.day <= asOf); return { in: sum(ls.filter((l) => l.kind === "in"), (l) => etb(l, fx())), out: sum(ls.filter((l) => l.kind === "out"), (l) => etb(l, fx())) }; };
-    const needNow = (r) => Math.max(0, -r.b[0]), STEPN = { 1: "within a month", 2: "within two months", 3: "long term" };
+    const needNow = (r) => Math.max(0, -r.b[0]), STEPN = { 1: "this month", 2: "next month", 3: "the month after" };
     const stepHead = sel.map((b) => `<th class="num" title="${esc(BUCKET_TEXT[b])}">After step ${b}<div class="small muted">${STEPN[b]}</div></th>`).join("");
     const stepCell = (r, b) => `<td class="num cf-stepc"><div class="cf-pos ${r.b[b - 1] < 0 ? "neg" : ""}">${money(r.b[b - 1], false)}</div><div class="cf-stmini"><span class="in">+${compact(r.c[b - 1])}</span><span class="out">−${compact(r.p[b - 1])}</span></div></td>`;
     const mvTxt = (u) => { const d = moved(u, asOf), w = moved(u, wk0); return d.in || d.out || w.in || w.out ? `<div class="small muted">Cash recorded: today in ${compact(d.in)}, out ${compact(d.out)} · this week in ${compact(w.in)}, out ${compact(w.out)}</div>` : ""; };
@@ -174,7 +173,7 @@ export function createCash(c) {
       <div class="cf-sum wide"><div class="cf-sum-r">
       ${usdWarn()}
       <div class="cf-asof small muted">Live position as of <b>${esc(dShort(asOf))}</b>${asOf === c.todayIso ? " " + new Date().toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" }) : ""}. Bank balances and what is left to collect or pay change as the day's cash is recorded.</div>
-      <div class="cf-stats">${stat("Bank balance now", compact(t.bank), (last ? "bank report " + dShort(last) : "none entered") + (Math.abs(t.bank - realNow) > 0.5 ? ` · ${t.bank - realNow > 0 ? "+" : "−"}${compact(Math.abs(t.bank - realNow))} recorded since` : ""))}${stat("Still to collect", compact(sum(sel, (b) => t.c[b - 1])), sel.map((b) => `${b}: ${compact(t.c[b - 1])}`).join(" · ") || "no step chosen", "good")}${stat("Still to pay", compact(sum(sel, (b) => t.p[b - 1])), sel.map((b) => `${b}${b}: ${compact(t.p[b - 1])}`).join(" · ") || "no step chosen", "warn")}${stat("Balance at the end", `<span class="${endBal < 0 ? "neg" : ""}">${compact(endBal)}</span>`, sel.length ? `after step ${lastB}` : "bank only")}${stat("Financing needed now", nowNeed > 0 ? `<span class="neg">${compact(nowNeed)}</span>` : "None", "within a month, from outside the group", nowNeed > 0 ? "bad" : "")}</div>
+      <div class="cf-stats">${stat("Bank balance now", compact(t.bank), (last ? "bank report " + dShort(last) : "none entered") + (Math.abs(t.bank - realNow) > 0.5 ? ` · ${t.bank - realNow > 0 ? "+" : "−"}${compact(Math.abs(t.bank - realNow))} recorded since` : ""))}${stat("Still to collect", compact(sum(sel, (b) => t.c[b - 1])), sel.map((b) => `${b}: ${compact(t.c[b - 1])}`).join(" · ") || "no step chosen", "good")}${stat("Still to pay", compact(sum(sel, (b) => t.p[b - 1])), sel.map((b) => `${b}${b}: ${compact(t.p[b - 1])}`).join(" · ") || "no step chosen", "warn")}${stat("Balance at the end", `<span class="${endBal < 0 ? "neg" : ""}">${compact(endBal)}</span>`, sel.length ? `after step ${lastB}` : "bank only")}${stat("Financing needed now", nowNeed > 0 ? `<span class="neg">${compact(nowNeed)}</span>` : "None", "this month, from outside the group", nowNeed > 0 ? "bad" : "")}</div>
       <section class="cf-card"><div class="cf-split"><h3>Position, step by step</h3><button class="btn small" data-cf="k-pdf" data-v="summary">Download PDF</button></div><div class="small muted">Start from the bank balance, add what is still to be collected, take away what is still to be paid. Each step builds on the one before. What was already collected or paid is not counted.</div>
         ${ladder}${hasData && pos.rows.length > 1 ? `<h4 class="cf-h4">By unit</h4><div class="small muted">Each cell is the position after the step. Green is still to collect, red is still to pay.</div>` : ""}
         ${!hasData ? `<div class="empty"><b>Nothing to show yet</b>Add bank balances and collections and payments first.</div>` : pos.rows.length > 1 ? `<div class="scroll"><table class="cf-table"><thead><tr><th>Unit</th><th>Bank now</th>${stepHead}<th title="The shortfall within the coming month (step 1)">Financing needed now</th></tr></thead><tbody>${pos.rows.map((r) => row(r)).join("")}${pos.rows.length > 1 ? row({ ...t, unit: "all" }, true) : ""}</tbody></table></div>` : ""}
@@ -245,7 +244,7 @@ export function createCash(c) {
       ${usdWarn()}
       <section class="cf-card"><h3>Planned against done</h3><div class="small muted">Planned: collections and payments due in the period (the remaining amount of each line when it was entered). Done: cash recorded in the daily log against those lines. “Not in plan” is cash that moved without a line.${rIn !== null || rOut !== null ? ` In the last ${past.length} period${past.length > 1 ? "s" : ""}, <b>${rIn === null ? "–" : Math.round(rIn * 100) + "%"}</b> of planned collections arrived and <b>${rOut === null ? "–" : Math.round(rOut * 100) + "%"}</b> of planned payments went out. The forecast below uses this.` : ""}</div>
         <div class="scroll"><table class="cf-table"><thead><tr><th>${label}</th><th>Collect: planned</th><th>done</th><th>%</th><th>Pay: planned</th><th>done</th><th>%</th><th>Not in plan (net)</th></tr></thead><tbody>${body}</tbody></table></div></section>
-      <section class="cf-card"><h3>Forecast</h3><div class="small muted">Actual in and out for periods that have started. Expected comes from the open lines (placed on their expected date, or about 30, 60 or 120 days ahead by code). The last column applies the follow-through above to the expected amounts.</div>
+      <section class="cf-card"><h3>Forecast</h3><div class="small muted">Actual in and out for periods that have started. Expected comes from the open lines (placed on their expected date, or at the end of this month, next month or the month after by code: 1 and 11 mean this calendar month). The last column applies the follow-through above to the expected amounts.</div>
         <div class="scroll"><table class="cf-table"><thead><tr><th>${label}</th><th>Actual in</th><th>Actual out</th><th>Expected in</th><th>Expected out</th><th>Balance, as expected</th><th>Balance, adjusted</th></tr></thead><tbody>${fcRows}</tbody></table></div></section>
       ${planTbl}
       <section class="cf-card"><h3>By type</h3><div class="small muted">Open lines as of ${esc(dShort(asOf))}. Click a row to see its lines.</div>${typeTable(units, "in", "Collections")}${typeTable(units, "out", "Payments")}</section>
@@ -348,7 +347,7 @@ export function createCash(c) {
       ${field("ci-unit", "Unit", `<select id="ci-unit" ${m.isNew ? "" : "disabled"}>${unitOpts(r.unit)}</select>`)}${field("ci-kind", "Collect or pay", `<select id="ci-kind" ${m.isNew ? "" : "disabled"}><option value="in" ${r.kind === "in" ? "selected" : ""}>Collect (money coming in)</option><option value="out" ${r.kind === "out" ? "selected" : ""}>Pay (money going out)</option></select>`)}
       ${field("ci-party", "Customer or payee", `<input type="text" id="ci-party" value="${esc(r.party)}">`)}${field("ci-ref", "Invoice or reference no.", `<input type="text" id="ci-ref" value="${esc(r.ref)}">`)}
       ${field("ci-desc", "Description", `<input type="text" id="ci-desc" value="${esc(r.description)}">`, true)}
-      ${field("ci-type", "Type", `<select id="ci-type">${typeOptions(r.kind, r.typeCode, true)}</select>${r.typeCode ? `<div class="small muted">${typeHint(r.typeCode)}</div>` : ""}`)}${field("ci-bucket", "Urgency", `<select id="ci-bucket"><option value="1" ${r.bucket === 1 ? "selected" : ""}>${bucketCode(r.kind, 1)} · within a month</option><option value="2" ${r.bucket === 2 ? "selected" : ""}>${bucketCode(r.kind, 2)} · within two months</option><option value="3" ${r.bucket === 3 ? "selected" : ""}>${bucketCode(r.kind, 3)} · long term</option></select>`)}
+      ${field("ci-type", "Type", `<select id="ci-type">${typeOptions(r.kind, r.typeCode, true)}</select>${r.typeCode ? `<div class="small muted">${typeHint(r.typeCode)}</div>` : ""}`)}${field("ci-bucket", "Urgency", `<select id="ci-bucket"><option value="1" ${r.bucket === 1 ? "selected" : ""}>${bucketCode(r.kind, 1)} · this month</option><option value="2" ${r.bucket === 2 ? "selected" : ""}>${bucketCode(r.kind, 2)} · next month</option><option value="3" ${r.bucket === 3 ? "selected" : ""}>${bucketCode(r.kind, 3)} · the month after, long term</option></select>`)}
       ${field("ci-amt", "Remaining amount", `<input type="number" id="ci-amt" min="0" step="any" value="${esc(String(r.amount ?? ""))}"><div class="small muted">What is still to be ${r.kind === "in" ? "collected" : "paid"}. Cash recorded against this line is taken off it.</div>`)}${field("ci-total", "Original total (optional)", `<input type="number" id="ci-total" min="0" step="any" value="${esc(String(r.total ?? ""))}"><div class="small muted">The full invoice amount, if you know it. It is only shown for reference.</div>`)}
       ${field("ci-cur", "Currency", `<select id="ci-cur">${opt(CURRENCIES, r.currency)}</select>`)}
       ${field("ci-pri", "Priority", `<select id="ci-pri">${opt(PRIORITIES, r.priority)}</select>`)}${field("ci-exp", "Expected date (optional)", `<input type="date" id="ci-exp" value="${esc(r.expected || "")}">`)}
@@ -591,7 +590,7 @@ export function createCash(c) {
     const line = (r, name) => [{ content: name, styles: { fontStyle: "bold" } }, n(r.bank), ...sel.flatMap((b) => [n(r.c[b - 1]), n(r.p[b - 1]), { content: plain(r.b[b - 1]), styles: { halign: "right", fontStyle: "bold", textColor: r.b[b - 1] < 0 ? [190, 30, 30] : [30, 30, 30] } }]), n(Math.max(0, -r.b[0]))];
     const st = c.pdfStyle(); st.styles = { ...st.styles, fontSize: 8.5, cellPadding: 4 }; st.headStyles = { ...st.headStyles, fontSize: 8 };
     doc.autoTable({ startY: 92, margin: { left: 30, right: 30 }, head, body: [...pos.rows.map((r) => line(r, uname(r.unit))), ...(pos.rows.length > 1 ? [line({ ...t }, "Total")] : [])], ...st });
-    let y = doc.lastAutoTable.finalY + 14; doc.setFontSize(8.5); doc.setTextColor(90, 90, 90); doc.text("Bank now, plus what is still to be collected, minus what is still to be paid. Step 1 is within a month, step 2 within two months, step 3 long term; each step builds on the one before. Financing needed now is the shortfall of step 1.", 30, y, { maxWidth: 780 }); y += 26;
+    let y = doc.lastAutoTable.finalY + 14; doc.setFontSize(8.5); doc.setTextColor(90, 90, 90); doc.text("Bank now, plus what is still to be collected, minus what is still to be paid. Step 1 is this calendar month, step 2 next month, step 3 the month after; each step builds on the one before. Financing needed now is the shortfall of step 1.", 30, y, { maxWidth: 780 }); y += 26;
     const off = S.types.filter((q) => q.active && !typesEff().find((e) => e.code === q.code).expected).map((q) => q.code); if (off.length || t.skipped) { doc.text(`Left out of the totals: ${off.join(", ") || "none"} (${plain(t.skipped)}).`, 30, y); }
     const pgs = doc.getNumberOfPages(), H = doc.internal.pageSize.getHeight(); for (let i = 1; i <= pgs; i++) { doc.setPage(i); doc.setFontSize(8); doc.setTextColor(120, 120, 120); doc.text(`Cash flow position · ${dShort(c.todayIso)} · Page ${i} of ${pgs}`, 36, H - 18); }
     await c.save(`Cash flow position ${asOf}.pdf`, doc.output("arraybuffer"), "PDF saved. Open it to print.");
